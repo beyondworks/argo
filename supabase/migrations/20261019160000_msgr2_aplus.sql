@@ -1,5 +1,6 @@
 -- 메신저 A+ 서버(P1) — Pro 전용·1:1 밖 막기(lite)·회의방·외부 봇·상한, 약속 v1.1 받기(2026-10-19 유건 "A+ 진행", 라운드 2 고정).
 -- 근거 설계: 볼트 AI-Sessions/conversations/argo/2026-10-19-msgr-lite-scope.md "A"·"A+" 절. 약속: packages/agent-link/contract(v1.1).
+-- lite(켬) 동안: 허용 방 밖 사람 글·일 0, U8 백필 함수 거부(msgr2_backfill_lite).
 -- 설정(msgr_settings, 없으면 기본값): msgr2_pro_gate(on) · msgr2_lite(on) · msgr2_meeting_agents(5, 최대 5) · msgr2_meeting_rounds(2, 최대 2)
 --   · msgr2_bot_max_hops(2, 최대 2) · msgr2_bot_turns(4, 최대 4) · msgr2_limit_bot_min(6). 최대값은 설정으로도 넘길 수 없다(_msgr2_clamp).
 -- 쉬는 동안 쓰기 0: 새 주기 작업·크론 없음. agent.sync 기능 알림은 값이 바뀔 때만 기기 행을 고친다.
@@ -46,6 +47,18 @@ create or replace function public._msgr2_runner_has(p_owner uuid, p_feature text
                     and d.gen = coalesce((select g.gen from public.msgr2_user_gen g where g.user_id = d.user_id), 0)
                     and p_feature = any (d.features)) $$;
 
+-- lite에서 허용하는 방: 개인 공간 + 사람은 주인 1명뿐 + 에이전트는 주인 것만 + (에이전트 ≤ 1 또는 회의방).
+-- 이전(U8 백필)으로 들어온 팀 공간·사람 방·에이전트 여럿 방은 여기서 걸러진다(#1117 검수 H1)
+create or replace function public._msgr2_lite_room_ok(p_room uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select coalesce((
+    select s.kind = 'personal' and s.deleted_at is null
+       and not exists (select 1 from public.msgr2_room_members m where m.room_id = r.id and m.removed_at is null and m.member_kind = 'user' and m.member_id <> s.owner_user_id)
+       and not exists (select 1 from public.msgr2_room_members m join public.msgr2_agents a on a.id = m.member_id
+                        where m.room_id = r.id and m.removed_at is null and m.member_kind = 'agent' and a.owner_user_id <> s.owner_user_id)
+       and (r.meeting or (select count(*) from public.msgr2_room_members m where m.room_id = r.id and m.removed_at is null and m.member_kind = 'agent') <= 1)
+      from public.msgr2_rooms r join public.msgr2_spaces s on s.id = r.space_id where r.id = p_room), false) $$;
+
 -- ── 3. 1:1 밖 막기(lite) — 사람 문맥의 쓰기만(서비스·이전 문맥은 auth.uid()가 없어 통과) ─────────────────
 -- 허용: 개인 공간 안에서 나 + 내 에이전트. 1:1 방(에이전트 1)과 회의방(에이전트 ≤ 5, 봇 제외). 막음: 팀 공간·초대·다른 사람 멤버
 create or replace function public.msgr2_lite_guard() returns trigger
@@ -58,6 +71,11 @@ begin
     return new;
   end if;
   if tg_table_name = 'msgr2_space_invites' then raise exception 'msgr2_lite_only' using errcode = '42501'; end if;
+  -- 사람 글쓰기: 허용 방(_msgr2_lite_room_ok)에서만(#1117 검수 H1 — 이미 있는 팀·사람·여럿 방 막기)
+  if tg_table_name = 'msgr2_messages' then
+    if new.author_kind = 'user' and not public._msgr2_lite_room_ok(new.room_id) then raise exception 'msgr2_lite_only' using errcode = '42501'; end if;
+    return new;
+  end if;
   -- msgr2_room_members: 새로 넣거나 빠졌던 멤버를 되살릴 때
   if tg_op = 'UPDATE' and (new.removed_at is not null or old.removed_at is null) then return new; end if;
   select * into r from public.msgr2_rooms where id = new.room_id;
@@ -89,6 +107,8 @@ drop trigger if exists msgr2_lite_guard on public.msgr2_space_invites;
 create trigger msgr2_lite_guard before insert on public.msgr2_space_invites for each row execute function public.msgr2_lite_guard();
 drop trigger if exists msgr2_lite_guard on public.msgr2_room_members;
 create trigger msgr2_lite_guard before insert or update of removed_at on public.msgr2_room_members for each row execute function public.msgr2_lite_guard();
+drop trigger if exists msgr2_lite_guard on public.msgr2_messages;
+create trigger msgr2_lite_guard before insert on public.msgr2_messages for each row execute function public.msgr2_lite_guard();
 
 -- ── 4. 회의방 만들기 — 내 에이전트 2..5명(봇 제외) + 나, 개인 공간 private 방 ────────────────────────────────
 create or replace function public.msgr2_meeting_create(p_name text, p_agents uuid[]) returns jsonb
@@ -133,6 +153,8 @@ begin
   select * into a from public.msgr2_agents where id = p_agent;
   if r.id is null or s.deleted_at is not null or r.archived_at is not null or r.agent_policy = 'blocked' or a.id is null or a.status <> 'active' then return null; end if;
   if not exists (select 1 from public.msgr2_room_members where room_id = p_room and member_kind = 'agent' and member_id = p_agent and removed_at is null) then return null; end if;
+  -- A+ lite: 허용 방이 아니면 일 0(글쓰기 트리거를 거치지 않은 글·넘김도 같은 판정, #1117 검수 H1)
+  if public._msgr2_lite() and not public._msgr2_lite_room_ok(p_room) then return null; end if;
   -- A+ Pro 전용(R4): 에이전트 주인이 Pro가 아니면 일을 만들지 않는다(사람 글 1개에 안내 1줄)
   if not public._msgr2_pro_ok(a.owner_user_id) then
     perform public._msgr2_system_msg(p_room, p_topic, null, jsonb_build_object('code', 'work.limit', 'limit', 'pro', 'agent', p_agent));
@@ -438,10 +460,24 @@ begin
          'attachments', public._msgr2_attachments_of(w.source_message_id)) else '{}'::jsonb end; -- 사람 글의 첨부는 글을 넣은 뒤에 붙어 offer에 없을 수 있다
 end $$;
 
+-- ── 8b. 이전(U8 백필) 막기 — lite 켬 동안 ─────────────────────────────────────
+create or replace function public._msgr2_bf_begin() returns void
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is not null then raise exception 'msgr2_backfill_service_only' using errcode = '42501'; end if;
+  if exists (select 1 from public.msgr_settings where key in ('msgr2_switched_at', 'msgr2_enabled')) then
+    raise exception 'msgr2_backfill_after_switch' using errcode = '55000', hint = '스위치 뒤(msgr2_switched_at·msgr2_enabled)에는 백필하지 않는다(v2 변경을 옛 값으로 덮는다)'; end if;
+  -- A+(lite 켬) 동안은 옛 데이터 이전을 하지 않는다 — 되돌릴 수 없는 이전이라 함수에서 막는다(#1117 검수 H1 (b), 유건 A+ "옛 대화는 옮기지 않음")
+  if public._msgr2_lite() then
+    raise exception 'msgr2_backfill_lite' using errcode = '55000', hint = 'msgr2_lite가 켜져 있다(A+). 이전하려면 정책 결정 뒤 msgr2_lite=off'; end if;
+  perform set_config('msgr2.backfill', 'on', true);
+end $$;
+
 -- ── 9. 권한 ───────────────────────────────────────────────────────────────────
 revoke all on function public._msgr2_clamp(text, int, int) from public, anon, authenticated;
 revoke all on function public._msgr2_pro_ok(uuid) from public, anon, authenticated;
 revoke all on function public._msgr2_lite() from public, anon, authenticated;
+revoke all on function public._msgr2_lite_room_ok(uuid) from public, anon, authenticated;
 revoke all on function public._msgr2_runner_has(uuid, text) from public, anon, authenticated;
 revoke all on function public._msgr2_make_offer_x(uuid, uuid, uuid, text, uuid, uuid, text, bigint, uuid, int, uuid[]) from public, anon, authenticated;
 revoke all on function public._msgr2_make_offer(uuid, uuid, uuid, text, uuid, uuid, text, bigint, uuid, int) from public, anon, authenticated;

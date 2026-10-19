@@ -53,6 +53,7 @@ before(() => {
     create or replace function public.is_pro_for(p uuid) returns boolean language sql stable as $$ select exists (select 1 from public.test_pro where uid = p) $$;
     insert into public.test_pro values ('${P}');
     insert into public.msgr_settings values ('msgr2_limit_agent_min', '1000'), ('msgr2_limit_room_min', '1000') on conflict (key) do update set value = excluded.value`);
+  db.sql(`delete from public.msgr_settings where key in ('msgr2_lite', 'msgr2_pro_gate')`); // setup()은 A+ 스위치를 끈 채로 준다 — 이 시험은 운영 기본(켬)으로 본다
   pApp = seedDevice(db, P, 'app'); pRun = seedDevice(db, P, 'runner'); fApp = seedDevice(db, F, 'app'); fRun = seedDevice(db, F, 'runner'); xApp = seedDevice(db, X, 'app');
   PS = db.sql(`insert into public.msgr2_spaces (kind, owner_user_id) values ('personal', '${P}') returning id`);
   db.sql(`insert into public.msgr2_space_members (space_id, user_id, role) values ('${PS}', '${P}', 'owner')`);
@@ -266,4 +267,37 @@ test('되돌림 — down.sql 뒤 새 열·함수·트리거가 없고 offer 함�
   assert.ok(!db.sql(`select prosrc from pg_proc where proname = 'msgr2_link_send'`).includes('post_denied'));
   db.psql(['-c', readFileSync(MIG, 'utf8')]);
   assert.equal(shape(), applied);
+});
+
+test('R-lite(#1117 검수 H1) — 이미 있는 팀 방·다른 사람이 있는 방·에이전트 2명 일반 방은 lite에서 글 거부·일 0, lite 끔이면 종전대로', { skip }, () => {
+  // 이전(U8)으로 들어온 모양을 서비스 문맥으로 시드한다(트리거는 사람 문맥만 본다)
+  const TS = db.sql(`insert into public.msgr2_spaces (kind, name, owner_user_id) values ('team', '팀', '${P}') returning id`);
+  db.sql(`insert into public.msgr2_space_members (space_id, user_id, role) values ('${TS}', '${P}', 'owner'), ('${TS}', '${X}', 'member')`);
+  const TA = agentRow('w', 'ta');
+  db.sql(`insert into public.msgr2_agent_seats (agent_id, space_id, allow) values ('${TA}', '${TS}', 'all')`);
+  const teamRoom = db.sql(`insert into public.msgr2_rooms (space_id, kind, name) values ('${TS}', 'private', '팀방') returning id`);
+  db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${teamRoom}', 'user', '${P}'), ('${teamRoom}', 'user', '${X}'), ('${teamRoom}', 'agent', '${TA}')`);
+  const humanRoom = room([A1]); db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${humanRoom}', 'user', '${X}')`);
+  const groupRoom = room([A2, A3]); // 회의방 아님
+  const cases = [['팀 방 멘션', pApp, teamRoom, [TA]], ['다른 사람 글', xApp, humanRoom, []], ['내 글(다른 사람 있는 방)', pApp, humanRoom, [A1]], ['에이전트 2명 일반 방', pApp, groupRoom, [A2, A3]]];
+  for (const [name, who, r, m] of cases) {
+    const e = db.asErr(who.uid, who.sid, `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body, mentions) values ('${r}', 'user', '${who.uid}', 'x', '{${m.join(',')}}')`) ?? '';
+    assert.match(e, /msgr2_lite_only/, `${name}: 글 거부`);
+  }
+  // 글쓰기 트리거를 거치지 않은 글(서비스 문맥)도 일은 0 — offer 판정이 같은 규칙을 본다
+  for (const [, , r, m] of cases) db.sql(`insert into public.msgr2_messages (room_id, author_kind, author_user_id, body, mentions) values ('${r}', 'user', '${P}', '서비스', '{${m.join(',')}}')`);
+  for (const [name, , r] of cases) assert.equal(works(r).length, 0, `${name}: 일 0`);
+  setting('msgr2_lite', 'off');
+  try {
+    say(pApp, teamRoom, '팀', [TA]); say(xApp, humanRoom, '남'); say(pApp, groupRoom, '둘', [A2, A3]);
+    assert.equal(works(teamRoom).length, 1, '팀 방 멘션 → 일 1(종전)');
+    assert.equal(works(groupRoom).length, 2, '두 에이전트 멘션 → 일 2(종전)');
+  } finally { setting('msgr2_lite', null); }
+});
+
+test('lite 켬 동안 U8 백필은 함수에서 거부한다(msgr2_backfill_lite), 끄면 종전 판정으로 간다', { skip }, () => {
+  const r = db.raw(['-A', '-t', '-c', 'select public._msgr2_bf_begin()']);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /msgr2_backfill_lite/);
+  setting('msgr2_lite', 'off');
+  try { assert.equal(db.raw(['-A', '-t', '-c', 'select public._msgr2_bf_begin()']).status, 0); } finally { setting('msgr2_lite', null); }
 });

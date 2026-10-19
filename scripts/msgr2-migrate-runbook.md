@@ -20,6 +20,7 @@
 | 0-7 | 실행 전 옛 표 행 수를 남겼다 | `bash scripts/msgr2-migrate.sh verify` 출력의 `old_counts`를 파일로(아직 비어 있으면 ok=false가 정상) |
 | 0-8 | 옛 앱 사용자 안내를 올릴 준비가 됐다 | 아래 "안내 문구 초안"(창을 열 때 랜딩·공지, 스위치 뒤 옛 방 공지) |
 | 0-9 | 작업 창 길이를 잡았다 | qbwr 연습의 전체 시간 + 여유. 창 동안 계정 삭제·보관 조직 영구 삭제가 거부된다 |
+| 0-10 | A+ lite가 꺼져 있다(옛 대화를 옮기기로 다시 정한 경우에만 이 문서를 쓴다) | `select coalesce((select value from msgr_settings where key = 'msgr2_lite'), 'on')` = `off`. 켜져 있으면(A+ 기본, 2026-10-19 유건 "옛 대화는 옮기지 않음") 백필 함수가 `msgr2_backfill_lite`로 거부한다(20261019160000) |
 
 ## 1. 작업 창 열기 (설계 6절 0단계)
 

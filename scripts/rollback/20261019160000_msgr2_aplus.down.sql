@@ -6,8 +6,17 @@ set local lock_timeout = '5s';
 drop trigger if exists msgr2_lite_guard on public.msgr2_spaces;
 drop trigger if exists msgr2_lite_guard on public.msgr2_space_invites;
 drop trigger if exists msgr2_lite_guard on public.msgr2_room_members;
+drop trigger if exists msgr2_lite_guard on public.msgr2_messages;
 drop function if exists public.msgr2_lite_guard();
 drop function if exists public.msgr2_meeting_create(text, uuid[]);
+create or replace function public._msgr2_bf_begin() returns void
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is not null then raise exception 'msgr2_backfill_service_only' using errcode = '42501'; end if;
+  if exists (select 1 from public.msgr_settings where key in ('msgr2_switched_at', 'msgr2_enabled')) then
+    raise exception 'msgr2_backfill_after_switch' using errcode = '55000', hint = '스위치 뒤(msgr2_switched_at·msgr2_enabled)에는 백필하지 않는다(v2 변경을 옛 값으로 덮는다)'; end if;
+  perform set_config('msgr2.backfill', 'on', true);
+end $$;
 create or replace function public._msgr2_make_offer(p_room uuid, p_topic uuid, p_agent uuid, p_from_kind text, p_from_id uuid, p_root_user uuid,
   p_text text, p_source bigint, p_parent uuid, p_depth int) returns uuid
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
@@ -230,6 +239,7 @@ begin
 end $$;
 drop function if exists public._msgr2_make_offer_x(uuid, uuid, uuid, text, uuid, uuid, text, bigint, uuid, int, uuid[]);
 drop function if exists public._msgr2_runner_has(uuid, text);
+drop function if exists public._msgr2_lite_room_ok(uuid);
 drop function if exists public._msgr2_lite();
 drop function if exists public._msgr2_pro_ok(uuid);
 drop function if exists public._msgr2_clamp(text, int, int);

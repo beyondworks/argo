@@ -93,6 +93,7 @@ export function setupFull(DB) {
   const base = ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260929110000_plan_no_trial.sql'];
   const all = [...base, ...readdirSync(mig('')).filter((x) => /^\d+_msgr.*\.sql$/.test(x))].sort();
   for (const f of all) db.psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  v2FullMode(db);
   return { ...db, files: all };
 }
 
@@ -117,6 +118,7 @@ export function setup(DB) {
   if (u2b) db.psql(['-c', readFileSync(mig(u2b), 'utf8')]);
   // U2b 뒤의 msgr2 파일(U6b 접속 표시·첨부 표지 등) — 버전 순서대로
   for (const f of readdirSync(mig('')).filter((x) => /_msgr2_.*\.sql$/.test(x) && u2b && x > u2b).sort()) db.psql(['-c', readFileSync(mig(f), 'utf8')]);
+  v2FullMode(db); // A+ 스위치는 끈 채로 시작한다 — A+ 시험(test/msgr2-aplus-pg.test.mjs)이 다시 켠다
   return { ...db, u3: u3 ?? 'stub' };
 }
 
