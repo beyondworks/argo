@@ -2035,6 +2035,8 @@ export const DICT = {
   'v2.sys.error.tier_denied': ['{agent}: 손님이 있는 방에서는 할 수 없는 일입니다.', '{agent}: not allowed in a room with guests.'],
   'v2.sys.error.budget': ['{agent}: 예산을 넘었습니다.', '{agent}: over budget.'],
   'v2.sys.error.internal': ['{agent}: 알 수 없는 오류로 멈췄습니다.', '{agent}: stopped on an unexpected error.'],
+  'v2.sys.error.bot_unreachable': ['{agent}: 외부 봇에 연결하지 못했습니다. 봇이 켜져 있는지 확인해 주세요.', '{agent}: could not reach the external bot. Check that it is running.'],
+  'v2.sys.error.bot_limit': ['{agent}: 외부 봇 호출 한도에 닿았습니다. 잠시 뒤 다시 시켜 주세요.', '{agent}: external bot call limit reached. Try again shortly.'],
   'v2.sys.cancelled': ['{name}님이 일을 취소했습니다.', '{name} cancelled the work.'],
   'v2.sys.resolved': ['{name}님이 이 토픽을 해결로 표시했습니다.', '{name} marked this topic resolved.'],
   'v2.sys.unknown': ['알림', 'Notice'],
