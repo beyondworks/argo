@@ -29,7 +29,9 @@
 --       (0.1.114 이상과, main 코드로 도는 개발 빌드·상주 :3001 — package.json이 직전 발행 번호여도 꼬리가 있다).
 --     · x-argo-app-version 헤더(#1050, 0.1.112·0.1.113 메신저 요청) — 그 값 ≤ 기준이면 바로 폐기, 크면 건너뛴다.
 --     · 관문 기록(argo_gate_sessions)의 app_version — 관문 요청에 꼬리가 있었으면 그 버전이 남는다(0.1.114부터). 버전이 남은 세션은 폐기하지 않는다
---       (0.1.114의 꼬리 없는 요청 — 결제 화면·프로필 조회 등 — 을 지킨다). 버전 없이 관문 기록만 있는 세션 = 0.1.107~0.1.113 → 기준이 0.1.113 이상일 때만 바로 폐기.
+--       (0.1.114의 꼬리 없는 요청을 지킨다 — 0.1.114부터는 본체 모든 요청에 꼬리가 붙는다, src/supabase-client.mjs). 버전 없이 관문 기록만 있는 세션 = 0.1.107~0.1.113
+--       → 기준이 0.1.113 이상일 때 '의심 → 35분 → 폐기'(바로 끊지 않는다 — 같은 로그인으로 0.1.114에 업데이트한 세션은 35분 안의 꼬리 있는 관문이 지킨다).
+--       이 모드에서는 꼬리 없는 관문 호출이 의심 표시를 지우지 않는다(0.1.107~0.1.113도 관문을 부르므로).
 --     · 셋 다 없으면 위 '의심 → 35분 → 폐기' 그대로(0.1.106 이하, 또는 아직 관문을 부르지 않은 새 세션 — 관문 호출이 표시를 지운다).
 --   기준을 0.1.113으로 넓히기 전 조건: 0.1.114 발행 + 상주 :3001을 0.1.114 코드로 맞춤(옛 코드의 관문 요청은 꼬리가 없다).
 --
@@ -100,7 +102,9 @@ begin
       insert into public.argo_gate_sessions as g (session_id, user_id, app_version) values (sid, uid, tv)
         on conflict (session_id) do update set seen_at = now(), app_version = coalesce(excluded.app_version, g.app_version);
     end if;
-    if sid is not null and exists (select 1 from public.argo_old_app_sessions o where o.session_id = sid and o.cut_at is null) then
+    -- 업데이트 직후 경합으로 붙은 의심 표시를 지운다 — 기준이 0.1.113 이상이면 꼬리 있는 관문(0.1.114+)일 때만(꼬리 없는 관문 = 0.1.107~0.1.113도 대상이다)
+    if sid is not null and (tv is not null or public._argo_cutoff_max() < array[0,1,113])
+       and exists (select 1 from public.argo_old_app_sessions o where o.session_id = sid and o.cut_at is null) then
       delete from public.argo_old_app_sessions o where o.session_id = sid and o.cut_at is null; -- 업데이트 직후 경합으로 붙은 의심 표시를 지운다
     end if;
   exception when others then null; -- 기록은 덤이다 — 관문 값은 항상 돌려준다
@@ -136,8 +140,11 @@ begin
     select * into g from public.argo_gate_sessions where session_id = sid;
     if found then
       if g.app_version is not null then return; end if; -- 관문에 꼬리가 있던 세션(0.1.114+) — 이 세션의 꼬리 없는 요청도 지킨다
-      if hv is not null or mx >= array[0,1,113] then cut_now := true; -- 버전 헤더 ≤ 기준, 또는 기준이 0.1.113이라 관문만 부른 0.1.107~0.1.113 전부
-      else return; end if; -- 기준이 0.1.113 아래면 관문을 부른 세션은 버전을 몰라 건너뛴다(종전)
+      if hv is not null then cut_now := true; -- 버전 헤더(0.1.112·0.1.113) ≤ 기준 — 확정
+      elsif mx < array[0,1,113] then return; -- 기준이 0.1.113 아래면 관문을 부른 세션은 버전을 몰라 건너뛴다(종전)
+      end if;
+      -- 기준 0.1.113 + 버전 없이 관문만 부른 세션: 바로 끊지 않고 아래 '의심 → 35분' 흐름으로(엄격 검수 H1 — 0.1.113에서 같은 로그인으로
+      -- 업데이트한 0.1.114가 꼬리 있는 관문을 부르기 전 꼬리 없는 요청을 보내도, 35분 안에 꼬리 있는 관문 호출이 표시를 지우고 버전을 남긴다).
     elsif hv is not null then cut_now := true; -- 관문 기록은 없지만 버전 헤더 ≤ 기준
     end if;
     if cut_now then

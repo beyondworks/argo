@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, writeFile, rename, rm, appendFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from './supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { WS_ROOT } from './workspace.mjs';
 import { withLock, withDirLock } from './mutex.mjs';
 import { createHash } from 'node:crypto';

@@ -260,14 +260,30 @@ test('기준 0.1.106(설정 없음 — 기본): 0.1.112 버전 헤더·관문 �
   const c = session(); cutThrough(c); assert.ok(!alive(c.sid), '0.1.106 이하는 종전처럼 35분 뒤 폐기');
 });
 
-test('기준 0.1.113: 버전 헤더 0.1.112 → 바로 폐기, 관문 기록만(버전 없음) → 바로 폐기, #1065 이전 설치본(꼬리 없음·관문 없음) → 35분 뒤 폐기', { skip }, () => {
+test('기준 0.1.113: 버전 헤더 0.1.112 → 바로 폐기, 관문 기록만(버전 없음) → 의심 → 35분 → 폐기(꼬리 없는 관문은 표시를 지우지 않음), #1065 이전 설치본 → 35분 뒤 폐기', { skip }, () => {
   on(); setMax('0.1.113');
   const a = session(); request({ ...a, headers: H112 });
   assert.ok(!alive(a.sid), '0.1.112 버전 헤더 ≤ 기준 — 대기 없이 폐기'); assert.equal(tokens(a.sid), 0); assert.deepEqual(row(a.sid), { cut: true, due: true });
+  const a3 = session(); request({ ...a3, headers: { 'x-argo-app-version': '0.1.113' } });
+  assert.ok(!alive(a3.sid), '0.1.113 버전 헤더도 바로 폐기');
   const b = session(); gate(b.sid, b.uid); assert.equal(gateVer(b.sid), '-', '0.1.107~0.1.113 관문 요청은 꼬리가 없다');
-  request(b); assert.ok(!alive(b.sid), '관문만 부른 옛 앱(0.1.107~0.1.113)도 기준 0.1.113이면 폐기');
+  request(b); assert.ok(alive(b.sid), '버전 없이 관문만 부른 세션은 바로 끊지 않는다(엄격 검수 H1)'); assert.deepEqual(row(b.sid), { cut: false, due: false });
+  gate(b.sid, b.uid); assert.deepEqual(row(b.sid), { cut: false, due: false }, '꼬리 없는 관문 호출은 이 모드에서 표시를 지우지 않는다');
+  makeDue(b.sid); request(b); assert.ok(!alive(b.sid), '35분 뒤에도 꼬리 있는 관문이 없으면 폐기(0.1.107~0.1.113)');
   const c = session(); request(c); assert.ok(alive(c.sid), '꼬리·헤더·관문 없는 첫 요청은 표시만'); makeDue(c.sid); request(c);
   assert.ok(!alive(c.sid), '#1065 이전 설치본 — 35분 뒤 폐기');
+  setMax(null);
+});
+
+test('R1(엄격 검수 H1) 0.1.113에서 같은 로그인으로 0.1.114에 업데이트한 직후 — 꼬리 없는 POST가 꼬리 있는 관문보다 먼저 와도 살아남는다', { skip }, () => {
+  on(); setMax('0.1.113');
+  const s = session(); gate(s.sid, s.uid); // 업데이트 전 0.1.113이 남긴 관문 기록(버전 없음)
+  for (const path of ['/rpc/my_plan', '/rest/v1/rpc/msgr_notification_claim']) request({ ...s, path }); // 0.1.114의 꼬리 없는 POST(결제 화면 등 — 0.1.114부터는 꼬리가 붙지만 서버도 막는다)
+  assert.ok(alive(s.sid), '바로 폐기되지 않는다');
+  gate(s.sid, s.uid, TAIL114); // 35분 안의 꼬리 있는 관문
+  assert.equal(gateVer(s.sid), '0.1.114'); assert.equal(row(s.sid), null, '꼬리 있는 관문이 의심 표시를 지운다');
+  for (let i = 0; i < 2; i++) request(s);
+  assert.ok(alive(s.sid), '그 뒤 꼬리 없는 요청도 지킨다');
   setMax(null);
 });
 

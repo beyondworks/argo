@@ -9,7 +9,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from './supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { APP_VERSION, withArgoClientInfo } from './app-version.mjs';
 import { cmpVersion } from './version-compare.mjs';
 import { WS_ROOT } from './workspace.mjs';
