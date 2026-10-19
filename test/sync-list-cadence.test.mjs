@@ -28,7 +28,7 @@ test('색인 RPC는 discover 게이트를 타고, 두 소비자가 같은 색인
   assert.match(SRC, /const syncIndex = fetchedIndex && fetchedIndex\.companies\.length === 0 && targets\.size === 0 \? null : fetchedIndex;/,
     '빈 색인 페일세이프가 빠졌다 — 함수가 행을 못 보는 무음 실패가 사고와 같은 증상으로 재발한다(검수 HIGH-1)');
   const cycleBody = SRC.slice(SRC.indexOf('async function cycle()'));
-  assert.ok(cycleBody.indexOf('syncEntitled(') < cycleBody.indexOf('loadSyncIndex('), '색인 RPC(DB 호출)가 요금제 게이트보다 앞이다 — 2026-07-27 교훈');
+  assert.ok(cycleBody.indexOf('resolvePlan(') > 0 && cycleBody.indexOf('resolvePlan(') < cycleBody.indexOf('loadSyncIndex('), '색인 RPC(DB 호출)가 요금제 게이트보다 앞이다 — 2026-07-27 교훈');
   assert.match(SRC, /discoverRemote\(localOwners,\s*syncIndex\)/,
     'discoverRemote가 색인을 안 받는다 — 새 기기가 다시 storage.search(30초 타임아웃)로 회사를 찾는다');
 });
@@ -43,17 +43,22 @@ test('두 호출이 같은 변수를 쓴다 — 게이트를 나누면 보관 �
   // 복원된다(보관 전파가 tombs로 걸러지는 구조). 절감이 더 필요하면 주기를 늘려야지 나누면 안 된다.
   const gates = [...SRC.matchAll(/isDiscoverDue\(/g)].length;
   assert.equal(gates, 1, '게이트 판정이 두 곳 이상이다 — discover와 tombstone이 갈라졌을 수 있다');
-  assert.match(SRC, /const discoverDue = !freeListSkip && isDiscoverDue\(/, '게이트 결과는 discoverDue 하나로 모은다(freeListSkip 포함형 — 아래 free 스킵 테스트 참조)');
+  assert.match(SRC, /const discoverDue = isDiscoverDue\(/, '게이트 결과는 discoverDue 하나로 모은다(확정 무료는 이 앞에서 사이클을 끝낸다 — 아래 free 테스트 참조)');
 });
 
 test('free 스킵 판정식 — 변이 방어(분리 검수 M4: === \'free\'를 !== \'pro\'로 바꿔도 스위트가 초록이었다)', () => {
   // trial·미확인(null)이 스킵 대상에 포함되면 정상 사용자의 멀티기기 동기화가 조용히 끊긴다.
   assert.match(SRC, /freePlan = ent\.plan === 'free'/,
     "free 판정은 === 'free'만 — fetchPlan의 실패·미확인은 전부 null이라 이 등호가 fail-safe의 전부다");
-  // 복구 예외(데이터 소유권): 로컬 회사 0개인 free 기기는 목록 허용 — RLS가 free에 select를 열어둔
-  // 취지(20260723001629)와 정합. 이 예외를 지우면 재설치 free 사용자의 회사가 영영 안 돌아온다.
-  assert.match(SRC, /const freeListSkip = freePlan && targets\.size > 0;/,
-    'free 목록 스킵에 복구 예외(targets 0개)가 빠졌다');
+  // 2026-10-19: 확정 무료 = 이 기기에서만 — 게이트 바로 뒤에서 사이클을 끝낸다. 계정 키·DEK·목록 조회보다 앞이어야 무료 계정의 호출이 0이다.
+  // (옛 복원 예외는 없어졌다 — 무료 사본 정리·서버 읽기 차단 20261019130100. 행동은 test/sync-free-local-only.test.mjs가 요청 수로 잠근다)
+  const cycleBody = SRC.slice(SRC.indexOf('async function cycleOnce()'));
+  const early = cycleBody.indexOf('if (freePlan) {');
+  assert.ok(early > 0, '확정 무료의 조기 종료가 없다');
+  for (const call of ['ensureAccountKey(client(), keyOwner)', 'ensureDeviceKeyRegistered(', 'tryClaimDek(', 'loadSyncIndex(', 'syncTombstones(', 'discoverRemote(', 'syncCompany(']) {
+    const at = cycleBody.indexOf(call);
+    assert.ok(at > early, `${call}가 확정 무료 조기 종료보다 앞이다 — 무료 계정이 클라우드를 부른다`);
+  }
 });
 
 test('리스 오너 배선 — 로컬 수집 targets에서 오너를 뽑는다 (분리 검수: owners[0]로 되돌리면 TDZ 런타임 오류)', () => {
@@ -70,22 +75,25 @@ test('리스 오너 배선 — 로컬 수집 targets에서 오너를 뽑는다 (
 
 test('요금제 게이트가 원격 목록 조회(tombstone·discover)보다 앞이다', () => {
   const cycleBody = SRC.slice(SRC.indexOf('async function cycle()'));
-  const gate = cycleBody.indexOf('syncEntitled(');
-  assert.ok(gate > 0, 'cycle 안에 요금제 게이트(syncEntitled)가 없다');
+  const gate = cycleBody.indexOf('resolvePlan(');
+  assert.ok(gate > 0, 'cycle 안에 요금제 게이트(resolvePlan → syncEntitled)가 없다');
   const tombstones = cycleBody.indexOf('syncTombstones(keyOwner');
   const discover = cycleBody.indexOf('discoverRemote(localOwners');
   assert.ok(tombstones > 0 && gate < tombstones, '게이트가 tombstone 목록 조회 뒤에 있다 — 차단될 계정도 storage.search를 먼저 태운다(2026-07-27 사고 재발)');
   assert.ok(discover > 0 && gate < discover, '게이트가 discover 뒤에 있다 — 동일 사고 재발');
 });
 
-test('리스 갱신은 요금제 게이트를 지나지 않는다(architect 2026-07-23 권고 — 2026-10-09부터 리스 타이머가 동기화 주기와 따로 돈다)', () => {
-  // 무료 계정도 리더 중재는 해야 한다 — 게이트 return이 리스 판정을 막으면 무료 단일 기기의 루틴·메신저가 죽는다.
-  // 리스 판정은 동기화 주기(cycle) 밖 리스 타이머(leaseTick)에만 있고, 그 안에는 요금제 게이트가 없다. ensureSync가 리스 타이머를 켠다.
+test('리스 타이머는 동기화 주기 밖에 있고, 확정 무료면 리스·클레임을 건너뛴다(2026-10-19 — 무료는 기기 1대, 이 기기가 담당)', () => {
+  // 2026-07-23 권고(무료도 리스 중재)는 2026-10-19 유건 지시로 바뀌었다: 무료 = 로그인·플랜 확인만. 무료 기기는 리스 없이 이 기기가 담당이다
+  // (isCloudLeader·tokenOwnership의 planIsFreeLocal). 리스 판정은 여전히 동기화 주기(cycle) 밖 리스 타이머(leaseTick)에만 있다.
   const cycleBody = SRC.slice(SRC.indexOf('async function cycle()'), SRC.indexOf('export function nudgeSync()'));
   const tick = SRC.slice(SRC.indexOf('async function leaseTick()'), SRC.indexOf('function startLeaseLoop()'));
-  assert.ok(cycleBody.indexOf('syncEntitled(') > 0, 'cycle 안에 요금제 게이트가 없다');
+  assert.ok(cycleBody.indexOf('resolvePlan(') > 0, 'cycle 안에 요금제 게이트가 없다');
   assert.equal(/renewLease\(|leaseTick\(/.test(cycleBody), false, '리스 판정이 다시 동기화 주기 안으로 들어왔다 — 요금제 게이트·긴 주기에 묶인다');
-  assert.equal(tick.includes('syncEntitled('), false, '리스 타이머에 요금제 게이트가 들어왔다');
+  const free = tick.indexOf("if (ent?.plan === 'free')");
+  assert.ok(free > 0 && free < tick.indexOf('await renewLease(') && free < tick.indexOf('renewTokenClaims('), '확정 무료 건너뛰기가 리스·클레임 갱신보다 앞이어야 한다');
+  assert.match(SRC, /if \(!syncOn\(\) \|\| planIsFreeLocal\(\)\) return leaseRole\(\) !== 'standby';/, '확정 무료는 리스 없이 이 기기가 담당(isCloudLeader)');
+  assert.match(SRC, /if \(!syncOn\(\) \|\| planIsFreeLocal\(\)\) return \{ mine: true, holder: null, pending: false \};/, '확정 무료는 텔레그램 토큰이 이 기기 것(tokenOwnership)');
   assert.match(SRC.slice(SRC.indexOf('export function ensureSync()')), /startLeaseLoop\(\);/);
 });
 
@@ -116,7 +124,8 @@ test('확정 free는 파일 왕복을 스킵한다(복원·복원미완 예외) 
   // 파일 하나가 failed>0을 만들면 매니페스트 관용(failed===0)이 막혀, 한 번도 성공 동기화한 적 없는
   // free 회사가 영영 완결에 못 닿는다(8초마다 재시도 · .conflict 증식 · lastError 고정). 행동은
   // test/sync-free-restore가 잠근다.
-  assert.match(SRC, /if \(e\?\.uploadFailed && opts\.freePlan\) denied\+\+; else failed\+\+;/,
+  // 할당량이 찬 Pro(opts.quotaFull)가 보내지 않은 쓰기(localOnly)도 같은 분리 집계를 탄다(2026-10-19) — 서버 거절(localOnly 아님)은 여전히 실패
+  assert.match(SRC, /if \(e\?\.uploadFailed && \(opts\.freePlan \|\| \(opts\.quotaFull && e\.localOnly\)\)\) denied\+\+; else failed\+\+;/,
     '파일 단위 쓰기 실패가 실패와 분리 집계되지 않는다 — MEDIUM-I 재발(복원 미완 고착)');
 });
 
