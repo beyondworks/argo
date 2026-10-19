@@ -232,8 +232,9 @@ test('UI 소스 계약: CloudExportRow는 lastError 분기 사슬과 직교로 �
   // (2026-08-05). 잠글 것은 **직교 렌더라는 불변식**이지 조건식의 철자가 아니다.
   const line = src.split('\n').find((l) => l.includes('<CloudExportRow'));
   assert.ok(line, '렌더 지점이 없다');
-  assert.match(line, /^\s*\{\(.*paywalled.*\|\|.*free.*\) && <CloudExportRow \/>\}$/,
-    '직교(&&) 렌더가 아니다 — 분기 사슬(lastError) 안으로 들어가면 대상 사용자가 버튼을 못 본다');
+  // 2026-10-19: 확정 무료에는 보이지 않는다(무료 사본 정리 + 서버 읽기 차단 20261019130100 — 눌러도 받을 것이 없다). 직교 렌더 불변식은 그대로.
+  assert.match(line, /^\s*\{sync\.paywalled && plan !== 'free' && <CloudExportRow \/>\}$/,
+    '직교(&&) 렌더가 아니다 — 분기 사슬(lastError) 안으로 들어가면 대상 사용자가 버튼을 못 본다(또는 확정 무료에 다시 보인다)');
   assert.equal(src.split('<CloudExportRow').length - 1, 1, '렌더 지점은 정확히 한 곳(사슬 안 중복 금지)');
 });
 
