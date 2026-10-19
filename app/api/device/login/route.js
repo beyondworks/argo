@@ -1,6 +1,6 @@
 // 기기 로그인 — OTP 검증을 서버가 수행하고 세션을 기기 파일에만 저장한다(브라우저에 세션 없음 —
 // refresh 토큰 단일 소유자 원칙). 성공 시 동기화가 재시작 없이 기동된다.
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from '../../../../src/supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { saveDeviceSession } from '../../../../src/devicesession.mjs';
 import { ensureSync } from '../../../../src/sync.mjs';
 import { guestModeOn } from '../../../../src/gueststate.mjs';

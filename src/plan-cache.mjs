@@ -31,3 +31,9 @@ export function planResumes(prev, next) {
   if (!prev || prev.key !== next.key) return true;
   return (next.plan === 'pro' || next.plan === 'trial') && prev.plan !== next.plan;
 }
+
+// 무료 = 이 기기에서만(유건 2026-10-19 "무료 사용자는 나중에 pro 전환을 위해 로그인만 하는 개념이고 사용은 전적으로 로컬에서"). 마지막으로 실제 조회한
+// 판정이 확정 free일 때만 참 — 조회 전·실패(null)·trial·pro는 거짓(유료 오차단 방지, fetchPlan과 같은 방향). 참이면 리스·텔레그램 클레임·메신저·계정 키 등
+// 로그인·플랜 확인 밖의 클라우드 호출을 하지 않고, 실행 담당은 이 기기가 맡는다(isCloudLeader·tokenOwnership). 계정이 바뀌면 키가 달라 다음 조회까지 거짓.
+// 지금 계정 키의 판정일 때만(조회 실패는 seen을 덮지 않는다 — sync.mjs resolvePlan, 분리 검수 F6: 실패 한 번에 무료 기기가 실행 담당을 잃었다).
+export const planIsFreeLocal = () => state.seen?.plan === 'free' && state.seen.key === state.key;

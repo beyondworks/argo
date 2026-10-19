@@ -1776,6 +1776,16 @@ function SyncCard({ ws }) {
               {t('settings.sync.oversize', { n: mine.oversize, names: (mine.oversizeRels ?? []).join(', ') + (mine.oversize > (mine.oversizeRels ?? []).length ? ' …' : ''), mb: Math.floor((mine.oversizeLimit ?? 50 * 2 ** 20) / 2 ** 20) })}
             </span>
           ) : null}
+          {/* Pro 클라우드 5GiB(src/sync.mjs QUOTA_* 주석) — 80%부터 안내, 가득 차면 새 업로드만 멈춘다(받기·기존 사본은 그대로) */}
+          {sync.quota?.warn ? (
+            <span style={{ fontSize: 12, color: sync.quota.full ? 'var(--danger)' : 'var(--fg-2)', lineHeight: 1.6 }}>
+              {t(sync.quota.full ? 'settings.sync.quotaFull' : 'settings.sync.quotaWarn', {
+                used: sync.quota.used == null ? '—' : `${(sync.quota.used / 2 ** 30).toFixed(1)}GB`,
+                limit: sync.quota.limit == null ? '5GB' : `${Math.round(sync.quota.limit / 2 ** 30)}GB`,
+                pct: Math.min(100, Math.round((sync.quota.ratio ?? 1) * 100)),
+              })}
+            </span>
+          ) : null}
           {sync.paywalled ? (
             // "고장"(lastError)과 "페이월"은 다른 상태 — 여기선 빨간 에러 줄 대신 안내+업그레이드를 보인다.
             <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
@@ -1831,8 +1841,9 @@ function SyncCard({ ws }) {
           {/* 클라우드 자료 내보내기 — 위 분기 사슬과 **직교**로 렌더한다(분리 검수 CRITICAL 2026-07-28).
               사슬 안에 넣으면 ARGO_ENFORCE_PLAN off 구간의 free 사용자가 lastError 분기(RLS push 거부가
               매 사이클 lastError를 채운다)에 걸려 버튼을 영영 못 본다. 데이터 반환 경로는 동기화 고장
-              여부와 무관해야 한다 — "데이터 인질 금지"의 요지. plan이 free로 확정됐거나 페이월이면 노출. */}
-          {(sync.paywalled || plan === 'free') && <CloudExportRow />}
+              여부와 무관해야 한다 — "데이터 인질 금지"의 요지.
+              2026-10-19: 확정 무료에는 보이지 않는다 — 무료 사본은 정리됐고 서버가 무료 계정의 읽기를 막는다(20261019130100). 무료의 정본은 이 기기다(위 '데이터 내보내기'). */}
+          {sync.paywalled && plan !== 'free' && <CloudExportRow />}
           {bill?.status === 'past_due' && bill?.hasSub && (
             // 연체 유예 중 — 차단이 아니라 안내다(LS 던닝이 재시도 중, 유예 소진 시 free 강등).
             // href는 클릭 시점 발급 라우트 — 저장된 포털 URL은 24시간 만료라 렌더 금지(재검수 HIGH).

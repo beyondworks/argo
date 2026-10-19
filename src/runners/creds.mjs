@@ -10,6 +10,7 @@ import { WS_ROOT, paths } from '../workspace.mjs';
 import { withDirLock } from '../mutex.mjs';
 import { exists, homeEnv, scrubServerSecrets, seedAuthFile, credHash, HEALTH_FILE_NAME } from './shared.mjs';
 import { RUNNER_AUTH, GROK_DEFAULT_MODEL } from './catalog.mjs';
+import { claudeConfigEnv } from './claude-config.mjs';
 import { provisionCodexCli } from './codex.mjs';
 import { provisionGeminiCli, geminiTurnHome, probeGeminiSubscription } from './gemini.mjs';
 import { nativeRunnerEnabled } from '../engine/native-flags.mjs';
@@ -460,7 +461,8 @@ export async function sdkEnvFor(wsId, runner) {
   // SDK가 띄우는 Bash/MCP 자식도 서버 시크릿(서비스 키)을 상속하지 않도록 항상 세척된 env를 준다(P1-6).
   // claude 호스트 폴백도 이제 null 대신 세척 env를 반환한다 — 러너 인증(ANTHROPIC_*)은 보존, 크라운주얼만 제거.
   // runner 인자 = 실행 러너 외 제공사 키도 제거(크로스 러너 유출 차단, 감사 2026-07-20).
-  if (cred) return { ...scrubServerSecrets(process.env, runner), ...cred.env };
+  // claude 턴은 설정 폴더를 회사별로 격리한다 — 사용자 ~/.claude에 Argo 전사를 남기지 않게(claude-config.mjs). 호스트 env의 CLAUDE_CONFIG_DIR도 덮는다.
+  if (cred) return { ...scrubServerSecrets(process.env, runner), ...cred.env, ...(runner === 'claude' ? claudeConfigEnv(wsId, { tokenCred: true }) : {}) };
   if (runner === 'glm') return glmEnv(); // 회사 자격 없으면 호스트 GLM_API_KEY 폴백(glmEnv 자체가 세척됨)
   if (runner === 'kimi') return kimiEnv(); // 동일 — 호스트 KIMI_API_KEY 폴백(env 주입 = 명시 옵트인)
   const env = scrubServerSecrets(process.env, runner);
@@ -468,6 +470,7 @@ export async function sdkEnvFor(wsId, runner) {
   // 쓰는지는 SDK 내부 소관이라 판정(billedByType)과 어긋날 수 있다 — 구독 토큰이 있으면 API
   // 키를 소거해 실행을 구독으로 확정한다(한쪽 소거 패턴은 #83과 동일, 방향은 사용자 유리).
   if (runner === 'claude' && env.CLAUDE_CODE_OAUTH_TOKEN) env.ANTHROPIC_API_KEY = '';
+  if (runner === 'claude') Object.assign(env, claudeConfigEnv(wsId)); // host·호스트 env 폴백 — 로그인은 종전 자리(윈도우는 격리 안 함)
   return env;
 }
 

@@ -18,7 +18,7 @@
 // 범위 밖(정직 표기): Presence 미사용(하트비트 last_seen_at가 부재중 판정 정본).
 // DB 접근은 makeDb(client) 한 층에 모은다 — 단위 테스트는 가짜 db를 주입하고(test/msgr-bridge.test.mjs), 실제
 // supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from '../supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { APP_VERSION, withArgoClientInfo } from '../app-version.mjs';
 import { cmpVersion } from '../version-compare.mjs';
 import { chmod, mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
