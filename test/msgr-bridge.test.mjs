@@ -386,7 +386,7 @@ test('push: 턴 중 결재 → 미러 행 + 카드 + 로컬 메타, 웹 확정 �
   // 따로 잡는다. 맥락에 담기는 요청자 사슬(손님 판정 재료)은 msgr-guest-turn.test.mjs가 행동으로 잠근다(PR-A).
   const schedSrc = readFileSync(new URL('../src/scheduler.mjs', import.meta.url), 'utf8');
   assert.match(schedSrc, /crewId: msgrCrewIdBySlug\(cid, slug, msg\.msgr\.orgId\) \?\? null, orgSlug: msg\.msgr\.orgSlug \?\? null, channelName: msg\.msgr\.channelName \?\? '' \} : null;/, '배달 턴 맥락 = 수신 크루의 메신저 id');
-  assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n(?:\s*if \(mirrorCtx\) \{ const mem = await crewMemoryForMail\(mirrorCtx\.crewId, mirrorCtx\.channelId\)[^\n]*\n)?\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, journal: msgrJournal\(msg\.msgr\.orgId, msg\.msgr\.channelId, msg\.msgr\.memoryOff\) \} : await briefingCtx\(cid, 'crewmail', slug\)[^\n]*\) \}\);/, '배달 턴이 채널 문맥으로(메신저 밖 쪽지는 목적지 범위 — 행동은 shared-dest-context)');
+  assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n(?:\s*if \(mirrorCtx\?\.kind === 'msgr'\) \{ const mem = await crewMemoryForMail\(mirrorCtx\.crewId, mirrorCtx\.channelId\)[^\n]*\n)?\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, \.\.\.\(msg\.msgr \? \{ journal: msgrJournal\(msg\.msgr\.orgId, msg\.msgr\.channelId, msg\.msgr\.memoryOff\) \} : msg\.link\?\.memoryOff === true \? \{ journal: \{ off: true \} \} : \{\}\) \} : await briefingCtx\(cid, 'crewmail', slug\)[^\n]*\) \}\);/, '배달 턴이 채널 문맥으로(메신저 밖 쪽지는 목적지 범위 — 행동은 shared-dest-context). 메신저 v2 쪽지(link 범위)는 채널 일지·서버 기억 없이 — 행동은 msgr-guest-turn "v2 link 턴의 쪽지"');
 });
 
 // 분리 검수 H-1·M-4 — plain이 있어도 카드 payload에 실리고, 카드 글 본문(다른 창구·검색·구버전
@@ -454,10 +454,11 @@ test('배선 핀: 게이트웨이 매니저·pushEvent·채널 종류 등재(구
   const gw = await readFile(new URL('../src/gateway.mjs', import.meta.url), 'utf8');
   const sync = gw.slice(gw.indexOf('export function ensureGateway()'));
   // 자동 켜기(2026-09-15)가 큐 조립과 enabled 판정 사이에 선다 — 조직 멤버인데 꺼진 회사를 같은 sync에서 켠다(test/msgr-auto-enable.test.mjs)
-  assert.match(sync, /const qkeys = new Set\(\['telegram', 'slack', [^\n]*\]\);\n\s*\/\/[^\n]*\n\s*if \(msgrCloud && !c\.msgr\?\.enabled && await autoEnableMsgr\(c\.id, \{ company: c \}\)[^\n]*\n\s*if \(msgrCloud && c\.msgr\?\.enabled\) qkeys\.add\(MSGR_KEY\);/, '드레인 큐 키(자동 켜기 → enabled 판정)');
+  assert.match(sync, /const qkeys = new Set\(\['telegram', 'slack', [^\n]*\]\);\n\s*\/\/[^\n]*\n\s*if \(legacyMsgr && msgrCloud && !c\.msgr\?\.enabled && await autoEnableMsgr\(c\.id, \{ company: c \}\)[^\n]*\n\s*if \(legacyMsgr && msgrCloud && c\.msgr\?\.enabled\) qkeys\.add\(MSGR_KEY\);/, '드레인 큐 키(자동 켜기 → enabled 판정, 옛 브리지 플래그 뒤)');
+  assert.match(sync, /const legacyMsgr = legacyMsgrBridgeEnabled\(\);/, '옛 브리지 플래그(ARGO_MSGR_LEGACY, 기본 켜짐 — 행동은 test/agent-link-gateway-flags.test.mjs)');
   assert.match(sync, /: qkey === JOBS_QUEUE \? makeJobHandler\(c\.id\)[^\n]*\n\s*: qkey === MSGR_KEY \? makeMsgrHandler\(c\.id\)\n\s*: qkey\.startsWith\(TG_AGENT_Q\)/, '핸들러 삼항');
   // 예비 기기(argo run --standby)는 확인된 담당일 때만 브리지를 연다(2026-10-08) — 행동은 test/lease-standby-e2e.test.mjs가 두 프로세스로 잠근다
-  assert.match(sync, /if \(msgrCloud && c\.msgr\?\.enabled && !standbyIdle\(\)\) \{\n\s*const id = `\$\{c\.id\}:\$\{MSGR_KEY\}`;\n\s*alive\.add\(id\);\n\s*if \(!running\.has\(id\)\) running\.set\(id, \{ key: 'v1', stop: startMsgrBridge\(c\.id\) \}\);\n\s*\}/, '폴러(리더 전용 블록 안)');
+  assert.match(sync, /if \(legacyMsgr && msgrCloud && c\.msgr\?\.enabled && !standbyIdle\(\)\) \{\n\s*const id = `\$\{c\.id\}:\$\{MSGR_KEY\}`;\n\s*alive\.add\(id\);\n\s*if \(!running\.has\(id\)\) running\.set\(id, \{ key: 'v1', stop: startMsgrBridge\(c\.id\) \}\);\n\s*\}/, '폴러(리더 전용 블록 안)');
   // 검수 L5(2026-09-15): 옛 단언은 존재하지 않는 문자열(indexOf -1)과 비교해 항상 참이었다 — 실제 게이트는 procLeader(기기당 한 프로세스)
   assert.ok(sync.indexOf('if (!procLeader) {') > 0 && sync.indexOf('startMsgrBridge(c.id)') > sync.indexOf('if (!procLeader) {'), '브리지는 프로세스 리더 게이트 뒤(=리더만)');
   const pushStart = gw.indexOf('async function pushEvent(');

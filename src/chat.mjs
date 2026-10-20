@@ -134,6 +134,9 @@ export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__c
 export function shellGateMsgr(mirrorCtx, fallback = null) { // fallback = 문맥 없이 도는 메신저 턴의 게이트(보관한 옛 1:1에서 옮긴 이어 실행 — msgr.mjs runMessengerContinuation). 문맥이 있으면 쓰지 않는다
   if (mirrorCtx == null) return fallback;
   if (mirrorCtx?.kind === 'msgr-rules') return null; // 위임 턴은 게이트 꺼짐(지금 그대로 — 오피스 패널 조율자 전용 결재 목적지는 2026-10-13 오피스 분리로 없앴다)
+  // 메신저 v2 일(link 범위 턴, 모든 등급): 배포본 메신저와 같은 D28 — 결재는 그 일의 범위를 달고(연결부가 work.approval_request로 보낸다),
+  // 옛 메신저 목적지(msgr·channelId)는 싣지 않는다(옛 표로 미러하지 않는다). 승인된 같은 명령의 한 번 허용은 channelId 없음으로 짝을 맞춘다.
+  if (mirrorCtx?.kind === 'scope' && mirrorCtx.scope?.kind === 'link') return { link: mirrorCtx.scope };
   if (mirrorCtx?.kind !== 'msgr') return null;
   try { return messengerOrigin(mirrorCtx) ?? {}; } catch { return {}; }
 }
@@ -877,7 +880,8 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       }
       try {
         const { sendCrewMail } = await import('./crewmail.mjs');
-        const id = await sendCrewMail(wsId, { from: fromSlug, fromName, to: target.slug, cc: ccSlugs, message, hop: hop + 1, chain: [...chain, fromSlug], relaxed: lim.relaxed, ...(budget ? { tree: budget.id } : {}) });
+        const id = await sendCrewMail(wsId, { from: fromSlug, fromName, to: target.slug, cc: ccSlugs, message, hop: hop + 1, chain: [...chain, fromSlug], relaxed: lim.relaxed, ...(budget ? { tree: budget.id } : {}),
+          ...(mirrorCtx?.kind === 'scope' && mirrorCtx.scope?.kind === 'link' ? { link: mirrorCtx.scope } : {}) }); // v2 일의 등급을 배달 턴에 잇는다(scheduler crewmailMirrorCtx)
         cnt.mail += cost;
         return text(`쪽지를 보냈다(${id} → ${target.name}${ccSlugs.length ? `, 참조 ${ccSlugs.length}명` : ''}). 상대는 잠시 뒤 자기 턴에서 읽는다 — 결과를 기다리지 말고 지금 할 일을 마무리하라.`);
       } catch (e) {

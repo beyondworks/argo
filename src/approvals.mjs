@@ -89,11 +89,13 @@ export const approvalCommandLabel = (lang) => (lang === 'en' ? 'Command' : '명�
 
 /** 메신저 셸 결재(D28) — 이 크루·이 채널에서 승인됐고 아직 쓰지 않은 같은 명령이 있으면 한 번 쓰고 true.
     승인 한 번 = 실행 한 번(같은 명령을 다시 하려면 다시 결재). 락 안에서 표시하므로 동시 턴이 같은 승인을 두 번 쓰지 못한다. */
-export async function consumeShellApproval(wsId, { slug, shell, channelId = null }) {
+export async function consumeShellApproval(wsId, { slug, shell, channelId = null, work = null }) {
   return lockApprovals(wsId, async () => {
     const list = await loadApprovals(wsId);
     const it = list.find((a) => a.status === 'approved' && a.slug === slug && a.payload?.shell === shell && !a.payload?.consumedAt
-      && (a.msgr?.channelId ?? null) === (channelId ?? null));
+      && (a.msgr?.channelId ?? null) === (channelId ?? null)
+      // 메신저 v2 일의 결재는 그 일에서만 쓴다(같은 주인의 다른 일·데스크톱 턴이 가져다 쓰지 못하게). v2 밖 턴(work 없음)은 v2 결재를 쓰지 않는다
+      && (a.scope?.kind === 'link' ? a.scope.work ?? null : null) === (work ?? null));
     if (!it) return false;
     it.payload = { ...it.payload, consumedAt: new Date().toISOString() };
     await save(wsId, list);

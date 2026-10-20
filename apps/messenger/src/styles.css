@@ -2457,3 +2457,20 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-keeplist .ph-kbody { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
 .msgr-keeplist .ph-kbody .snip { font-size: 12px; color: var(--fg-3); }
 .msgr-keepfoot .note.warn { color: var(--danger, #c0392b); }
+
+/* ── 메신저 v2 일 카드(U6 ②, src/v2/WorkCard.jsx) — 기존 승인 카드(msgr-slip) 모양에 상태별 띠 색만 더한다. 색은 토큰만 ── */
+.msgr-v2-work { margin: -4px 0 4px 44px; } /* 시킨 글 아래 — 아바타 열만큼 들여 같은 척추에 붙인다 */
+.msgr-v2-work.pending .band { background: var(--mark); color: var(--mark-fg); }
+.msgr-v2-work.approved .band { background: var(--primary); color: var(--primary-fg); }
+.msgr-v2-work.rejected .band, .msgr-v2-work.expired .band { background: var(--card-2); color: var(--fg-2); }
+.msgr-v2-work .band { flex-wrap: nowrap; }
+.msgr-v2-work .band .v2-band-text { flex: 1; min-width: 0; } /* 긴 단계 문구가 줄바꿈돼도 아이콘은 첫 줄에 */
+@media (max-width: 760px) { .msgr-v2-work { margin-left: 0; } }
+/* 메신저 v2 기기 관리(U6c-2a ④, v2/DevicesCard.jsx) — 기존 설정 카드 안의 줄. 이름 줄 아래에 앱·버전·등록 시각. 색은 토큰만 */
+.msgr-v2-devices .row { display: flex; align-items: center; gap: 10px; }
+.msgr-v2-devices .row.dim { opacity: .6; }
+.msgr-v2-dev { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.msgr-v2-devices .msgr-rows .row .msgr-v2-dev .sub { font-size: 12px; color: var(--fg-3); overflow-wrap: anywhere; white-space: normal; overflow: visible; text-overflow: clip; } /* 폰에서도 앱·버전·등록 시각을 자르지 않는다 */
+.msgr-v2-invites .row { display: flex; align-items: center; gap: 8px; } /* 초대함(v2/InvitesCard.jsx) — 기기 카드와 같은 줄 모양 */
+.msgr-v2-invites .row.dim { opacity: .6; } /* 만료된 초대(서버가 다음 다시 읽기 때 뺀다) */
+.msgr-v2-invites .msgr-rows .row .msgr-v2-dev .sub { font-size: 12px; color: var(--fg-3); overflow-wrap: anywhere; white-space: normal; overflow: visible; text-overflow: clip; }

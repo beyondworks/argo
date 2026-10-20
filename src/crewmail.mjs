@@ -70,7 +70,7 @@ const inFlight = new Set();
     kind: 주 수신자에게 붙일 종류. 기본 'to'(회신 기대). 회의실에서 사장이 "cc @이름"으로 참조만
     돌릴 때는 'cc'를 넘긴다 — 수신자가 하나여도 의미는 참조다(회신 의무 없음).
     fromRole: 'captain'이면 동료가 아니라 사장이 보낸 것으로 문구가 갈린다(room.mjs 경유). */
-export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, cc = [], message, hop = 0, chain = [], kind = 'to', msgr = null, relaxed = false, tree = null }) {
+export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, cc = [], message, hop = 0, chain = [], kind = 'to', msgr = null, link = null, relaxed = false, tree = null }) {
   if (!to || !String(message ?? '').trim()) throw new Error('수신 에이전트와 내용이 필요합니다');
   // 자기 자신에게는 보낼 수 없다 — 배달 턴이 또 쪽지를 내면 hop 상한(왕복 방어)이 무의미해진다.
   // cc는 이미 `s === from`으로 걸러내는데(아래) 주 수신자만 무방비였다. 호출부(cli-directives)에서도
@@ -87,6 +87,8 @@ export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, 
     id, from, fromName: fromName || from, fromRole: fromRole === 'captain' ? 'captain' : 'crew', message: String(message).trim(), // fromRole — 사장 쪽지(쪽지 API·회의실)만 'captain'. 화면·배달 턴은 from 문자열이 아니라 이것으로 사장을 판정한다(새 기록은 항상 있다 — 없으면 옛 기록)
     hop, chain, ts: new Date().toISOString(), attempts: 0,
     ...(msgr?.channelId ? { msgr } : {}), // 메신저 채널 문맥(orgId·channelId·crewId(발신)·threadRoot) — 배달 턴과 회신이 그 채널로 간다
+    // 메신저 v2 일(link 범위 턴)에서 보낸 쪽지 — 배달 턴이 같은 범위·같은 등급(owner 표지)으로 돈다(isGuestCtx). 빠지면 team·guest 턴이 쪽지로 주인 도구를 얻는다(#1078 검수 높음)
+    ...(link?.kind === 'link' ? { link: { kind: 'link', work: link.work ?? null, room: link.room ?? null, owner: link.owner === true, ...(link.memoryOff === true ? { memoryOff: true } : {}) } } : {}), // memoryOff = 기억 안 남김 방
   };
   const seen = new Set([String(to)]);
   const rcpts = [{ slug: String(to), kind }];

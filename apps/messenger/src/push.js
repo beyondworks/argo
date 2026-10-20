@@ -12,6 +12,14 @@ async function plugin() {
   return mod || null;
 }
 
+/** 이 기기의 푸시 토큰. prompt면 권한을 묻는다. { token } | { status: 'unsupported'|'denied'|'error:no-token' }. v2 앱은 이 값을 기기 등록에 싣는다(v2/push-bind.mjs, R3). */
+export async function getPushToken(prompt) {
+  const p = await plugin(); if (!p) return { status: 'unsupported' };
+  if (!(await (prompt ? p.requestPermission() : p.isPermissionGranted()))) return { status: 'denied' };
+  const token = await p.registerForPush();
+  return token ? { token } : { status: 'error:no-token' };
+}
+
 const clients = new WeakMap();
 function coordinator(client) {
   if (!clients.has(client)) {
@@ -26,12 +34,7 @@ function coordinator(client) {
     };
     clients.set(client, createPushSession({
       getSession: async () => { const { data, error } = await client.auth.getSession(); if (error) throw error; return data.session; },
-      getToken: async (prompt) => {
-        const p = await plugin(); if (!p) return { status: 'unsupported' };
-        if (!(await (prompt ? p.requestPermission() : p.isPermissionGranted()))) return { status: 'denied' };
-        const token = await p.registerForPush();
-        return token ? { token } : { status: 'error:no-token' };
-      },
+      getToken: getPushToken,
       registerToken: (token, session, { device = '' }, signal) => rpc('msgr_push_register', {
         platform: import.meta.env.TAURI_ENV_PLATFORM === 'ios' ? 'ios' : 'android',
         token, device: device || navigator.userAgent.slice(0, 80), sound: getSound(),

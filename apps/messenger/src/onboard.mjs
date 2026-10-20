@@ -14,8 +14,8 @@ export function stepMarks({ hasChannel, isAdmin, invited, hasCrew }) {
 
 // 새 채널을 만들 수 있나(서버 msgr_create_channel: owner·admin·member만, 잠긴 조직은 msgr_forbidden) — 못 만들면 단추를 빼고 이유를 보인다(2차 검수 L-b).
 // why = 이유 문구 키(잠김이 먼저 — 게스트도 잠김이 풀려야 한다), 개인 공간·역할 모름은 이유 없이 못 만든다.
-export function newChannelOffer({ role = null, locked = false, personal = false } = {}) {
-  if (personal || !role) return { can: false, why: null };
+export function newChannelOffer({ role = null, locked = false, personal = false, unsupported = false } = {}) {
+  if (personal || !role || unsupported) return { can: false, why: null }; // unsupported = 메신저 v2 공간(방 만들기 RPC는 U6d)
   if (locked) return { can: false, why: 'ch.new.blocked.locked' };
   if (role === 'guest') return { can: false, why: 'ch.new.blocked.guest' };
   return { can: true, why: null };

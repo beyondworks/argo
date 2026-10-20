@@ -94,7 +94,7 @@ test('멤버십 조회 실패 → false·로그, 던지지 않는다(게이트�
 });
 test('배선 — 게이트웨이 sync가 큐 조립 전에 autoEnableMsgr를 부르고 결과로 c.msgr을 갱신한다(같은 sync에서 브리지 시작)', () => {
   const src = readFileSync(new URL('../src/gateway.mjs', import.meta.url), 'utf8');
-  const call = src.indexOf("await autoEnableMsgr(c.id, { company: c })"); const q = src.indexOf("if (msgrCloud && c.msgr?.enabled) qkeys.add(MSGR_KEY)"); // 확정 무료는 메신저를 열지 않는다(2026-10-19)
+  const call = src.indexOf("await autoEnableMsgr(c.id, { company: c })"); const q = src.indexOf("if (legacyMsgr && msgrCloud && c.msgr?.enabled) qkeys.add(MSGR_KEY)"); // legacyMsgr = ARGO_MSGR_LEGACY(기본 켜짐, test/agent-link-gateway-flags.test.mjs가 행동으로 잠근다)
   assert.ok(call > 0 && q > call, '자동 켜기가 큐 조립보다 앞에 있어야 같은 sync에서 드레인·브리지가 뜬다');
   assert.match(src, /c\.msgr = \{ \.\.\.\(c\.msgr \?\? \{\}\), enabled: true \}/, '켜진 결과를 c.msgr에 반영');
   assert.ok(src.indexOf('if (!procLeader) {') < call, '리더 게이트 뒤에서만(기기당 한 프로세스)');

@@ -1,0 +1,410 @@
+// 본체↔메신저 약속 v1 — 봉투 모양·type 10종·상태 전이·오류 코드·버전 규칙의 정본(설계 2026-10-17 2절, D5).
+// 본체 부품(packages/agent-link)·메신저 앱(apps/messenger/src/link)·서버 함수(msgr2_link_send) 시험이 모두 이 파일을 기준으로 맞춘다.
+// 의존성 없음, Node·브라우저 공용(TextEncoder만 쓴다). 사람이 읽는 설명은 README.md, 다른 언어용 모양은 schema/envelope.v1.schema.json.
+// 규칙: 같은 v 안에서는 필드·열린 값 추가만 한다. 모르는 필드는 무시하고(엄격 거부 금지), 모르는 type은 unsupported_type이다.
+
+export const LINK_V = 1;
+/**
+ * 같은 v 안의 판(사람이 부르는 이름 v1.1). 규칙 1(필드·열린 값 추가만)을 지키는 덧붙임이라 v는 1 그대로다 —
+ * 이미 설치된 앱·본체(v1.0)는 새 필드를 무시하고 종전대로 돈다. v1.1 = 회의방(offer.kind·meeting, result.posts)·외부 봇(agent.sync kind·bot, limits.hop)·기기 기능 알림(agent.sync.features).
+ * 서버는 본체가 agent.sync.features로 알린 기능만 그 본체에 보낸다 — 모르는 본체(v1.0)에는 회의·봇 offer를 만들지 않는다.
+ */
+export const LINK_MINOR = 1;
+/** 이 판이 주고받을 수 있는 v 범위. 서버는 msgr_settings link_min_v·link_max_v로 따로 든다. */
+export const SUPPORTED = Object.freeze({ min: 1, max: 1 });
+
+export const LIMITS = Object.freeze({
+  envelopeBytes: 131072, // 봉투 JSON 전체(UTF-8)
+  contextBytes: 16384, // offer.context[] JSON(서버가 만든 최근 글)
+  offerText: 20000,
+  resultText: 20000,
+  handoffText: 4000,
+  handoffs: 8,
+  files: 20,
+  attachments: 20,
+  contextItems: 200,
+  agents: 500,
+  note: 200,
+  summary: 2000,
+  action: 200,
+  effectKey: 200,
+  code: 64,
+  name: 200,
+  peers: 50, // offer.peers[] — 넘김할 수 있는 동료 에이전트
+  role: 2000,
+  // v1.1 — 회의방·외부 봇(2026-10-19 유건 지시 "A+": 라운드 2 고정, 질문당 에이전트 글 S×R ≤ 10, 봇 사람 멘션만·턴 ≤ 4·hop ≤ 2)
+  meetingAgents: 5, // offer.meeting.participants[] — 회의방 참가 에이전트 S
+  meetingRounds: 2, // offer.meeting.rounds·result.posts[].round — 라운드 R(room.mjs DELEGATION_LIMITS.on.rounds와 같은 값, 풀림 4는 회의방에서 쓰지 않음)
+  posts: 10, // result.posts[] — S×R 상한
+  postText: 3000, // posts[].text(자). 10개 × 3000자 × 3바이트 = 90KB로 봉투 128KB 안에 든다
+  postsResultText: 2000, // posts가 있는 result의 text(요약)
+  botHops: 2, // offer.limits.max_hops 상한 — 봇이 다른 봇·에이전트로 넘기는 깊이
+  botTurns: 4, // 사람 글 1개에서 시작한 봇 턴 합계 상한(offer.limits.turns_left 첫 값)
+  features: 16, // agent.sync.features[]
+});
+
+/** offer.kind(열린 값). 없으면 'chat'. 모르는 kind를 받은 본체는 work.error{unsupported}로 답한다. */
+export const OFFER_KINDS = Object.freeze(['chat', 'meeting', 'bot']);
+/** agent.sync.features — 본체가 처리할 수 있다고 알리는 기능(열린 값). 서버는 알린 기능의 offer만 만든다. */
+export const FEATURES = Object.freeze(['meeting', 'bot']);
+/** agent.sync.agents[].kind(열린 값). 없으면 'agent'. bot = 내 PC의 Argo가 HTTP로 부르는 외부 봇(헤르메스·오픈클로). */
+export const AGENT_KINDS = Object.freeze(['agent', 'bot']);
+/** agents[].bot.kind(열린 값). 주소·키는 본체 로컬 자격 저장소에만 두고 약속에 싣지 않는다. */
+export const BOT_KINDS = Object.freeze(['hermes', 'openclaw']);
+/** 본체가 외부 봇 호출에 거는 속도 상한(약속 밖 상대를 믿지 않는다). 서버 상한(D11)과 별개로 본체가 지킨다. */
+export const BOT_RATE = Object.freeze({ concurrent: 1, perMin: 6, retryOn429: 1 });
+
+/** type → 보내는 쪽. server = 서버→본체(v2:w:<uid> 방송·따라잡기), runner = 본체→서버. */
+export const DIRECTION = Object.freeze({
+  'work.offer': 'server',
+  'work.cancel': 'server',
+  'work.approval_decision': 'server',
+  'work.accept': 'runner',
+  'work.progress': 'runner',
+  'work.approval_request': 'runner',
+  'work.effect': 'runner',
+  'work.result': 'runner',
+  'work.error': 'runner',
+  'agent.sync': 'runner',
+});
+export const TYPES = Object.freeze(Object.keys(DIRECTION));
+
+/**
+ * Realtime 토픽 이름(서버·메신저·본체가 이 한 곳을 쓴다). 옛 메신저 토픽(u:·org:·dm:)과 겹치지 않게 'v2:' 접두사를 둔다 —
+ * 옛 u:<uid> 받기 정책은 기기 확인 없이 본인을 허용하고, 허용 정책은 OR로 합쳐지므로 같은 이름이면 v2의 기기 확인이 무력해진다(검수 #1076).
+ */
+export const TOPICS = Object.freeze({
+  user: (uid) => `v2:u:${uid}`, // 사람(앱 기기): msg·pause·device_revoked
+  runner: (uid) => `v2:w:${uid}`, // 본체(runner·resident 기기): 서버→본체 봉투
+  space: (space) => `v2:s:${space}`, // 사람이 많은 팀 open 방의 글(owner·admin·member)
+  work: (work) => `v2:wk:${work}`, // 일 진행 표시(본체가 보내고 그 방을 읽는 사람이 받는다)
+  presence: (owner) => `v2:pr:${owner}`, // 접속 표시(Presence, DB 행 없음) — 그 주인의 본체가 track하고, 본인·같은 팀 공간 멤버·그 에이전트가 있는 방을 읽는 사람이 받는다
+});
+
+/** type → 길. progress만 저장하지 않는 v2:wk:<work> 방송이고, 본체가 보내는 나머지는 RPC msgr2_link_send 한 곳이다. */
+export const CHANNEL = Object.freeze(Object.fromEntries(TYPES.map((t) => [t,
+  t === 'work.progress' ? 'broadcast:wk' : DIRECTION[t] === 'server' ? 'broadcast:w' : 'rpc'])));
+
+export const TIERS = Object.freeze(['owner', 'team', 'guest']);
+export const STAGES = Object.freeze(['thinking', 'tool', 'writing']);
+export const DECISIONS = Object.freeze(['approve', 'reject', 'expire']);
+export const EFFECT_STATES = Object.freeze(['intent', 'done', 'failed']);
+export const RISKS = Object.freeze(['low', 'medium', 'high']);
+export const ACTOR_KINDS = Object.freeze(['user', 'agent', 'system']);
+
+/** work.error data.code — 열린 값. 받는 쪽은 모르는 코드를 internal로 읽는다(normalizeWorkErrorCode). */
+export const WORK_ERROR_CODES = Object.freeze([
+  'limit', 'no_runner', 'login', 'timeout', 'cancelled', 'unsupported', 'tier_denied', 'budget', 'internal',
+  'bot_unreachable', 'bot_limit', // v1.1 — 외부 봇 연결 실패·봇 속도 상한
+]);
+
+/**
+ * 서버가 msgr2_link_send(또는 등록·업로드 보조 호출)에서 봉투를 거부할 때의 코드.
+ * retry=true만 본체가 간격·상한을 두고 같은 봉투(같은 id·seq)를 다시 보낸다. 나머지는 다시 보내지 않는다.
+ */
+export const REJECT_CODES = Object.freeze({
+  invalid_envelope: { retry: false }, // 모양이 계약과 다르다
+  too_large: { retry: false },
+  unsupported_type: { retry: false }, // 모르는 type(버전 규칙 1)
+  wrong_direction: { retry: false }, // 본체가 서버 전용 type을 보냄
+  link_version_unsupported: { retry: false }, // v가 서버 범위 밖(버전 규칙 2) → 본체는 업데이트 안내
+  device_unknown: { retry: false },
+  device_revoked: { retry: false },
+  device_expired: { retry: false },
+  service_paused: { retry: false }, // v2 중단 스위치
+  work_not_found: { retry: false },
+  work_closed: { retry: false }, // 끝난(또는 만료된) 일에 새 봉투
+  invalid_transition: { retry: false },
+  lease_held: { retry: false }, // 다른 기기가 리스를 쥐고 있어 accept 실패
+  not_lease_holder: { retry: false }, // 리스 주인이 아닌 기기의 accept 외 봉투, stalled 일에 다른 기기가 보낸 봉투
+  seq_conflict: { retry: false }, // 같은 (work, 보낸 쪽, seq)에 다른 봉투
+  effect_exists: { retry: false }, // 이미 있는 effect_key로 intent(다시 실행 금지)
+  effect_unknown: { retry: false }, // intent 없이 done·failed
+  tier_denied: { retry: false }, // guest 등급 밖 행동
+  upload_slot_invalid: { retry: false },
+  // v1.1 서버 규칙(봉투만으로는 그 일이 회의였는지 모르므로 계약 검사가 아니라 서버가 본다): 회의가 아닌 일에 posts가 오거나,
+  // kind=meeting인 일의 work.result에 handoffs가 있으면(posts 유무와 무관) 거부한다. 글쓴이가 회의 참가자가 아니어도 같은 코드.
+  post_denied: { retry: false },
+  pro_required: { retry: false }, // v1.1 — 메신저는 Pro 전용(2026-10-19 결정). 무료 계정 본체의 agent.sync 등 → 본체는 다시 보내지 않고 연결을 쉰다
+  rate_limited: { retry: true },
+  internal: { retry: true },
+});
+
+export const STATES = Object.freeze(['offered', 'accepted', 'running', 'awaiting_approval', 'done', 'failed', 'cancelled']);
+/** 저장하지 않고 읽을 때 계산하는 상태(크론 없음, D7). */
+export const DERIVED_STATES = Object.freeze(['expired', 'stalled']);
+export const TERMINAL = Object.freeze(['done', 'failed', 'cancelled', 'expired']);
+const LIVE = ['accepted', 'running', 'awaiting_approval'];
+
+/**
+ * 상태 전이표. [지금 상태][type] → 다음 상태. 'same' = 상태는 그대로 두고 사건만 기록(리스 연장·효과 기록 등).
+ * 표에 없는 칸은 invalid_transition(끝난 상태면 work_closed). 세부 조건은 nextState가 본다.
+ */
+export const TRANSITIONS = Object.freeze({
+  offered: { 'work.accept': 'accepted', 'work.cancel': 'cancelled', 'work.error': 'same' /* unsupported만 */ },
+  accepted: {
+    'work.accept': 'same', 'work.approval_request': 'awaiting_approval', 'work.effect': 'same',
+    'work.result': 'done', 'work.error': 'failed', 'work.cancel': 'cancelled',
+  },
+  running: {
+    'work.accept': 'same', 'work.approval_request': 'awaiting_approval', 'work.effect': 'same',
+    'work.result': 'done', 'work.error': 'failed', 'work.cancel': 'cancelled',
+  },
+  awaiting_approval: {
+    'work.accept': 'same', 'work.approval_decision': 'running', 'work.effect': 'same' /* done·failed만 */,
+    'work.error': 'failed', 'work.cancel': 'cancelled',
+  },
+  done: { 'work.effect': 'same' /* done·failed만 */, 'work.cancel': 'same' },
+  failed: { 'work.effect': 'same', 'work.cancel': 'same' },
+  cancelled: { 'work.effect': 'same', 'work.cancel': 'same', 'work.error': 'same' },
+  expired: { 'work.cancel': 'same' },
+});
+
+const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
+const CODE = /^[a-z][a-z0-9_]*$/;
+const enc = new TextEncoder();
+export const jsonBytes = (x) => enc.encode(JSON.stringify(x)).length;
+
+const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const isUuid = (x) => typeof x === 'string' && UUID.test(x);
+const isTs = (x) => typeof x === 'string' && TS.test(x) && Number.isFinite(Date.parse(x));
+// 정수는 JSON 숫자로 정확히 오가는 안전 정수(≤ 2^53-1)만 — 서버(SQL)가 같은 상한으로 본다(seq·토큰 수 등).
+const isInt = (x, min = 0) => Number.isSafeInteger(x) && x >= min;
+const isStr = (x, max, min = 0) => typeof x === 'string' && x.length >= min && x.length <= max;
+
+// 작은 검사기 — 필드 표를 보고 어긋난 경로를 errors에 모은다. 표에 없는 필드는 보지 않는다(모르는 필드 무시).
+function check(errors, path, val, rule) {
+  const [kind, opt = {}] = Array.isArray(rule) ? rule : [rule];
+  if (val === undefined) { if (!opt.optional) errors.push(`${path}: required`); return; }
+  if (val === null) { if (!opt.nullable) errors.push(`${path}: null`); return; }
+  const bad = (why) => errors.push(`${path}: ${why}`);
+  switch (kind) {
+    case 'uuid': if (!isUuid(val)) bad('uuid'); break;
+    case 'ts': if (!isTs(val)) bad('timestamp'); break;
+    case 'int': if (!isInt(val, opt.min ?? 0) || (opt.max != null && val > opt.max)) bad(opt.max != null ? `integer(${opt.min ?? 0}..${opt.max})` : 'integer'); break;
+    // 글·첨부 id(msgr2_messages.id·msgr2_attachments.id — 옛 글 id 보존이라 bigint). JSON 숫자로 정확히 오가는 안전 정수(≤ 2^53-1)만 받는다
+    case 'msgid': if (!Number.isSafeInteger(val) || val < 1) bad('message id(safe integer >= 1)'); break;
+    case 'num': if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) bad('number'); break;
+    case 'bool': if (typeof val !== 'boolean') bad('boolean'); break;
+    case 'str': if (!isStr(val, opt.max ?? LIMITS.name, opt.min ?? 0)) bad(`string(${opt.min ?? 0}..${opt.max ?? LIMITS.name})`); break;
+    case 'code': if (!isStr(val, LIMITS.code, 1) || !CODE.test(val)) bad('code'); break;
+    case 'enum': if (!opt.of.includes(val)) bad(`one of ${opt.of.join('|')}`); break;
+    case 'obj':
+      if (!isObj(val)) { bad('object'); break; }
+      for (const [k, r] of Object.entries(opt.fields || {})) check(errors, `${path}.${k}`, val[k], r);
+      break;
+    case 'arr':
+      if (!Array.isArray(val)) { bad('array'); break; }
+      if (opt.max != null && val.length > opt.max) bad(`at most ${opt.max} items`);
+      val.forEach((v, i) => check(errors, `${path}[${i}]`, v, opt.items));
+      break;
+    default: bad(`unknown rule ${kind}`);
+  }
+}
+
+const actor = (kinds = ACTOR_KINDS) => ['obj', { fields: {
+  kind: ['enum', { of: kinds }], id: ['uuid', { nullable: true }], name: ['str', { optional: true }],
+} }];
+
+/** type별 data 모양. 필드 추가는 같은 v 안에서 허용(받는 쪽은 모르는 필드를 무시한다). */
+export const DATA = Object.freeze({
+  'work.offer': {
+    room: 'uuid',
+    topic: 'uuid',
+    from: actor(['user', 'agent']),
+    text: ['str', { max: LIMITS.offerText }],
+    context: ['arr', { max: LIMITS.contextItems, items: ['obj', { fields: {
+      id: 'msgid', author: actor(), text: ['str', { max: LIMITS.offerText }], at: 'ts',
+    } }] }],
+    attachments: ['arr', { max: LIMITS.attachments, items: ['obj', { fields: {
+      // 서명 URL 대신 Storage 위치(2026-10-17 총괄 결정, 출시 전이라 v1 안에서 의미 변경). 본체는 자기 runner 세션으로 Storage API를 불러 받는다
+      // (버킷 정책: 그 방에 진행 중인 일의 리스를 쥔 runner 기기만). path는 버킷 안 경로(<공간>/<방>/…).
+      id: 'msgid', name: ['str', { min: 1 }], mime: ['str', { max: 200 }], bytes: 'int', bucket: ['str', { min: 1, max: 64 }], path: ['str', { min: 1, max: 1024 }],
+    } }] }],
+    memory: 'bool',
+    limits: ['obj', { fields: {
+      tier: ['enum', { of: TIERS }],
+      max_turn_s: ['int', { min: 1 }],
+      budget: ['obj', { nullable: true, fields: { max_tokens: ['int', { optional: true, min: 1 }], max_usd: ['num', { optional: true }] } }],
+      // v1.1 — 넘김 사슬 안의 위치. hop = 사람 글에서 이 일까지 넘김 수, max_hops ≤ 2, turns_left = 이 사슬에 남은 봇·에이전트 턴(첫 값 ≤ 4)
+      hop: ['int', { optional: true, min: 0, max: LIMITS.botHops }],
+      max_hops: ['int', { optional: true, min: 0, max: LIMITS.botHops }],
+      turns_left: ['int', { optional: true, min: 0, max: LIMITS.botTurns }],
+    } }],
+    expires_at: 'ts',
+    // 이 방에서 이 에이전트가 넘김(result.handoffs[])할 수 있는 동료 에이전트. 서버가 등급·파견 허용으로 거른다(guest는 빈 배열).
+    // 서버는 넘김을 받을 때 같은 규칙으로 다시 본다 — 목록 밖 에이전트로의 넘김은 새 일이 되지 않는다.
+    peers: ['arr', { optional: true, max: LIMITS.peers, items: ['obj', { fields: {
+      agent: 'uuid', name: ['str', { min: 1 }], role: ['str', { max: LIMITS.role }],
+    } }] }],
+    // v1.1 — 일의 종류(열린 값, OFFER_KINDS). 없으면 chat. meeting이면 meeting이 반드시 있다(validateEnvelope).
+    kind: ['code', { optional: true }],
+    // v1.1 — 회의방: 사람 글 1개 = offer 1개(봉투 agent = 대표 에이전트). 본체가 room.mjs로 참가자 S명 × R라운드를 돌리고 result.posts[]로 돌려준다.
+    meeting: ['obj', { optional: true, fields: {
+      participants: ['arr', { max: LIMITS.meetingAgents, items: ['obj', { fields: {
+        agent: 'uuid', name: ['str', { min: 1 }], role: ['str', { max: LIMITS.role }],
+      } }] }],
+      rounds: ['int', { min: 1, max: LIMITS.meetingRounds }],
+    } }],
+  },
+  'work.cancel': { by: actor(), reason: 'code' },
+  'work.approval_decision': { approval_id: 'uuid', decision: ['enum', { of: DECISIONS }], by: actor(['user', 'system']) },
+  // lease_gen: 서버가 accept 성공 답으로 준 리스 세대. 처음 accept에는 없고, 연장·이어 하기 accept에 그 값을 싣는다(실행 중 메모리에만 둔다).
+  'work.accept': { lease_gen: ['int', { optional: true, min: 1 }] },
+  'work.progress': { stage: ['enum', { of: STAGES }], note: ['str', { optional: true, max: LIMITS.note }] },
+  'work.approval_request': {
+    approval_id: 'uuid', action: ['str', { min: 1, max: LIMITS.action }], risk: ['enum', { of: RISKS }],
+    summary: ['str', { min: 1, max: LIMITS.summary }], effect_key: ['str', { nullable: true, min: 1, max: LIMITS.effectKey }], expires_at: 'ts',
+  },
+  'work.effect': {
+    effect_key: ['str', { min: 1, max: LIMITS.effectKey }], state: ['enum', { of: EFFECT_STATES }], kind: ['code', { optional: true }],
+  },
+  'work.result': {
+    text: ['str', { max: LIMITS.resultText }],
+    files: ['arr', { max: LIMITS.files, items: 'uuid' }],
+    handoffs: ['arr', { max: LIMITS.handoffs, items: ['obj', { fields: { agent: 'uuid', text: ['str', { min: 1, max: LIMITS.handoffText }] } }] }],
+    // v1.1 — 회의 결과: 에이전트별 글. 서버가 글마다 author_agent_id = post.agent로 넣는다(참가자 아니면 post_denied). posts가 있으면 text는 요약(≤ 2000자, 방에 넣지 않음)·handoffs는 빈 배열
+    posts: ['arr', { optional: true, max: LIMITS.posts, items: ['obj', { fields: {
+      agent: 'uuid', round: ['int', { min: 1, max: LIMITS.meetingRounds }], text: ['str', { min: 1, max: LIMITS.postText }],
+    } }] }],
+    usage: ['obj', { nullable: true, optional: true, fields: {
+      input_tokens: ['int', { optional: true }], output_tokens: ['int', { optional: true }], cost_usd: ['num', { optional: true }],
+      runner: ['str', { optional: true, max: 64 }], model: ['str', { optional: true, max: 200 }],
+    } }],
+  },
+  'work.error': { code: 'code', runner: ['str', { nullable: true, max: 64 }], retry_at: ['ts', { optional: true, nullable: true }] },
+  'agent.sync': {
+    agents: ['arr', { max: LIMITS.agents, items: ['obj', { fields: {
+      ws: ['str', { min: 1 }], slug: ['str', { min: 1 }], name: ['str', { min: 1 }], role: ['str', { max: 2000 }], face_hash: ['str', { nullable: true, max: 128 }],
+      // v1.1 — 외부 봇. kind 없으면 agent. bot은 종류·프로필 이름만(주소·키는 본체 로컬에만)
+      kind: ['code', { optional: true }],
+      bot: ['obj', { optional: true, nullable: true, fields: { kind: 'code', profile: ['str', { optional: true, max: 200 }] } }],
+    } }] }],
+    // v1.1 — 이 본체가 처리할 수 있는 기능(FEATURES). 없으면 v1.0 본체로 본다(회의·봇 offer를 받지 않음)
+    features: ['arr', { optional: true, max: LIMITS.features, items: 'code' }],
+  },
+});
+
+const fail = (code, errors = []) => ({ ok: false, code, retry: REJECT_CODES[code]?.retry ?? false, errors });
+
+/**
+ * 봉투 검사. 판정 순서: 모양(객체) → v 범위 → type → 크기 → 방향 → 봉투 필드 → data.
+ * 반환: { ok:true } | { ok:false, code(REJECT_CODES 키), retry, errors[] }.
+ * opts.from = 'server'|'runner'면 그 쪽이 보낼 수 있는 type인지도 본다. opts.supported로 받는 쪽 v 범위를 바꾼다.
+ */
+export function validateEnvelope(env, { from, supported = SUPPORTED } = {}) {
+  if (!isObj(env)) return fail('invalid_envelope', ['envelope: object']);
+  if (!isInt(env.v, 1)) return fail('invalid_envelope', ['v: integer >= 1']);
+  if (env.v < supported.min || env.v > supported.max) return fail('link_version_unsupported', [`v: ${env.v} not in ${supported.min}..${supported.max}`]);
+  if (typeof env.type !== 'string') return fail('invalid_envelope', ['type: string']);
+  if (!Object.hasOwn(DIRECTION, env.type)) return fail('unsupported_type', [`type: ${env.type}`]);
+  if (jsonBytes(env) > LIMITS.envelopeBytes) return fail('too_large', [`envelope: > ${LIMITS.envelopeBytes} bytes`]);
+  if (from && DIRECTION[env.type] !== from) return fail('wrong_direction', [`type: ${env.type} is ${DIRECTION[env.type]}-sent`]);
+
+  const errors = [];
+  const sync = env.type === 'agent.sync';
+  check(errors, 'id', env.id, 'uuid');
+  check(errors, 'work', env.work, sync ? ['uuid', { nullable: true }] : 'uuid');
+  if (sync && env.work !== null && env.work !== undefined) errors.push('work: must be null for agent.sync');
+  check(errors, 'seq', env.seq, 'int');
+  check(errors, 'agent', env.agent, sync ? ['uuid', { nullable: true }] : 'uuid');
+  // device: 본체가 보낼 때는 보낸 기기, 서버가 보낼 때는 받을 기기(리스가 없으면 null = 주인의 runner 기기 아무나)
+  check(errors, 'device', env.device, DIRECTION[env.type] === 'server' ? ['uuid', { nullable: true }] : 'uuid');
+  check(errors, 'at', env.at, 'ts');
+  check(errors, 'data', env.data, ['obj', { fields: DATA[env.type] }]);
+  if (!errors.length && env.type === 'work.offer' && jsonBytes(env.data.context) > LIMITS.contextBytes) {
+    errors.push(`data.context: > ${LIMITS.contextBytes} bytes`);
+  }
+  // v1.1 교차 검사(JSON Schema로 적지 않는다)
+  if (!errors.length && env.type === 'work.offer') {
+    const d = env.data;
+    if (d.kind === 'meeting' && !d.meeting) errors.push('data.meeting: required when kind is meeting');
+    if (d.meeting && d.kind !== 'meeting') errors.push('data.kind: must be meeting when meeting is present');
+    if (d.meeting && d.meeting.participants.length * d.meeting.rounds > LIMITS.posts) errors.push(`data.meeting: participants × rounds > ${LIMITS.posts}`);
+    const l = d.limits;
+    if (l.hop != null && l.max_hops != null && l.hop > l.max_hops) errors.push('data.limits.hop: > max_hops');
+  }
+  if (!errors.length && env.type === 'work.result' && env.data.posts?.length) {
+    if (env.data.text.length > LIMITS.postsResultText) errors.push(`data.text: > ${LIMITS.postsResultText} when posts is present`);
+    if (env.data.handoffs.length) errors.push('data.handoffs: must be empty when posts is present');
+  }
+  return errors.length ? fail('invalid_envelope', errors) : { ok: true };
+}
+
+/** 모르는 work.error 코드는 internal로 읽는다(열린 값). */
+export const normalizeWorkErrorCode = (code) => (WORK_ERROR_CODES.includes(code) ? code : 'internal');
+
+/** 버전 협상: 두 범위가 겹치는 가장 높은 v, 없으면 null(버전 규칙 3). */
+export function negotiate(a, b) {
+  const lo = Math.max(a.min, b.min), hi = Math.min(a.max, b.max);
+  return lo <= hi ? hi : null;
+}
+
+/**
+ * 읽을 때 계산하는 상태(D7). work = { state, expires_at, lease_until, has_result }.
+ * offered가 expires_at을 넘기면 expired, 일하는 중인데 리스가 끝났고 결과가 없으면 stalled(자동 재실행 없음).
+ */
+export function effectiveState(work, now = Date.now()) {
+  const t = (x) => (x ? Date.parse(x) : NaN);
+  if (work.state === 'offered' && t(work.expires_at) <= now) return 'expired';
+  if (LIVE.includes(work.state) && !work.has_result && !(t(work.lease_until) > now)) return 'stalled';
+  return work.state;
+}
+
+/** stalled 일에 같은 기기의 늦은 result·error가 왔을 때 방 글(시스템 글 meta)에 붙이는 표시 코드. 화면이 "늦게 도착"으로 그린다(D15). */
+export const LATE_MARK = 'work.late';
+
+/**
+ * 서버가 봉투 하나를 일에 적용할 때의 다음 상태. state는 effectiveState 결과를 넣는다.
+ * opts.sameDevice = 봉투의 device가 이 일의 리스를 마지막으로 잡았던 기기인가, opts.leaseGen = 그 리스의 세대(stalled 판정에만 쓴다, 모르면 거부 쪽).
+ * 반환: { ok:true, to, mark? } | { ok:false, code }. to === state면 사건만 기록한다. mark가 있으면 방 글에 붙인다.
+ */
+export function nextState(state, type, data = {}, { sameDevice = false, leaseGen = null } = {}) {
+  if (state === 'stalled') {
+    // 리스가 끝났고 결과가 없는 일(저장하지 않는 계산 상태). 리스를 잡았던 같은 기기만 받는다(다른 기기는 not_lease_holder).
+    // accept는 "이어 하기"만 받는다: 같은 기기 + 직전 리스 세대(data.lease_gen === leaseGen). 재시작한 본체는 세대를 모르므로
+    // (메모리에만 둔다) 같은 기기라도 거부된다 — 처음부터 다시 돌려 되돌릴 수 없는 일이 다른 effect_key로 두 번 나가는 것을 막는다(경우 8).
+    // 같은 기기: 이어 하기 accept로 리스를 다시 잡거나, 효과 결과(done·failed)를 알리거나, 늦은 result·error로 일을 끝낸다
+    // (실제로 끝난 일이 "결과 모름"으로 남지 않게, 방 글에 LATE_MARK). 새 intent는 받지 않는다. 자동 재실행은 없다 —
+    // 사람이 "다시 시키기"로 만든 새 일과 별개로, 늦은 결과는 옛 일(옛 토픽)에만 붙는다.
+    if (type === 'work.cancel') return { ok: true, to: 'cancelled' };
+    if (!sameDevice) return { ok: false, code: 'not_lease_holder' };
+    if (type === 'work.accept') {
+      return leaseGen != null && data.lease_gen === leaseGen ? { ok: true, to: 'running' } : { ok: false, code: 'not_lease_holder' };
+    }
+    if (type === 'work.effect' && data.state !== 'intent') return { ok: true, to: state };
+    if (type === 'work.result') return { ok: true, to: 'done', mark: LATE_MARK };
+    if (type === 'work.error') return { ok: true, to: 'failed', mark: LATE_MARK };
+    return { ok: false, code: 'invalid_transition' };
+  }
+  // 일하는 중의 accept = 리스 연장. 같은 기기 + 현재 리스 세대일 때만이다. 재시작한 본체(세대 모름)나 다른 기기는 lease_held —
+  // 살아 있는 리스를 "연장"으로 가로채 같은 일을 처음부터 다시 돌리지 못하게 한다.
+  if (type === 'work.accept' && LIVE.includes(state) && !(sameDevice && leaseGen != null && data.lease_gen === leaseGen)) {
+    return { ok: false, code: 'lease_held' };
+  }
+  const row = TRANSITIONS[state];
+  if (!row) return { ok: false, code: 'invalid_transition' };
+  const to = row[type];
+  if (!to) return { ok: false, code: TERMINAL.includes(state) ? 'work_closed' : 'invalid_transition' };
+  if (type === 'work.error' && state === 'offered' && data.code !== 'unsupported') return { ok: false, code: 'invalid_transition' };
+  if (type === 'work.effect' && data.state === 'intent' && !['accepted', 'running'].includes(state)) {
+    return { ok: false, code: TERMINAL.includes(state) ? 'work_closed' : 'invalid_transition' };
+  }
+  return { ok: true, to: to === 'same' ? state : to };
+}
+
+/** guest 등급이 할 수 없는 봉투(D12): 승인 요청·효과·파일 첨부 결과. 서버가 tier_denied로 거부한다. */
+export function tierAllows(tier, type, data = {}) {
+  if (tier !== 'guest') return true;
+  if (type === 'work.approval_request' || type === 'work.effect') return false;
+  if (type === 'work.result' && Array.isArray(data.files) && data.files.length) return false;
+  return true;
+}
+
+/** 본체가 모르는 type을 받았을 때 보내는 답(버전 규칙 1). 같은 일·같은 에이전트로 work.error{unsupported}. */
+export function unsupportedReply(env, { id, seq, device, at = new Date().toISOString() }) {
+  if (!isUuid(env?.work) || !isUuid(env?.agent)) return null; // 일이 없는 봉투에는 답할 곳이 없다
+  return { v: LINK_V, id, work: env.work ?? null, seq, type: 'work.error', agent: env.agent, device, at,
+    data: { code: 'unsupported', runner: null } };
+}

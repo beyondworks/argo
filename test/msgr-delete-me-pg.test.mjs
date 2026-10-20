@@ -177,7 +177,8 @@ test('2R M-1: 만료된 게스트만 남은 조직의 소유자는 삭제된다(
 });
 
 test('2R H-2: 가드 통과 플래그는 함수 끝과 예외 경로 모두에서 되돌린다(자기 역할 상승 방어선 유지)', { skip }, () => {
-  const src = sql(`select prosrc from pg_proc where proname='msgr_delete_me'`);
+  // 20261020200900(이전 작업 창)이 원래 함수를 _msgr_delete_me_body로 이름만 바꾸고 감싸개를 둔다 — 본문 성질은 원래 함수에서 본다
+  const src = sql(`select prosrc from pg_proc where proname = case when to_regprocedure('public._msgr_delete_me_body()') is not null then '_msgr_delete_me_body' else 'msgr_delete_me' end`);
   assert.equal((src.match(/set_config\('argo\.msgr_account_delete', '', true\)/g) ?? []).length, 2, '정상·예외 두 경로');
   assert.doesNotMatch(src, /allow_delete_query|storage\.objects/, '20261012160000: storage 가드를 끄지 않고 storage 행을 건드리지 않는다(정리 엣지가 Storage API로)');
   assert.match(src, /exception when others then/);
@@ -231,7 +232,7 @@ test('3R M2R-2 → 20261012160000: 30일 지난 보관 조직 purge가 첨부가
   assert.equal(sql(`select count(*) from public.msgr_orgs where id='${org}'`), '0');
   assert.equal(sql(`select count(*) from storage.objects where name like '${org}/%'`), '1', '첨부 행은 남는다 — 가드를 끄지 않으므로 42501도 없다');
   assert.ok(sql(`select string_agg(n, ',') from public.msgr_storage_sweep_list(1000) n`).split(',').includes(`${org}/chan/1/doc.pdf`), '방이 없는 첨부 → 정리 후보');
-  assert.doesNotMatch(sql(`select prosrc from pg_proc where proname='msgr_purge_orgs'`), /allow_delete_query|storage\.objects/);
+  assert.doesNotMatch(sql(`select prosrc from pg_proc where proname = case when to_regprocedure('public._msgr_purge_orgs_body()') is not null then '_msgr_purge_orgs_body' else 'msgr_purge_orgs' end`), /allow_delete_query|storage\.objects/);
 });
 
 test('3R 가드 좁히기: 플래그 켠 세션도 비공개 채널 공개 전환·재부모화는 막히고, 문서 본문을 바꾸면 버전이 오르며 수정자가 귀속된다(작성자 이관만 통과)', { skip }, () => {

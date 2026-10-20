@@ -744,12 +744,13 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
         if (hit) {
           const shell = normalizeShell(cmd); const channelId = opts.msgr.channelId ?? null;
           if (toolUseID && shellGranted.has(toolUseID)) { shellGranted.delete(toolUseID); return allow; } // 같은 호출의 두 번째 판정
-          if (await consumeShellApproval(wsId, { slug, shell, channelId })) { if (toolUseID) shellGranted.add(toolUseID); return allow; }
-          const pending = (await loadApprovals(wsId)).find((a) => a.status === 'pending' && a.slug === slug && a.payload?.shell === shell && (a.msgr?.channelId ?? null) === channelId);
+          if (await consumeShellApproval(wsId, { slug, shell, channelId, work: opts.msgr.link?.work ?? null })) { if (toolUseID) shellGranted.add(toolUseID); return allow; }
+          const pending = (await loadApprovals(wsId)).find((a) => a.status === 'pending' && a.slug === slug && a.payload?.shell === shell && (a.msgr?.channelId ?? null) === channelId
+            && (!opts.msgr.link || a.scope?.work === opts.msgr.link.work)); // v2 일: 같은 일의 결재만 가리킨다(다른 일·데스크톱 결재는 그 일의 카드가 아니다)
           const item = pending ?? await addApproval(wsId, { slug, ...(from ? { from } : {}),
             action: lang === 'en' ? `Run shell command (${hit.label}): ${shell.slice(0, 200)}` : `셸 명령 실행(${hit.label}): ${shell.slice(0, 200)}`,
             reason: lang === 'en' ? `High-risk command by code rule "${hit.id}" — needs approval before running` : `코드 규칙 "${hit.id}"로 판정한 고위험 명령 — 실행 전 결재가 필요하다`,
-            payload: { shell, rule: hit.id }, ...(opts.msgr.channelId ? { msgr: opts.msgr } : {}) });
+            payload: { shell, rule: hit.id }, ...(opts.msgr.channelId ? { msgr: opts.msgr } : {}), ...(opts.msgr.link ? { scope: opts.msgr.link } : {}) }); // v2 일: 범위를 단다(연결부가 v2 승인 요청으로 보낸다)
           return { behavior: 'deny', message: lang === 'en'
             ? `This command is high risk (${hit.label}), so it was sent for approval (${item.id}). Do not run it or work around it. Tell the user you filed an approval and will run it once approved, then end the turn.`
             : `이 명령은 고위험(${hit.label})이라 결재를 올렸다(${item.id}). 실행하거나 다른 명령으로 우회하지 마라. "결재를 올렸고 승인되면 실행하겠다"고 알리고 턴을 마쳐라.` };

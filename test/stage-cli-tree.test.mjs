@@ -24,7 +24,9 @@ mkdirSync(env.HOME, { recursive: true });
 
 test('적재 결과 — 의존성 폐포가 복사되고 공개 설정이 구워진다', () => {
   assert.ok(staged.deps >= 6 && staged.publicConfig);
-  for (const f of ['bin/argo.mjs', 'bin/argo-public.json', 'src/cli/env.mjs', 'instrumentation-node.mjs', 'node_modules/@supabase/supabase-js/package.json', 'node_modules/zod/package.json']) assert.ok(existsSync(join(tree, f)), f);
+  for (const f of ['bin/argo.mjs', 'bin/argo-public.json', 'src/cli/env.mjs', 'instrumentation-node.mjs', 'node_modules/@supabase/supabase-js/package.json', 'node_modules/zod/package.json', 'packages/agent-link/link.mjs', 'packages/agent-link/contract/v1.mjs']) assert.ok(existsSync(join(tree, f)), f);
+  // 메신저 v2 부품의 시험 폴더는 싣지 않는다
+  for (const f of ['packages/agent-link/test', 'packages/agent-link/contract/test']) assert.equal(existsSync(join(tree, f)), false, f);
 });
 
 test('적재된 트리에서 argo status가 끝까지 돈다(데이터 폴더는 앱 폴더, 공개 설정은 구운 파일에서)', () => {

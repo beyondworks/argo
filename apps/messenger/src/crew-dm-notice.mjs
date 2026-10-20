@@ -4,6 +4,7 @@ import { seenWithin } from './presence-clock.mjs';
 export function crewAwayNotice({ channel, chCrews, people, uid, now, awayMs }) {
   if (channel?.kind !== 'dm' || chCrews.length !== 1 || people.length > 1) return null;
   const c = chCrews[0];
+  if (c?._v2) return null; // 메신저 v2 에이전트: 행에 접속 시각이 없다(접속은 Presence v2:pr:) — '꺼짐'으로 단정하지 않는다(U6c-1b 미룸: 접속 표시 연결)
   if (seenWithin(c, awayMs, now)) return null; // 받아 온 때 기준(presence-clock.mjs)
   return { name: c.display_name, mine: c.owner_user_id === uid };
 }

@@ -1,0 +1,7 @@
+<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<script>
+// 축소판 A+ 실제 진입 픽스처 — 진짜 앱(main.jsx → App → APlusRoot → source.mjs·연결 상태 기계)을 v2 가짜 서버(v2-shell.supabase.mjs)에 붙인다.
+// 운영·qbwr에 접속하지 않는다. 실행: node node_modules/vite/bin/vite.js --config test/v2-shell.config.mjs → /test/aplus-real.fixture.html?lang=ko&theme=graphite-light
+(function () { var p = new URLSearchParams(location.search); localStorage.setItem('argo-msgr-v2', '1'); localStorage.setItem('argo-msgr-aplus', '1');
+  localStorage.setItem('argo-lang', p.get('lang') || 'ko'); localStorage.setItem('argo-theme', p.get('theme') || 'graphite-light'); })();
+</script></head><body class="argo-messenger"><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>

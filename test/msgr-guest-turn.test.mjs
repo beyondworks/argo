@@ -264,3 +264,132 @@ test('커넥터 손님: 결재 게이트보다 앞에서 막는다 — 주인 �
   const ownerR = await callConnectorTool(ws, 'gmail', 'search_threads', { query: 'x' }, { mirrorCtx: ctxOf(ws, OWNER) });
   assert.notEqual(ownerR.error, 'guest_blocked', '주인 턴은 기존 판정(미연결 등)으로 간다');
 });
+
+// ── 메신저 v2 일(agent-link 범위 턴, U4b): team·guest 등급 = 위 조직 채널 손님 턴과 같은 도구 묶음, owner = 주인 턴 ──
+const linkCtx = (owner) => ({ kind: 'scope', scope: { kind: 'link', work: 'w-1', room: 'r-1', owner } });
+test('v2 link 범위: owner 표지가 없으면 SDK·네이티브·CLI 모두 조직 채널 손님 턴과 같은 제한, owner면 주인 턴과 같다', async () => {
+  for (const [name, native] of [['claude', 'off'], ['openrouter', 'openrouter']]) {
+    runner = name; process.env.ARGO_NATIVE_RUNNERS = native;
+    try {
+      const ws = await setup(name);
+      const inside = join(paths(ws).root, 'vault', 'note.md');
+      const probe = async (mirrorCtx) => {
+        let seen; vendorTurn = async (options) => { seen = options; return 'fixture finished'; };
+        await chat(ws, 'alpha', 'hi', null, { mirrorCtx, source: 'messenger', journal: { off: true } });
+        const out = { allowed: seen.allowedTools ?? null };
+        for (const tool of ['WebFetch', 'Write', 'Read', 'Bash']) out[tool] = (await seen.canUseTool(tool, { file_path: inside, url: 'https://example.com', command: 'ls', content: 'x' })).behavior;
+        return out;
+      };
+      const legacyGuest = await probe(ctxOf(ws, GUEST));
+      const legacyOwner = await probe(ctxOf(ws, OWNER));
+      assert.deepEqual(await probe(linkCtx(false)), legacyGuest, `${name}: team·guest = 조직 채널 손님 턴`);
+      assert.deepEqual(await probe(linkCtx(undefined)), legacyGuest, `${name}: 표지 없음 = 손님(fail-closed)`);
+      assert.equal((await probe(linkCtx(true))).Write, legacyOwner.Write, `${name}: owner = 주인 턴 쓰기`);
+    } finally { process.env.ARGO_NATIVE_RUNNERS = 'off'; }
+  }
+  runner = 'codex';
+  const ws = await setup('codex');
+  let calls = 0; vendorTurn = async () => { calls++; return 'fixture finished'; };
+  const r = await chat(ws, 'alpha', 'hi', null, { mirrorCtx: linkCtx(false), source: 'messenger', journal: { off: true } });
+  assert.equal(calls, 0, 'team·guest CLI 턴은 CLI를 띄우지 않는다');
+  assert.equal(r.reply, guestCliRefusal('Alpha', 'ko'));
+  await chat(ws, 'alpha', 'hi', null, { mirrorCtx: linkCtx(true), source: 'messenger', journal: { off: true } });
+  assert.equal(calls, 1, 'owner CLI 턴은 실행');
+});
+
+// ── #1078 검수 반영: team·guest link 턴 → send_to_crew → 쪽지 배달 턴도 같은 등급(높음), owner link 턴의 고위험 셸 결재(D28, 중간) ──
+const { deliverCrewMail } = await import('../src/crewmail.mjs');
+const { crewmailTurn } = await import('../src/scheduler.mjs');
+const { resolveApproval } = await import('../src/approvals.mjs');
+async function withBeta(ws, card = runner) { await writeFile(join(paths(ws).agents, 'beta.md'), `---\nname: Beta\nrunner: ${card}\n---\nQA fixture`); }
+async function deliveredGate(ws, ctx) {
+  // 실제 makeCrewServer의 send_to_crew → 실제 쪽지함 → 실제 deliverCrewMail·crewmailTurn → 실제 chat()·권한 게이트
+  const sink = [];
+  makeCrewServer(ws, 'alpha', 'Alpha', [{ slug: 'beta', name: 'Beta' }], 0, [], ctx, 'ko', [], '', sink, null);
+  const send = sink.find((t) => t.name === 'send_to_crew');
+  assert.match((await send.handler({ to: 'beta', message: '이 파일 고쳐 줘' })).content[0].text, /쪽지를 보냈다/);
+  let seen; vendorTurn = async (options) => { seen = options; return 'fixture finished'; };
+  await deliverCrewMail(ws, (slug, msg, opts) => crewmailTurn(ws, slug, msg, opts));
+  assert.ok(seen?.canUseTool, '배달 턴이 실제로 돌았다');
+  return seen;
+}
+test('v2 link 턴의 쪽지(send_to_crew) → 배달 턴도 같은 등급: team·guest는 손님 도구(Bash·Write·Read·WebFetch 거부), owner는 주인 도구', async () => {
+  runner = 'claude'; process.env.ARGO_NATIVE_RUNNERS = 'off';
+  const inside = (ws) => join(paths(ws).root, 'vault', 'note.md');
+  for (const owner of [false, true]) {
+    const ws = await setup('claude'); await withBeta(ws, 'claude');
+    const seen = await deliveredGate(ws, linkCtx(owner));
+    for (const tool of ['Bash', 'Write', 'Read', 'WebFetch']) {
+      const b = (await seen.canUseTool(tool, { file_path: inside(ws), url: 'https://example.com', command: 'ls', content: 'x' })).behavior;
+      assert.equal(b, owner ? 'allow' : 'deny', `${owner ? 'owner' : 'team·guest'} 배달 턴 ${tool}`);
+    }
+    assert.deepEqual(seen.allowedTools, owner ? [...SDK_ALLOWED_TOOLS] : ['mcp__crew'], '배달 턴 사전 승인 목록');
+  }
+});
+
+test('D28: v2 owner link 턴의 고위험 셸(rm -rf ~/Documents/x)은 옛 메신저 주인 턴처럼 결재로 막히고, 결재는 그 일의 범위를 단다(옛 msgr 목적지 없음) — 승인되면 같은 명령을 한 번 허용', async () => {
+  runner = 'claude'; process.env.ARGO_NATIVE_RUNNERS = 'off';
+  const cmd = { command: 'rm -rf ~/Documents/x' };
+  const ws = await setup('claude');
+  let seen; vendorTurn = async (options) => { seen = options; return 'fixture finished'; };
+  await chat(ws, 'alpha', 'hi', null, { mirrorCtx: ctxOf(ws, OWNER), source: 'messenger', journal: { off: true } });
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'legacy-1' })).behavior, 'deny', '배포본 메신저 주인 턴: 결재');
+  const ws2 = await setup('claude');
+  const ctx = linkCtx(true); ctx.scope.work = 'w-d28';
+  await chat(ws2, 'alpha', 'hi', null, { mirrorCtx: ctx, source: 'messenger', journal: { off: true } });
+  const r = await seen.canUseTool('Bash', cmd, { toolUseID: 'v2-1' });
+  assert.equal(r.behavior, 'deny', 'v2 owner 턴도 결재(배포본 대비 회귀 없음)');
+  const aps = (await loadApprovals(ws2)).filter((a) => a.payload?.shell);
+  assert.equal(aps.length, 1);
+  assert.deepEqual(aps[0].scope, { kind: 'link', work: 'w-d28', room: 'r-1', owner: true }, '그 일의 범위');
+  assert.equal(aps[0].msgr, undefined, '옛 메신저 목적지로 미러하지 않는다');
+  // 같은 명령을 다시 시도하면 새 카드 없이 같은 결재를 가리킨다
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'v2-2' })).behavior, 'deny');
+  assert.equal((await loadApprovals(ws2)).filter((a) => a.payload?.shell).length, 1);
+  // 승인 → 후속 턴(같은 범위)이 같은 명령을 한 번 실행할 수 있다
+  await resolveApproval(ws2, aps[0].id, true);
+  await chat(ws2, 'alpha', 'go', null, { mirrorCtx: ctx, source: 'messenger', journal: { off: true } });
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'v2-3' })).behavior, 'allow', '승인된 같은 명령 한 번');
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'v2-4' })).behavior, 'deny', '두 번째는 다시 결재');
+});
+
+// ── #1078 후속: 기억 안 남김 방의 쪽지 배달·결재 후속 턴은 일지 없음(a), 승인된 셸 명령은 그 일에서만(b) ──
+const { readdir } = await import('node:fs/promises');
+const { _followUpForTest } = await import('../src/approval-actions.mjs');
+const journalFiles = async (ws, slug) => (await readdir(paths(ws).journal).catch(() => [])).filter((f) => f.endsWith(`-${slug}.md`));
+test('기억 안 남김 방(memoryOff)의 link 쪽지 → 배달 턴은 PC 일지를 쓰지 않는다 — 기억 남김 방은 종전대로 쓴다', async () => {
+  runner = 'claude'; process.env.ARGO_NATIVE_RUNNERS = 'off';
+  for (const memoryOff of [false, true]) {
+    const ws = await setup('claude'); await withBeta(ws, 'claude');
+    const ctx = linkCtx(true); if (memoryOff) ctx.scope.memoryOff = true;
+    await deliveredGate(ws, ctx);
+    assert.equal((await journalFiles(ws, 'beta')).length, memoryOff ? 0 : 1, memoryOff ? '기억 안 남김: 일지 없음' : '기억 남김: 일지 있음');
+  }
+});
+
+test('기억 안 남김 방의 결재 후속 턴은 journal.off로 돈다(범위의 memoryOff) — 다른 결재는 종전대로', async () => {
+  const ws = await setup('claude');
+  for (const [scope, off] of [[{ kind: 'link', work: 'w', room: 'r', owner: true, memoryOff: true }, true], [{ kind: 'link', work: 'w', room: 'r', owner: true }, false], [null, false]]) {
+    let opts;
+    await _followUpForTest(ws, { id: 'ap-f', slug: 'alpha', kind: 'action', action: '발송', ...(scope ? { scope } : {}) }, true, { runChat: async (w, s, m, sid, o) => { opts = o; return { reply: 'ok' }; } });
+    assert.equal(opts.journal?.off === true, off, JSON.stringify(scope));
+  }
+});
+
+test('승인된 고위험 셸 명령은 그 일에서만 한 번 — 같은 주인의 다른 v2 일은 다시 결재(b)', async () => {
+  runner = 'claude'; process.env.ARGO_NATIVE_RUNNERS = 'off';
+  const cmd = { command: 'rm -rf ~/Documents/y' };
+  const ws = await setup('claude');
+  const A = linkCtx(true); A.scope.work = 'w-A';
+  const B = linkCtx(true); B.scope.work = 'w-B';
+  let seen; vendorTurn = async (options) => { seen = options; return 'fixture finished'; };
+  await chat(ws, 'alpha', 'hi', null, { mirrorCtx: A, source: 'messenger', journal: { off: true } });
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'a-1' })).behavior, 'deny');
+  const ap = (await loadApprovals(ws)).find((a) => a.payload?.shell && a.scope?.work === 'w-A');
+  await resolveApproval(ws, ap.id, true);
+  await chat(ws, 'alpha', 'hi', null, { mirrorCtx: B, source: 'messenger', journal: { off: true } });
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'b-1' })).behavior, 'deny', '다른 일은 A의 승인을 쓰지 못한다');
+  assert.ok((await loadApprovals(ws)).some((a) => a.payload?.shell && a.scope?.work === 'w-B' && a.status === 'pending'), 'B는 자기 결재를 올린다');
+  await chat(ws, 'alpha', 'go', null, { mirrorCtx: A, source: 'messenger', journal: { off: true } });
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'a-2' })).behavior, 'allow', 'A는 자기 승인으로 한 번');
+});
