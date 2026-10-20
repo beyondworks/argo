@@ -134,11 +134,12 @@ test('문구: A+ 화면이 쓰는 aplus.* 키는 사전에 ko·en 둘 다 있다
   assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''), />[^<>{}]*[가-힣][^<>{}]*</, '화면 원본에 한글을 직접 쓰지 않는다(사전으로)');
 });
 
-test('진입점: A+ 셸에는 채널·조직·파견·사람 채팅·초대 화면이 없고, 옛 RPC를 부르지 않는다', () => {
-  const ui = read('../src/aplus/APlusApp.jsx'); const src = read('../src/aplus/source.mjs');
-  for (const word of ['channel', 'Channel', 'org', 'dispatch', 'friend', 'invite', 'seat']) assert.doesNotMatch(ui.replace(/\/\/.*$/gm, ''), new RegExp(`\\b${word}`), word);
+test('진입점: A+ 셸에는 조직·파견·친구·좌석 화면이 없고(사람 채팅·초대는 2026-10-20부터 사람 탭), 옛 RPC를 부르지 않는다', () => {
+  const ui = read('../src/aplus/APlusApp.jsx') + read('../src/aplus/People.jsx'); const src = read('../src/aplus/source.mjs');
+  for (const word of ['org(?![:.])', 'dispatch', 'friend', 'seat']) assert.doesNotMatch(ui.replace(/\/\/.*$/gm, ''), new RegExp(`\\b${word}`), word); // org: ·org.join.code = 초대 안내문 함수(invite.mjs)의 인자·문구 키
   assert.doesNotMatch(src, /'msgr_(?!.*my_plan)[a-z_]+'/, '옛 msgr_* 표·RPC 없음(my_plan만)');
-  assert.doesNotMatch(src.replace(/\/\/.*$/gm, ''), /set_seat|room_members_add|invite|friend/);
+  assert.doesNotMatch(src.replace(/\/\/.*$/gm, ''), /set_seat|room_members_add|friend/);
+  assert.match(src, /'msgr2_invite_create'/, '초대는 v2 RPC로만');
 });
 
 test('쉬는 동안 요청 0: A+ 원본·화면에 주기 조회가 없다(setInterval 없음)', () => {

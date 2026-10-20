@@ -6,13 +6,14 @@ import { bindV2Push } from '../src/v2/push-bind.mjs';
 
 const flush = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
 
-test('로그인 때 토큰을 물어(권한 요청) 기계에 싣고, 앱 재개마다 다시 싣는다', async () => {
+test('로그인 때 토큰을 물어(권한 요청) 기계에 싣고, 앱 재개마다 권한 창 없이 다시 싣는다', async () => {
   const got = []; let resume = null; const asks = [];
   const off = bindV2Push({ machine: { setPushToken: (t) => got.push(t) }, getToken: async (prompt) => { asks.push(prompt); return { token: `tok-${asks.length}` }; }, observeResume: (fn) => { resume = fn; return () => { resume = null; }; } });
   await flush();
   assert.deepEqual(got, ['tok-1']); assert.deepEqual(asks, [true]);
   resume(); await flush();
   assert.deepEqual(got, ['tok-1', 'tok-2']);
+  assert.deepEqual(asks, [true, false], '재개 때는 권한 창을 다시 띄우지 않는다(안드로이드 권한 창 반복)');
   off();
   assert.equal(resume, null, '해제하면 재개 감시도 끈다');
 });
@@ -34,4 +35,9 @@ test('App.jsx 배선: v2에서는 기계에 토큰을 싣고(bindV2Push) 옛 msg
   assert.match(app, /await currentV2\(\)\?\.machine\.dropPushToken\(\)/);
   const push = readFileSync(new URL('../src/push.js', import.meta.url), 'utf8');
   assert.match(push, /export async function getPushToken\(prompt\)/);
+});
+
+test('안드로이드 매니페스트: 알림 권한(POST_NOTIFICATIONS)을 선언한다 — 13+에서 선언이 없으면 권한 창 없이 거부', () => {
+  const m = readFileSync(new URL('../src-tauri/gen/android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
+  assert.match(m, /<uses-permission android:name="android\.permission\.POST_NOTIFICATIONS" \/>/);
 });

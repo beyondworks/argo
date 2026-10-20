@@ -15,6 +15,7 @@ export const NAMES = Object.freeze({
   messages: 'msgr2_messages', // U1 — 사람 글은 표에 직접 insert(RLS), (room_id, client_msg_id) 유일
   attachments: 'msgr2_attachments', // U1(사람은 직접 넣지 못한다 — 아래 attachmentAddRpc)
   attachmentAddRpc: 'msgr2_attachment_add', // U2 — (p_message, p_index, p_name, p_mime, p_bytes) → { attachment_id, bucket, path, existing }. 이 path에만 올릴 수 있다(U2b Storage 정책)
+  messageReadyRpc: 'msgr2_message_ready', // 사람 채팅(2026-10-20 워커 계약) — 첨부 글은 insert 때 files_expected = 첨부 수, 다 올린 뒤 이것을 한 번 불러야 일이 생긴다(첫 글 첨부 경쟁). (p_message) → { ok, offers }, 객체가 덜 올라갔으면 msgr2_attachment_missing
   bucket: 'msgr', // 첨부 Storage 버킷(옛 경로 유지 — 설계 1-2)
   userTopic: TOPICS.user, // v2:u:<uid> — 옛 u: 토픽과 겹치지 않게(약속 v1 TOPICS, 검수 #1076)
   workTopic: TOPICS.work, // v2:wk:<work>

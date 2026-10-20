@@ -103,7 +103,7 @@ export function createLinkMachine(opts) {
   async function call(fn, { storage: isStorage = false } = {}) {
     try {
       const r = await fn();
-      return { data: r?.data ?? null, code: rejectCodeOf(r?.error, r?.status, { storage: isStorage }) };
+      return { data: r?.data ?? null, code: rejectCodeOf(r?.error, r?.status, { storage: isStorage }), detail: r?.error?.details ?? null }; // detail = 서버 상한 종류(msgr2_limit — 화면 문구용)
     } catch (e) {
       return { data: null, code: rejectCodeOf({ message: String(e?.message ?? e), name: e?.name }, 0, { storage: isStorage }) };
     }
@@ -583,8 +583,20 @@ export function createLinkMachine(opts) {
   // 글을 먼저 넣고(client_msg_id 멱등), 파일마다 서버가 첨부 행과 경로를 만든다(msgr2_attachment_add — (글, 순번) 멱등). 그 경로에만 올린다(U2b Storage 정책).
   // 다시 보내면 같은 (글, 순번)이 같은 행·경로를 돌려주고, 이미 올라간 파일은 Storage가 409(이미 있음)로 답해 성공으로 본다 — 행·파일 한 벌(덮어쓰지 않는다).
   //   업로드 요청은 바이트를 실어 보내므로 다시 보낼 때 이미 올라간 파일의 바이트도 다시 전송된다(전과 같다).
+  // 첨부 글(2026-10-20 워커 계약): insert 때 files_expected = 첨부 수 → 파일을 다 올린 뒤 msgr2_message_ready 1회 — 그때 서버가 일을 만든다(첫 글 첨부가 본체에 안 가던 경쟁).
+  //   첨부 없는 글은 열을 싣지 않는다(지금 글 모양 그대로 — 넣는 순간 일이 생긴다). 사람 글 meta는 서버가 '{}'로 강제하므로 쓰지 않는다.
+  /** 첨부를 다 올렸다고 알린다. 객체가 덜 올라갔으면(msgr2_attachment_missing) 'internal'로 — 다시 보내기(같은 client_msg_id)가 올리기부터 다시 하고 또 부른다(간격·상한 SEND_RETRY). */
+  async function markReady(id) {
+    try {
+      const r = await client.rpc(names.messageReadyRpc, { p_message: id });
+      if (!r?.error) return null;
+      if (/\bmsgr2_attachment_missing\b/.test(`${r.error.code ?? ''} ${r.error.message ?? ''} ${r.error.details ?? ''}`)) return 'internal';
+      return rejectCodeOf(r.error, r.status);
+    } catch (e) { return rejectCodeOf({ message: String(e?.message ?? e), name: e?.name }, 0); }
+  }
   async function sendOnce({ roomId, body, clientMsgId, topicId, replyTo, files, mentions }) {
     const row = { room_id: roomId, author_kind: 'user', author_user_id: userId, kind: 'text', body, client_msg_id: clientMsgId };
+    if (files.length) row.files_expected = files.length;
     if (topicId != null) row.topic_id = topicId;
     if (replyTo != null) row.reply_to = replyTo;
     if (Array.isArray(mentions) && mentions.length) row.mentions = [...new Set(mentions)].slice(0, 20); // @에이전트 — 서버가 방 멤버인 에이전트에게 일을 만든다(U2, 20개까지)
@@ -597,7 +609,7 @@ export function createLinkMachine(opts) {
         if (q.code) return { ok: false, code: q.code };
         id = q.data?.id ?? null;
       }
-    } else if (ins.code) return { ok: false, code: ins.code };
+    } else if (ins.code) return { ok: false, code: ins.code, detail: ins.detail ?? null };
     const attachments = [];
     if (files.length && id != null) {
       for (let i = 0; i < files.length; i++) {
@@ -612,6 +624,8 @@ export function createLinkMachine(opts) {
         if (up.code && up.code !== 'duplicate') return { ok: false, code: up.code };
         attachments.push({ id: a.data?.attachment_id ?? null, index: i, name: String(f.name || 'file'), bucket, path });
       }
+      const ready = await markReady(id); // 다시 보낸 글(중복 경로)에서도 부른다 — 서버는 두 번째부터 offers 0
+      if (ready) return { ok: false, code: ready };
     }
     return { ok: true, id, duplicate, attachments };
   }
@@ -628,7 +642,7 @@ export function createLinkMachine(opts) {
     const bad = attachmentProblem(files || []); // 서버가 영구 거부할 첨부면 글을 넣기 전에 멈춘다(요청 0)
     if (bad) { emit('send', { clientMsgId, roomId, status: 'failed', code: bad }); return { ok: false, clientMsgId, code: bad, attempts: 0 }; }
     emit('send', { clientMsgId, roomId, status: 'sending' });
-    let last = null; let n = 0;
+    let last = null; let lastDetail = null; let n = 0;
     for (; n < sendRetry.maxAttempts; n++) {
       const b = sendBlock();
       if (b) { last = b; break; }
@@ -638,12 +652,12 @@ export function createLinkMachine(opts) {
         emit('send', { clientMsgId, roomId, status: 'sent', id: r.id, attachments: r.attachments });
         return out;
       }
-      last = r.code;
+      last = r.code; lastDetail = r.detail ?? null;
       if (handleCode(r.code, 'send')) { n++; break; } // 폐기·중단·업데이트·기기 다시 등록 — 다시 보내지 않는다
       if (!retryable(r.code)) { n++; break; }
       if (n + 1 < sendRetry.maxAttempts) await sleep(backoffDelay(n, sendRetry, random));
     }
-    const out = { ok: false, clientMsgId, code: last, attempts: n };
+    const out = { ok: false, clientMsgId, code: last, detail: lastDetail, attempts: n };
     emit('send', { clientMsgId, roomId, status: 'failed', code: last }); // 화면은 같은 client_msg_id로 다시 보낼 수 있다(멱등)
     return out;
   }

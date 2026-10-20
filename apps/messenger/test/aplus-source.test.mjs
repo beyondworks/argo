@@ -27,6 +27,6 @@ test('plan() 실패는 null(모름) — 화면은 다시 확인을 보인다', {
 test('시작 전(무료·로그인 직후): 회의방·봇·1:1 조회는 aplus_not_ready로 멈추고 요청 0', { skip: !createAPlusSource && 'source.mjs needs vite aliases' }, async () => {
   const raw = fakeRaw();
   const s = createAPlusSource({ raw, uid: 'u1' });
-  for (const fn of ['meetings', 'createMeeting', 'cancelMeeting', 'bots', 'agents', 'openDm', 'messages']) await assert.rejects(s[fn]({}), { code: 'aplus_not_ready' }, fn);
+  for (const fn of ['meetings', 'createMeeting', 'cancelMeeting', 'bots', 'agents', 'openDm', 'messages', 'spaces', 'space', 'createSpace', 'createChannel', 'openUserDm', 'createInvite', 'contacts', 'myInvites', 'previewInvite', 'acceptInvite', 'declineInvite']) await assert.rejects(s[fn]({}), { code: 'aplus_not_ready' }, fn); // 사람 탭도 시작 전(무료 포함) 요청 0
   assert.deepEqual(raw.calls, []);
 });
