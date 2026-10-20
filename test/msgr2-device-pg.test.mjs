@@ -86,7 +86,7 @@ before(() => {
     create table if not exists public.msgr_settings (key text primary key, value text not null); alter table public.msgr_settings enable row level security;
   `]);
   psql(['-c', migBy('_msgr_app_min_version.sql')]);
-  if (u1File) psql(['-c', readFileSync(u1File, 'utf8')]); // 버전 순서: U1(20261017151000) → U3
+  if (u1File) psql(['-c', readFileSync(u1File, 'utf8')]); // 버전 순서: U1(20261020200000) → U3
   psql(['-c', migBy('_msgr2_device.sql')]);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, email) values ('${id}', '${k}@example.test')`);
 });

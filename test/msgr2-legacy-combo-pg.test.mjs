@@ -87,7 +87,7 @@ test('옛 경로는 영향 없음 — v2 방이 아닌 옛 채널 경로는 옛 
 });
 
 test('되돌림(운영 순서 판) — U2b 되돌림 뒤 옛 정리 후보 함수 본문이 20261011150000과 같다', { skip }, () => {
-  const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261018010000_msgr2_realtime_storage.down.sql', import.meta.url)), 'utf8');
+  const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261020200300_msgr2_realtime_storage.down.sql', import.meta.url)), 'utf8');
   db.psql(['-c', down]);
   const orig = readFileSync(fileURLToPath(new URL('../supabase/migrations/20261011150000_msgr_free_storage_limit.sql', import.meta.url)), 'utf8');
   const a = orig.indexOf('\nbegin\n  return query\n    select o.name from public._msgr_live_objects() o'); const b = orig.indexOf('end $$;', a);

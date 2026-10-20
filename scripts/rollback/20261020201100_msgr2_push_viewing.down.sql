@@ -1,7 +1,7 @@
--- 되돌림: supabase/migrations/20261018061100_msgr2_push_viewing.sql("보는 중" 판정·엣지 호출 시간 상한)을 20261018030000 정의로 되돌린다. 표는 만들지 않았다.
--- 바로 실행하는 파일이다(마이그레이션이 아니다). 20261018030000을 되돌리기 전에 먼저 실행한다.
+-- 되돌림: supabase/migrations/20261020201100_msgr2_push_viewing.sql("보는 중" 판정·엣지 호출 시간 상한)을 20261020200500 정의로 되돌린다. 표는 만들지 않았다.
+-- 바로 실행하는 파일이다(마이그레이션이 아니다). 20261020200500을 되돌리기 전에 먼저 실행한다.
 -- 엣지 msgr2-push도 같이 되돌릴 때는 3초 기다림이 없는 판(이 PR 이전 index.ts)을 배포한다 — 이 파일만 되돌려도 알림은 나간다(60초 판정으로 빠지는 사람이 늘 뿐).
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261018061100_msgr2_push_viewing.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261020201100_msgr2_push_viewing.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
 create or replace function public.msgr2_push_recipients(p_message bigint)

@@ -1,4 +1,4 @@
-// 메신저 v2 초대 취소 방송(20261018061300) — 사람 지정 초대를 취소하면 받는 사람 v2:u:에 'invite'(revoked) 사건 한 번. 실제 Postgres(운영 순서 전체 마이그레이션 판).
+// 메신저 v2 초대 취소 방송(20261020201200) — 사람 지정 초대를 취소하면 받는 사람 v2:u:에 'invite'(revoked) 사건 한 번. 실제 Postgres(운영 순서 전체 마이그레이션 판).
 // 실행: bash scripts/billing-pg-drill.sh test/msgr2-invite-revoke-pg.test.mjs
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -62,7 +62,7 @@ test('권한은 그대로: 받는 사람·남은 취소하지 못한다(방송 0
 
 test('되돌림: 040000 정의로 — 취소해도 방송 없음, 취소 자체는 된다', { skip }, async () => {
   const { readFileSync } = await import('node:fs');
-  const down = readFileSync(new URL('../scripts/rollback/20261018061300_msgr2_invite_revoke_signal.down.sql', import.meta.url), 'utf8');
+  const down = readFileSync(new URL('../scripts/rollback/20261020201200_msgr2_invite_revoke_signal.down.sql', import.meta.url), 'utf8');
   const r = db.raw(['-v', 'ON_ERROR_STOP=1', '-c', down]);
   assert.equal(r.status, 0, r.stderr);
   const inv = J(d.O, `public.msgr2_invite_create('${TEAM}', 'member', '${N}')`);

@@ -436,15 +436,15 @@ test('10e) 오피스 전용 조직(메신저 채널·자리 없음)은 팀 공�
 
 test('11) 이 마이그레이션 되돌림: 백필이 돈 기록이 있으면 멈추고, 없으면 함수·작업 행을 걷어 내고 offer 트리거를 U2 본문으로', { skip }, () => {
   // 개인 방 첨부 판정(051000) 되돌림 → 세 함수가 U2b·U1 본문으로
-  const downPf = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261018051000_msgr2_personal_files.down.sql', import.meta.url)), 'utf8');
+  const downPf = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261020200800_msgr2_personal_files.down.sql', import.meta.url)), 'utf8');
   const rp = db.raw(['-c', downPf]);
   assert.equal(rp.status, 0, rp.stderr);
   const body = (f, name) => { const t = readFileSync(fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url)), 'utf8'); const i = t.indexOf(`create or replace function public.${name}(`);
     const a2 = t.indexOf('$$', i) + 2; return t.slice(a2, t.indexOf('$$;', a2)); };
-  for (const [f, n] of [['20261018010000_msgr2_realtime_storage.sql', '_msgr2_storage_room'], ['20261018010000_msgr2_realtime_storage.sql', '_msgr2_storage_write'], ['20261017151000_msgr2_space.sql', 'msgr2_insert_stamp']])
+  for (const [f, n] of [['20261020200300_msgr2_realtime_storage.sql', '_msgr2_storage_room'], ['20261020200300_msgr2_realtime_storage.sql', '_msgr2_storage_write'], ['20261020200000_msgr2_space.sql', 'msgr2_insert_stamp']])
     assert.equal(one(`select md5(prosrc) from pg_proc where proname = '${n}'`), one(`select md5($b$${body(f, n)}$b$)`), n);
-  const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261018050000_msgr2_backfill.down.sql', import.meta.url)), 'utf8');
-  const u2 = readFileSync(fileURLToPath(new URL('../supabase/migrations/20261018000000_msgr2_work.sql', import.meta.url)), 'utf8');
+  const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261020200700_msgr2_backfill.down.sql', import.meta.url)), 'utf8');
+  const u2 = readFileSync(fileURLToPath(new URL('../supabase/migrations/20261020200200_msgr2_work.sql', import.meta.url)), 'utf8');
   const fn = (s) => s.slice(s.indexOf('create or replace function public.msgr2_on_user_message()'), s.indexOf('end $$;', s.indexOf('create or replace function public.msgr2_on_user_message()')));
   assert.equal(fn(down), fn(u2), '되돌림 파일의 트리거 본문 = U2 본문');
   assert.match(db.raw(['-c', down]).stderr, /msgr2_rollback_not_empty: msgr2_backfill_jobs/);

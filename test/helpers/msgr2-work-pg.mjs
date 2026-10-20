@@ -97,7 +97,7 @@ export function setupFull(DB) {
   return { ...db, files: all };
 }
 
-// A+(20261019160000) 앞의 v2 전체 기능을 잠그는 시험용 — 1:1 밖 막기(msgr2_lite)와 Pro 검사(msgr2_pro_gate)를 끈다.
+// A+(20261020201400) 앞의 v2 전체 기능을 잠그는 시험용 — 1:1 밖 막기(msgr2_lite)와 Pro 검사(msgr2_pro_gate)를 끈다.
 // 운영 기본은 둘 다 켬. setupFull은 요금제 마이그레이션까지 적용해 is_pro_for가 있으므로, 시드 사용자(무료)는 켠 채로는 일을 못 만든다.
 // A+ 동작 자체는 test/msgr2-aplus-pg.test.mjs가 켠 상태로 잠근다.
 export function v2FullMode(db) {

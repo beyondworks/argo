@@ -1,7 +1,7 @@
 # 메신저 v2 이전·스위치 런북 (U8)
 
 설계 정본: 볼트 `AI-Sessions/conversations/argo/2026-10-17-argo-messenger-redesign-design.md` 6절(이전)·7절 경우 13·25.
-함수: `supabase/migrations/20261018050000_msgr2_backfill.sql`·`20261018051000_msgr2_personal_files.sql`·`20261018052000_msgr2_migration_window.sql` · 실행기: `scripts/msgr2-migrate.sh` · 비우기: `scripts/msgr2-migrate-rollback.sql` · 시험: `test/msgr2-backfill-pg.test.mjs`·`test/msgr2-migration-window-pg.test.mjs`.
+함수: `supabase/migrations/20261020200700_msgr2_backfill.sql`·`20261020200800_msgr2_personal_files.sql`·`20261020200900_msgr2_migration_window.sql` · 실행기: `scripts/msgr2-migrate.sh` · 비우기: `scripts/msgr2-migrate-rollback.sql` · 시험: `test/msgr2-backfill-pg.test.mjs`·`test/msgr2-migration-window-pg.test.mjs`.
 
 **한 작업 창으로 묶는다(재검수 5번 결정, 2026-10-18).** 백필이 끝나면 옛 앱(v2 기기 행이 없는 세션)은 조직·개인 첨부를 못 연다 — v2 방 경로의 Storage 판정이 v2만 따르기 때문이다(실측: 백필 전 1 → 뒤 0). 그래서 아래 1~6단계는 **창 열기 → 백필 → 검증 → 첨부 확인 → 바로 스위치 → 창 닫기**를 끊지 않고 한 번에 한다. 백필만 먼저 해 두고 스위치를 미루지 않는다(그 사이 옛 앱 사용자는 첨부를 못 연다). 연습은 qbwr 합성 데이터로 미리 한다.
 
@@ -20,7 +20,7 @@
 | 0-7 | 실행 전 옛 표 행 수를 남겼다 | `bash scripts/msgr2-migrate.sh verify` 출력의 `old_counts`를 파일로(아직 비어 있으면 ok=false가 정상) |
 | 0-8 | 옛 앱 사용자 안내를 올릴 준비가 됐다 | 아래 "안내 문구 초안"(창을 열 때 랜딩·공지, 스위치 뒤 옛 방 공지) |
 | 0-9 | 작업 창 길이를 잡았다 | qbwr 연습의 전체 시간 + 여유. 창 동안 계정 삭제·보관 조직 영구 삭제가 거부된다 |
-| 0-10 | A+ lite가 꺼져 있다(옛 대화를 옮기기로 다시 정한 경우에만 이 문서를 쓴다) | `select coalesce((select value from msgr_settings where key = 'msgr2_lite'), 'on')` = `off`. 켜져 있으면(A+ 기본, 2026-10-19 유건 "옛 대화는 옮기지 않음") 백필 함수가 `msgr2_backfill_lite`로 거부한다(20261019160000) |
+| 0-10 | A+ lite가 꺼져 있다(옛 대화를 옮기기로 다시 정한 경우에만 이 문서를 쓴다) | `select coalesce((select value from msgr_settings where key = 'msgr2_lite'), 'on')` = `off`. 켜져 있으면(A+ 기본, 2026-10-19 유건 "옛 대화는 옮기지 않음") 백필 함수가 `msgr2_backfill_lite`로 거부한다(20261020201400) |
 
 ## 1. 작업 창 열기 (설계 6절 0단계)
 
@@ -40,7 +40,7 @@ bash scripts/msgr2-migrate.sh run
 ```
 
 - 15단계를 순서대로 한 묶음씩 부른다: 에이전트 → 공간 → 공간 멤버 → 파견 → 방 → 방 멤버 → 글 키(같은 채널의 겹치는 client_msg_id를 한 번 모음) → 글(5,000행씩) → 첨부 → 읽음 → 반응 → 방 설정 → 조직 고정 → 대기 결재(expired) → 글 identity.
-- 1:1 짝 키는 U6d(`20261018040000_msgr2_rooms.sql`)와 같다: 개인 친구 1:1 = `p:<작은>:<큰>`, 팀 1:1 = `<작은>:<큰>`, 에이전트 1:1 = 짝 없는 private 방. U6d와 U8을 함께 적용한 결합 시험으로 목록·열기가 옮긴 방을 찾는 것을 확인했다(#1084 PR 본문).
+- 1:1 짝 키는 U6d(`20261020200600_msgr2_rooms.sql`)와 같다: 개인 친구 1:1 = `p:<작은>:<큰>`, 팀 1:1 = `<작은>:<큰>`, 에이전트 1:1 = 짝 없는 private 방. U6d와 U8을 함께 적용한 결합 시험으로 목록·열기가 옮긴 방을 찾는 것을 확인했다(#1084 PR 본문).
 - 한 묶음 = 한 트랜잭션이고 체크포인트를 같은 트랜잭션에서 쓴다. 터미널이 끊기거나 실패하면 그 묶음만 되돌아간다 — **같은 명령을 다시 실행하면 체크포인트부터** 간다.
 - 실행기 두 개를 동시에 띄워도 한 작업은 한 곳만 돈다(`busy`, 5초씩 최대 5분 기다림). `restart`가 끼어들면 돌던 실행기는 `stale_generation`으로 멈춘다.
 - 백필 중 방송·푸시·offer는 0이다(서비스 문맥 + 트랜잭션 안의 `msgr2.backfill = on`). 확인: 실행 전후 `select count(*) from net._http_response`·Realtime 대시보드 메시지 수가 그대로.
@@ -70,7 +70,7 @@ ok면 모든 작업 행에 `verified_at`이 찍힌다.
 ```sql
 select storage_path, room_id from public.msgr2_attachments order by random() limit 20;
 ```
-- `storage_path`는 `msgr/<옛 경로>`다(버킷 + 경로). 조직 첨부(`msgr/<조직>/<채널>/…`)는 공간 id = 조직 id, 방 id = 채널 id라 v2 Storage 정책(U2b `_msgr2_storage_gate`)이 판정한다. 개인 첨부(`msgr/p/<채널>/…`)는 `20261018051000_msgr2_personal_files.sql`이 `p/<방>/…`을 이전된 개인 방(같은 id)으로 해석해 v2 판정으로 연다(읽기 전용 — v2는 `p/` 경로에 쓰지 않는다).
+- `storage_path`는 `msgr/<옛 경로>`다(버킷 + 경로). 조직 첨부(`msgr/<조직>/<채널>/…`)는 공간 id = 조직 id, 방 id = 채널 id라 v2 Storage 정책(U2b `_msgr2_storage_gate`)이 판정한다. 개인 첨부(`msgr/p/<채널>/…`)는 `20261020200800_msgr2_personal_files.sql`이 `p/<방>/…`을 이전된 개인 방(같은 id)으로 해석해 v2 판정으로 연다(읽기 전용 — v2는 `p/` 경로에 쓰지 않는다).
 - 표본 20개에 조직 첨부와 개인 첨부를 둘 다 넣고, 각각 그 방 멤버의 v2 세션으로 서명 URL을 만들어 연다. 방 밖 사람 세션으로는 서명이 거부되는지 1개씩 확인한다.
 - 20개 모두 200이어야 한다. 결과(경로 해시·상태 코드)를 발행 기록에 남긴다.
 - 옛 정리 작업(`msgr_storage_sweep_list`)은 `msgr2_attachments`가 가리키는 객체를 후보에서 뺀다(U2b). 이전 직후 `select count(*) from public.msgr_storage_sweep_list(1000) s where exists (select 1 from public.msgr2_attachments a where a.storage_path = 'msgr/' || s)` = 0 을 확인한다.
@@ -119,8 +119,8 @@ delete from public.msgr_settings where key = 'msgr2_migration_window';
 |---|---|
 | 스위치 전 | `bash scripts/msgr2-migrate.sh rollback` — 백필 사본만 비우고 작업 행을 처음으로(세대 +1). v2에서 새로 생긴 행(옛 짝 없는 글·방·일·에이전트·팀 공간, 토픽·일 기록·효과·리스·푸시 장부)이 하나라도 있으면 아무것도 지우지 않고 멈춘다. 옛 표는 손대지 않는다 |
 | 스위치 후 | 비우지 않는다. v2 중단 스위치(`msgr2_paused`) → 고쳐서 다시 켬 |
-| 이 마이그레이션 자체 | 위 비우기 뒤 `scripts/rollback/20261018050000_msgr2_backfill.down.sql`(작업 행에 돈 기록이 있으면 멈춘다) |
-| 작업 창 막기(052000) | 창을 닫은 뒤(표지 삭제) `scripts/rollback/20261018052000_msgr2_migration_window.down.sql` — 표지가 남아 있으면 멈춘다. 감싸개를 지우고 원래 함수를 원래 이름·권한으로 되돌린다 |
+| 이 마이그레이션 자체 | 위 비우기 뒤 `scripts/rollback/20261020200700_msgr2_backfill.down.sql`(작업 행에 돈 기록이 있으면 멈춘다) |
+| 작업 창 막기(052000) | 창을 닫은 뒤(표지 삭제) `scripts/rollback/20261020200900_msgr2_migration_window.down.sql` — 표지가 남아 있으면 멈춘다. 감싸개를 지우고 원래 함수를 원래 이름·권한으로 되돌린다 |
 | 스위치 전 되돌림을 했을 때 | 비우기 뒤 바로 창을 닫는다(6단계) — 옛 앱 첨부는 다시 열린다(v2 방이 없으면 옛 정책이 판정) |
 
 ## 함정
@@ -132,6 +132,30 @@ delete from public.msgr_settings where key = 'msgr2_migration_window';
 5. 글 identity는 옛·새 글 id 중 큰 값으로 맞춘다. 스위치 뒤 새 글 id는 옛 최댓값 + 1부터다.
 6. **보관 폴더 받기(0.1.113)도 옛 세션으로 첨부를 받는다.** 백필 뒤에는 v2 판정이 막으므로, 그때까지 다 못 받은 첨부(`partial`)는 다시 받을 수 없다. 새 버전에서는 같은 첨부를 그대로 연다(파일은 옮기지 않았다). 창을 열기 전에 보관 받기를 멈출 필요는 없다(실패는 다시 받기 예산 안에서 끝난다).
 7. **창 표지는 손으로 넣고 지운다.** 넣는 사람과 지우는 사람이 같은 기록에 시각을 남긴다. 표지가 남은 채 작업이 끝나면 계정 삭제가 계속 막힌다(0-5·6단계).
+
+## 번호 다시 매기기(2026-10-20, 공개 계획서 S0)
+운영 nvqo 최신 기록이 20261020100200(오피스 PR #16)이라, 운영에 없는 msgr2 마이그레이션 16개를 상대 순서 그대로 그 뒤로 옮겼다(`msgr-live-apply.sh`의 "더 새 버전이 있으면 거부"를 지나게). 파일 내용은 바꾸지 않았다 — 파일 안 주석의 옛 번호는 아래 표로 읽는다. main에 이미 있고 운영에 적용된 20261019135000·140000·150000은 옮기지 않았다. 적용 직전에 맥 one이 운영 `max(version)`을 다시 읽어 아래 번호가 모두 그 뒤인지 확인한다.
+**qbwr 기록은 옛 번호, 정의는 같다**(2026-10-20 적용 — 함수·열·정책·트리거 해시 대조 차이 0). qbwr에 새 번호로 다시 적용하지 않는다.
+
+| 옛 번호 | 새 번호 | 파일 |
+|---|---|---|
+| 20261017151000 | 20261020200000 | msgr2_space |
+| 20261017235000 | 20261020200100 | msgr2_device |
+| 20261018000000 | 20261020200200 | msgr2_work |
+| 20261018010000 | 20261020200300 | msgr2_realtime_storage |
+| 20261018020000 | 20261020200400 | msgr2_presence_attach |
+| 20261018030000 | 20261020200500 | msgr2_push |
+| 20261018040000 | 20261020200600 | msgr2_rooms |
+| 20261018050000 | 20261020200700 | msgr2_backfill |
+| 20261018051000 | 20261020200800 | msgr2_personal_files |
+| 20261018052000 | 20261020200900 | msgr2_migration_window |
+| 20261018060000 | 20261020201000 | msgr2_work_signal |
+| 20261018061100 | 20261020201100 | msgr2_push_viewing |
+| 20261018061300 | 20261020201200 | msgr2_invite_revoke_signal |
+| 20261019155000 | 20261020201300 | msgr2_link_v1_1_check |
+| 20261019160000 | 20261020201400 | msgr2_aplus |
+| 20261020120000 | 20261020201500 | msgr2_people |
+| (새 파일) | 20261020201600 | msgr2_rate(반응·방 만들기·보관 속도 상한) |
 
 ## 미룸 — R5 로컬 실전 시험(2026-10-20)에서 나온 것
 

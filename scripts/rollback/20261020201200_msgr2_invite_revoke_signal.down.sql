@@ -1,6 +1,6 @@
--- 되돌림: supabase/migrations/20261018061300_msgr2_invite_revoke_signal.sql(초대 취소 방송)을 20261018040000 정의로 되돌린다. 표는 만들지 않았다.
--- 바로 실행하는 파일이다(마이그레이션이 아니다). 20261018040000을 되돌리기 전에 먼저 실행한다.
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261018061300_msgr2_invite_revoke_signal.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 되돌림: supabase/migrations/20261020201200_msgr2_invite_revoke_signal.sql(초대 취소 방송)을 20261020200600 정의로 되돌린다. 표는 만들지 않았다.
+-- 바로 실행하는 파일이다(마이그레이션이 아니다). 20261020200600을 되돌리기 전에 먼저 실행한다.
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261020201200_msgr2_invite_revoke_signal.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
 create or replace function public.msgr2_invite_revoke(p_invite uuid) returns boolean

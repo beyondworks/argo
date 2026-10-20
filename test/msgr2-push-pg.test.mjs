@@ -92,7 +92,7 @@ test('음소거한 방은 빼고, 음소거를 풀면 받는다', { skip }, () =
   assert.ok(usersOf(mid).includes(G));
 });
 
-// 보는 중(20261018061100): 그 글을 읽음으로 올렸고(last_read_id >= 글 id) 그 갱신이 글 뒤면 뺀다. 엣지는 글 뒤 3초까지 기다린 다음 이 함수를 부른다.
+// 보는 중(20261020201100): 그 글을 읽음으로 올렸고(last_read_id >= 글 id) 그 갱신이 글 뒤면 뺀다. 엣지는 글 뒤 3초까지 기다린 다음 이 함수를 부른다.
 test('보는 중: 글이 온 뒤 그 글까지 읽음을 올린 사람은 빠지고, 직전에 방을 읽고 떠난 사람(옛 60초 판정이 빼던 사람)은 받는다', { skip }, () => {
   const me = seedDevice(db, O, 'app'); // 읽음을 올리는 O의 앱 기기(토큰 없음 — 받는 기기는 before의 토큰 기기)
   const prev = post(TR, { author: M, body: '앞 글' });
@@ -231,7 +231,7 @@ test('보존 정리: pg_net 응답 삭제가 실패해도(권한 없음 등) 장
 
 test('되돌림: 장부에 행이 있으면 멈추고 아무것도 지우지 않는다 — 비운 뒤에는 트리거·함수·표가 사라지고 글 쓰기는 그대로', { skip }, async () => {
   const { readFileSync } = await import('node:fs');
-  const down = readFileSync(new URL('../scripts/rollback/20261018030000_msgr2_push.down.sql', import.meta.url), 'utf8');
+  const down = readFileSync(new URL('../scripts/rollback/20261020200500_msgr2_push.down.sql', import.meta.url), 'utf8');
   const r = db.raw(['-v', 'ON_ERROR_STOP=1', '-c', down]);
   assert.notEqual(r.status, 0, '행이 있으면 실패');
   assert.equal(db.sql(`select count(*) from pg_trigger where tgname = 'msgr2_push_after_insert'`), '1', '실패하면 그대로');
