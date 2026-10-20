@@ -19,7 +19,7 @@
 | 0-6 | 스위치 표지가 없다 | `select count(*) from msgr_settings where key in ('msgr2_switched_at', 'msgr2_enabled')` = 0 (둘 중 하나라도 있으면 백필·비우기가 거부된다) |
 | 0-7 | 실행 전 옛 표 행 수를 남겼다 | `bash scripts/msgr2-migrate.sh verify` 출력의 `old_counts`를 파일로(아직 비어 있으면 ok=false가 정상) |
 | 0-8 | 옛 앱 사용자 안내를 올릴 준비가 됐다 | 아래 "안내 문구 초안"(창을 열 때 랜딩·공지, 스위치 뒤 옛 방 공지) |
-| 0-9 | 작업 창 길이를 잡았다 | qbwr 연습의 전체 시간 + 여유. 창 동안 계정 삭제·보관 조직 영구 삭제가 거부된다 |
+| 0-9 | 작업 창 길이를 잡았다 | 0-7의 운영 `old_counts`로 추정한다: **운영 `msgr_messages` 행 수 ÷ 200,000 × 약 1분(백필) + 약 15초(검증·첨부 확인·4b 다시 실행)**, 여기에 여유를 더한다. 근거: 2026-10-20 맥 two 로컬 Supabase 연습(합성 글 200,196·첨부 1,000) — 백필 53.1초, verify 1.1초, 첨부 20개 1.7초, 4b 9.9초, 스위치·창 닫기 0.7초(`artifacts/s2-rehearsal-2026-10-20`, 추적 안 함). 창 동안 계정 삭제·보관 조직 영구 삭제가 거부된다 |
 | 0-10 | A+ lite가 꺼져 있다(옛 대화를 옮기기로 다시 정한 경우에만 이 문서를 쓴다) | `select coalesce((select value from msgr_settings where key = 'msgr2_lite'), 'on')` = `off`. 켜져 있으면(A+ 기본, 2026-10-19 유건 "옛 대화는 옮기지 않음") 백필 함수가 `msgr2_backfill_lite`로 거부한다(20261020201400) |
 
 ## 1. 작업 창 열기 (설계 6절 0단계)
@@ -72,6 +72,7 @@ select storage_path, room_id from public.msgr2_attachments order by random() lim
 ```
 - `storage_path`는 `msgr/<옛 경로>`다(버킷 + 경로). 조직 첨부(`msgr/<조직>/<채널>/…`)는 공간 id = 조직 id, 방 id = 채널 id라 v2 Storage 정책(U2b `_msgr2_storage_gate`)이 판정한다. 개인 첨부(`msgr/p/<채널>/…`)는 `20261020200800_msgr2_personal_files.sql`이 `p/<방>/…`을 이전된 개인 방(같은 id)으로 해석해 v2 판정으로 연다(읽기 전용 — v2는 `p/` 경로에 쓰지 않는다).
 - 표본 20개에 조직 첨부와 개인 첨부를 둘 다 넣고, 각각 그 방 멤버의 v2 세션으로 서명 URL을 만들어 연다. 방 밖 사람 세션으로는 서명이 거부되는지 1개씩 확인한다.
+- **서명하는 세션은 "로그인 → 앱 기기 등록(`msgr2_device_register('app', 'messenger', …)`) → 서명" 순서로 만든다.** v2 Storage 판정(`_msgr2_storage_read` → `msgr2_access`)은 등록된 기기가 있는 세션만 통과시킨다. `20261020201700_msgr2_device_pro`가 적용된 뒤에는 새 기기 등록이 Pro만 되므로 **Pro 계정 세션**으로 한다. 2026-10-20 연습 1회차는 기기 등록을 빠뜨려 20개 모두 "Object not found"로 실패했고, 순서를 고친 2회차는 20/20 통과했다.
 - 20개 모두 200이어야 한다. 결과(경로 해시·상태 코드)를 발행 기록에 남긴다.
 - 옛 정리 작업(`msgr_storage_sweep_list`)은 `msgr2_attachments`가 가리키는 객체를 후보에서 뺀다(U2b). 이전 직후 `select count(*) from public.msgr_storage_sweep_list(1000) s where exists (select 1 from public.msgr2_attachments a where a.storage_path = 'msgr/' || s)` = 0 을 확인한다.
 
