@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 안드로이드 13+ 알림 권한(푸시) — 선언이 없으면 권한 창 없이 거부된다(2026-10-20) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 스토어 미발행 단계의 자가 업데이트 — GitHub 릴리스 APK를 앱이 직접 설치 화면에 올리려면 필요(apk-installer 플러그인) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
