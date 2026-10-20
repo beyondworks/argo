@@ -48,6 +48,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.113': Object.freeze(['updates.note.msgrArchive', 'updates.note.msgrPausedQuiet', 'updates.note.msgrPausedSettings']),
   // 0.1.114 — freeLocal: 무료는 이 기기에서만(로그인·플랜 확인 말고 클라우드 호출 0, 루틴·텔레그램은 이 기기에서, 메신저 연결은 Pro — #1109·#1110) · proQuota: Pro 클라우드 5GB, 80%부터 안내, 가득 차면 새 업로드만 멈춤(#1109·#1110)
   '0.1.114': Object.freeze(['updates.note.freeLocal', 'updates.note.proQuota']),
+  // 0.1.115 — msgr2Ready: 새 메신저(v2)와 연결할 준비 — 메신저가 열리면 이 버전 그대로 씀(#1128, 공개 전에는 운영 스위치로 멈춤) · freeNoMsgrServer: 무료 계정은 메신저 서버에 아무것도 저장하지 않음(#1128·201700) · connStability: 연결 안정성과 보안 개선(#1107·#1036·#1111)
+  '0.1.115': Object.freeze(['updates.note.msgr2Ready', 'updates.note.freeNoMsgrServer', 'updates.note.connStability']),
 });
 
 export function stableVersion(value) {
