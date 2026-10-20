@@ -7,6 +7,7 @@ drop trigger if exists msgr2_lite_guard on public.msgr2_spaces;
 drop trigger if exists msgr2_lite_guard on public.msgr2_space_invites;
 drop trigger if exists msgr2_lite_guard on public.msgr2_room_members;
 drop trigger if exists msgr2_lite_guard on public.msgr2_messages;
+drop trigger if exists msgr2_lite_guard on public.msgr2_space_members; -- 20261020120000(사람 채팅)이 더한 트리거 — 그 파일을 먼저 되돌리지 않았어도 이 함수를 지울 수 있게
 drop function if exists public.msgr2_lite_guard();
 drop function if exists public.msgr2_meeting_create(text, uuid[]);
 create or replace function public._msgr2_bf_begin() returns void

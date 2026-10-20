@@ -572,7 +572,7 @@ export const MEETING_LIMITS = Object.freeze({ speakers: LINK_LIMITS.meetingAgent
 /** 회의 실행기 — 데스크톱 회의실과 메신저 회의방이 같이 쓴다. env = fileRoomEnv(wsId) 모양(바깥), state.saved = 안건 저장 뒤 표식, mark = 진행 마커.
     env.meeting = { signal } 이면 회의방 모드: 위 MEETING_LIMITS, 풀림 무시, 취소 신호가 서면 새 발언을 시작하지 않는다(진행 중 발언은 env.speak가 끊는다).
     참여자의 kind === 'bot'(외부 봇)은 이름으로 직접 부를 때만 발언한다 — @전체·멘션 없음 폴백·반응 라운드에 끼지 않는다(봇 글이 다른 봇을 깨우지 않게). */
-export async function runRoomCore(env, text, attachments = [], state = {}, mark = async () => {}, { rounds = 2, concurrency = ROOM_CONCURRENCY } = {}) {
+export async function runRoomCore(env, text, attachments = [], state = {}, mark = async () => {}, { rounds = 2, concurrency = ROOM_CONCURRENCY, noMentionAll = false } = {}) {
   const meeting = env.meeting ?? null;
   const signal = meeting?.signal ?? null;
   const all = await env.participants();
@@ -686,7 +686,7 @@ export async function runRoomCore(env, text, attachments = [], state = {}, mark 
   // 곱해지는 것은 그대로라, 아래 'speakers' 안내 줄이 인원·순서를 방에 정직하게 남긴다. 릴레이 상한(HOP_MAX)은 별개.
   let speakers = dir.relay.length
     ? dir.relay
-    : dir.allCall ? agents : (dir.to.length ? dir.to : (agents[0] ? [agents[0]] : []));
+    : dir.allCall || (noMentionAll && !dir.to.length) ? agents : (dir.to.length ? dir.to : (agents[0] ? [agents[0]] : [])); // noMentionAll: 메신저 회의방(서버가 고른 참가자 전원) — 데스크톱은 종전대로 첫 크루
   const isRelay = dir.relay.length > 0;
   // 참조만 지시했으면 여기서 끝 — 참조만 돌리려던 문장에 엉뚱한 크루가 답하지 않게.
   if (!speakers.length || (ccTargets.length && !dir.to.length && !dir.relay.length && !dir.allCall)) {

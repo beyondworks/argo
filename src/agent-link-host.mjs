@@ -75,6 +75,7 @@ export async function runMeetingOffer(offer, ctx, { agents, deps }) {
   const res = await deps.runMeeting({
     text: offer.data.text, participants, signal: ctx.signal, maxTurnS: offer.data.limits?.max_turn_s, tag: offer.work, sessionKey: `argo:${offer.data.room}`,
     rounds: m.rounds,
+    allByDefault: true, // 멘션 없는 글 = 서버가 보낸 참가자 전원(msgr2_on_user_message와 같은 규약). 이름 멘션이 있으면 그 사람만
   }, {
     chat: deps.chat, interruptTurn: deps.interruptTurn, callBot: deps.callBot,
     mirrorCtxFor: () => ({ kind: 'scope', scope: { kind: 'link', work: offer.work, room: offer.data.room, owner: policy.ownerTools === true, ...(memoryOff ? { memoryOff: true } : {}) } }),
