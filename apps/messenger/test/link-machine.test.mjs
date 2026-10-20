@@ -99,6 +99,7 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
       return { data: ns === undefined ? { rooms } : { rooms, next_since: ns }, error: null, status: 200 };
     },
     // U2 msgr2_attachment_add 흉내: 내 사람 글만, (글, 순번) 멱등, 경로는 서버가 정한다
+    msgr2_message_ready: ({ p_message }) => ({ data: { ok: true, offers: 1 }, error: null, status: 200 }), // 워커 계약 흉내(첫 글 첨부)
     msgr2_attachment_add: ({ p_message, p_index, p_name, p_mime, p_bytes }) => {
       const m = s.db.messages.find((x) => x.id === p_message);
       if (!m || m.author_user_id !== UID) return { data: null, error: { code: '42501', message: 'msgr2_message_not_found' }, status: 403 };
@@ -886,6 +887,40 @@ test('U6b 멘션: 보내기에 mentions를 실으면 글 행에 그대로(중복
   await m.send({ roomId: ROOM_A, body: '그냥 글', clientMsgId: 'cm-m2' });
   assert.deepEqual(fake.db.messages.find((x) => x.client_msg_id === 'cm-m1').mentions, [A]);
   assert.equal('mentions' in fake.db.messages.find((x) => x.client_msg_id === 'cm-m2'), false);
+});
+
+test('첫 글 첨부(워커 계약 2026-10-20): 첨부 글은 files_expected = 첨부 수로 넣고, 다 올린 뒤 msgr2_message_ready 1회 — 첨부 없는 글은 열·호출 0', async () => {
+  const { m, fake } = setup();
+  await m.start(); await flush();
+  const r = await m.send({ roomId: ROOM_A, body: '', clientMsgId: 'cm-a1', files: [{ name: 'a.pdf', mime: 'application/pdf', bytes: 3, data: 'AAA' }, { name: 'b.png', mime: 'image/png', bytes: 1, data: 'B' }] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const msg = fake.db.messages.find((x) => x.client_msg_id === 'cm-a1');
+  assert.equal(msg.files_expected, 2); assert.equal('meta' in msg, false, '사람 글 meta는 싣지 않는다(서버가 {}를 강제)');
+  const order = fake.log.filter((x) => ['msgr2_attachment_add', 'msgr2_message_ready'].includes(x.name) || x.name?.startsWith?.('upload')).map((x) => x.name);
+  assert.equal(order.at(-1), 'msgr2_message_ready', '올리기가 다 끝난 뒤'); assert.equal(fake.count('msgr2_message_ready'), 1);
+  assert.deepEqual(fake.log.find((x) => x.name === 'msgr2_message_ready').args, { p_message: msg.id });
+  await m.send({ roomId: ROOM_A, body: '그냥 글', clientMsgId: 'cm-a2' });
+  assert.equal('files_expected' in fake.db.messages.find((x) => x.client_msg_id === 'cm-a2'), false);
+  assert.equal(fake.count('msgr2_message_ready'), 1, '첨부 없는 글은 ready 0');
+});
+
+test('첫 글 첨부: 객체가 덜 올라가 msgr2_attachment_missing이면 같은 글로 다시 올리고 ready를 다시 부른다(간격·상한 안), 글·첨부 한 벌', async () => {
+  const { m, fake, clock } = setup();
+  await m.start(); await flush();
+  fake.fail.msgr2_message_ready = [{ error: { code: '22023', message: 'msgr2_attachment_missing' }, status: 400 }];
+  const p = m.send({ roomId: ROOM_A, body: 'f', clientMsgId: 'cm-r', files: [{ name: 'a.pdf', mime: 'application/pdf', bytes: 3, data: 'AAA' }] });
+  await clock.advance(SEND_RETRY.maxMs);
+  const r = await p;
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(fake.count('msgr2_message_ready'), 2);
+  assert.equal(fake.db.messages.filter((x) => x.client_msg_id === 'cm-r').length, 1);
+});
+
+test('보내기 거부 detail: 서버 상한(msgr2_limit + details)은 다시 보내지 않고 detail을 화면에 넘긴다', async () => {
+  const { m, fake } = setup();
+  await m.start(); await flush();
+  fake.fail['insert:msgr2_messages'] = [{ error: { code: '22023', message: 'msgr2_limit', details: 'user_messages' }, status: 400 }];
+  const r = await m.send({ roomId: ROOM_A, body: 'x', clientMsgId: 'cm-l' });
+  assert.equal(r.ok, false); assert.equal(r.attempts, 1, '다시 보내지 않음'); assert.equal(r.detail, 'user_messages');
 });
 
 test('#1086 검수 1: 다시 시도(retry) — 멈춘(gave_up) 상태에서만 한 번 다시 등록, 붙어 있거나 대기 중이면 요청 0', async () => {
