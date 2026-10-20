@@ -33,7 +33,7 @@ import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스
 import { CHANNEL_EVENTS } from './channel-events.mjs'; // msgr 푸시 대상 종류 집합(pushEvent 머리) — 음소거(company.json.msgr.mutedEvents) 판정은 msgrPush 안에서 channelSends로
 const channelSendsKinds = (kind) => CHANNEL_EVENTS[kind] ?? [];
 import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrNotifyPush, msgrEventOrigin, runMessengerContinuation, autoEnableMsgr, msgrServicePaused } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
-import { agentLinkEnabled, legacyMsgrBridgeEnabled } from './agent-link-flags.mjs'; // 메신저 v2 연결(옵트인 ARGO_AGENT_LINK=1)·옛 브리지 끄기(ARGO_MSGR_LEGACY=off) — 기본은 지금 그대로. 연결부는 켜졌을 때만 동적으로 부른다
+import { agentLinkEnabled, legacyMsgrBridgeEnabled } from './agent-link-flags.mjs'; // 메신저 v2 연결(0.1.115부터 기본 켬, 끄기 ARGO_AGENT_LINK=0)·옛 브리지(기본 끔, 켜기 ARGO_MSGR_LEGACY=on). 연결부는 켜졌을 때만 동적으로 부른다
 import { normalizeMsgrNotify, msgrNotifyWants } from './msgr-notify.mjs'; // 회사 단위 알림 목적지(원점 없는 이벤트)
 import { deliverMessengerNotifications, notificationTickDue } from './gateway/msgr-notifications.mjs';
 import { makeMsgrAbandonNotifier, makeMsgrStallNotifier } from './gateway/msgr-abandon.mjs'; // 큐가 버린 메신저 잡의 실패 안내(H1) — msgr.mjs 밖에 둬 다른 변경과 겹치지 않는다
@@ -1150,7 +1150,7 @@ export function ensureGateway() {
   onNotify(pushEvent);
   let wasLeader = false;
   const sync = async () => {
-    const legacyMsgr = legacyMsgrBridgeEnabled(); // 기본 켜짐. off면 옛 메신저 자동 켜기·큐 드레인·브리지·알림 틱을 이 프로세스에서 돌리지 않는다
+    const legacyMsgr = legacyMsgrBridgeEnabled(); // 0.1.115부터 기본 꺼짐(켜기 ARGO_MSGR_LEGACY=on). 꺼져 있으면 옛 메신저 자동 켜기·큐 드레인·브리지·알림 틱을 이 프로세스에서 돌리지 않는다
     const procLeader = lease.isLeader(); // 이 프로세스가 이 기기의 게이트웨이 주체인가(Next 멀티 워커 단일화)
     const leader = procLeader && isCloudLeader(); // 기기 간에도 폴러 주체는 하나(클라우드 리스)
     if (leader !== wasLeader) { // 리더십 전환은 반드시 로그 — "폴러가 왜 안 도나" 1차 단서
@@ -1317,7 +1317,7 @@ export function ensureGateway() {
         running.set(id, { key: bot.token, stop: startAgentTelegram(c.id, slug, getCfg) });
       }
     }
-    // 메신저 v2 연결(agent-link) — 계정당 하나(w:<uid> 구독). 옵트인 플래그일 때만. 예비 기기는 옛 브리지와 같이 담당일 때만 받는다.
+    // 메신저 v2 연결(agent-link) — 계정당 하나(w:<uid> 구독). 기본 켬(ARGO_AGENT_LINK=0이면 끔). 예비 기기는 옛 브리지와 같이 담당일 때만 받는다.
     // 확정 무료(msgrCloud 거짓)면 시작하지 않고, 돌던 연결도 내린다 — 메신저는 Pro 전용(무료 계정 클라우드 0). 서버의 pro_required는 판정이 어긋났을 때의 안전장치다
     if (agentLinkEnabled() && msgrCloud && !standbyIdle()) {
       alive.add('agent-link');

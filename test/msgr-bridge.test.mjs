@@ -455,7 +455,7 @@ test('배선 핀: 게이트웨이 매니저·pushEvent·채널 종류 등재(구
   const sync = gw.slice(gw.indexOf('export function ensureGateway()'));
   // 자동 켜기(2026-09-15)가 큐 조립과 enabled 판정 사이에 선다 — 조직 멤버인데 꺼진 회사를 같은 sync에서 켠다(test/msgr-auto-enable.test.mjs)
   assert.match(sync, /const qkeys = new Set\(\['telegram', 'slack', [^\n]*\]\);\n\s*\/\/[^\n]*\n\s*if \(legacyMsgr && msgrCloud && !c\.msgr\?\.enabled && await autoEnableMsgr\(c\.id, \{ company: c \}\)[^\n]*\n\s*if \(legacyMsgr && msgrCloud && c\.msgr\?\.enabled\) qkeys\.add\(MSGR_KEY\);/, '드레인 큐 키(자동 켜기 → enabled 판정, 옛 브리지 플래그 뒤)');
-  assert.match(sync, /const legacyMsgr = legacyMsgrBridgeEnabled\(\);/, '옛 브리지 플래그(ARGO_MSGR_LEGACY, 기본 켜짐 — 행동은 test/agent-link-gateway-flags.test.mjs)');
+  assert.match(sync, /const legacyMsgr = legacyMsgrBridgeEnabled\(\);/, '옛 브리지 플래그(ARGO_MSGR_LEGACY, 0.1.115부터 기본 꺼짐 — 행동은 test/agent-link-gateway-flags.test.mjs)');
   assert.match(sync, /: qkey === JOBS_QUEUE \? makeJobHandler\(c\.id\)[^\n]*\n\s*: qkey === MSGR_KEY \? makeMsgrHandler\(c\.id\)\n\s*: qkey\.startsWith\(TG_AGENT_Q\)/, '핸들러 삼항');
   // 예비 기기(argo run --standby)는 확인된 담당일 때만 브리지를 연다(2026-10-08) — 행동은 test/lease-standby-e2e.test.mjs가 두 프로세스로 잠근다
   assert.match(sync, /if \(legacyMsgr && msgrCloud && c\.msgr\?\.enabled && !standbyIdle\(\)\) \{\n\s*const id = `\$\{c\.id\}:\$\{MSGR_KEY\}`;\n\s*alive\.add\(id\);\n\s*if \(!running\.has\(id\)\) running\.set\(id, \{ key: 'v1', stop: startMsgrBridge\(c\.id\) \}\);\n\s*\}/, '폴러(리더 전용 블록 안)');

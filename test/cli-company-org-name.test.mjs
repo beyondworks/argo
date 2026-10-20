@@ -42,7 +42,8 @@ const SB = `http://127.0.0.1:${srv.address().port}`;
 function envFor(name) {
   const home = join(base, name, 'home'), root = join(base, name, 'root'), cli = join(base, name, 'cli');
   const env = { ...process.env, HOME: home, USERPROFILE: home, ARGO_CLI_HOME: cli, ARGO_ROOT: root, LANG: 'ko_KR.UTF-8', LC_ALL: 'ko_KR.UTF-8', ARGO_ENC_VAULT: '0', ARGO_MODEL_CATALOG: 'off',
-    ARGO_NATIVE_RUNNERS: 'off', ARGO_SYNC: '0', ARGO_CLI_APP: '0', ARGO_NO_OPEN: '1', NO_COLOR: '1', NEXT_PUBLIC_SUPABASE_URL: SB, NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fake' };
+    ARGO_NATIVE_RUNNERS: 'off', ARGO_SYNC: '0', ARGO_AGENT_LINK: '0', // 회사 이름 흐름만 센다 — 메신저 v2 기기 등록(0.1.115 기본 켬)은 agent-link-gateway-flags가 잠근다
+    ARGO_CLI_APP: '0', ARGO_NO_OPEN: '1', NO_COLOR: '1', NEXT_PUBLIC_SUPABASE_URL: SB, NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fake' };
   for (const k of ['SUPABASE_SERVICE_ROLE_KEY', 'ARGO_TENANT_OWNER', 'ARGO_PREFER_LEADER', 'ARGO_NO_LEADER']) delete env[k];
   return { env, root, cli, home };
 }

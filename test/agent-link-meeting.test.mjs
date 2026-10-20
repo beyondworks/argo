@@ -84,11 +84,11 @@ const meetingOffer = (server, id, { text = '@에이 @비 출시 점검', partici
   return o;
 };
 
-test('켜는 설정 — ARGO_AGENT_LINK=1과 ARGO_MSGR_MEETING=1이 둘 다일 때만(기본 꺼짐)', () => {
-  assert.equal(msgrMeetingEnabled({}), false);
-  assert.equal(msgrMeetingEnabled({ ARGO_MSGR_MEETING: '1' }), false, '새 연결이 꺼져 있으면 꺼짐');
-  assert.equal(msgrMeetingEnabled({ ARGO_AGENT_LINK: '1' }), false);
-  assert.equal(msgrMeetingEnabled({ ARGO_AGENT_LINK: '1', ARGO_MSGR_MEETING: 'true' }), false, '정확히 1만');
+test('켜는 설정(0.1.115) — 새 연결이 켜져 있으면 기본 켬, ARGO_MSGR_MEETING=0이면 끔', () => {
+  assert.equal(msgrMeetingEnabled({}), true, '기본 켬');
+  assert.equal(msgrMeetingEnabled({ ARGO_AGENT_LINK: '0' }), false, '새 연결이 꺼져 있으면 꺼짐');
+  assert.equal(msgrMeetingEnabled({ ARGO_AGENT_LINK: '0', ARGO_MSGR_MEETING: '1' }), false, '새 연결이 꺼져 있으면 꺼짐');
+  for (const v of ['0', 'off', 'false', 'no']) assert.equal(msgrMeetingEnabled({ ARGO_MSGR_MEETING: v }), false, `끄기 ${v}`);
   assert.equal(msgrMeetingEnabled({ ARGO_AGENT_LINK: '1', ARGO_MSGR_MEETING: ' 1 ' }), true);
 });
 

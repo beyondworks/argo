@@ -1,8 +1,9 @@
 // 게이트웨이 플래그 핀 — 실제 게이트웨이(+동기화)를 자식 프로세스로 띄워 가짜 Supabase에 오는 요청으로 판정한다(lease-standby-e2e와 같은 방식).
-// ① 플래그 없음(배포본과 같은 기본): 옛 메신저 브리지가 돈다(msgr_crews 조회 > 0), 새 링크 요청은 0.
-// ② ARGO_MSGR_LEGACY=off: 옛 브리지 조회 0.
-// ③ ARGO_AGENT_LINK=1: 새 링크가 runner 기기 등록을 시도하고, 옛 브리지는 그대로 돈다(두 플래그는 따로다).
-// ④ ARGO_AGENT_LINK=1 + 확정 무료 계정: 새 링크도 옛 브리지도 클라우드 요청 0(메신저 Pro 전용, msgrCloud 판정).
+// 0.1.115 기본값(공개 계획서 S4): 새 연결 켬·옛 브리지 끔.
+// ① 플래그 없음(기본): 새 링크가 runner 기기 등록을 시도하고, 옛 메신저 브리지 조회(msgr_crews)는 0.
+// ② ARGO_AGENT_LINK=0 + ARGO_MSGR_LEGACY=on(0.1.114 동작으로 되돌리기): 옛 브리지가 돌고 새 링크 요청은 0.
+// ③ ARGO_MSGR_LEGACY=on만: 둘 다 돈다(두 플래그는 따로다).
+// ④ 기본 + 확정 무료 계정: 새 링크도 옛 브리지도 클라우드 요청 0(메신저 Pro 전용, msgrCloud 판정).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -45,12 +46,12 @@ sync.ensureSync(); gw.ensureGateway();`;
 
 const countRe = (fake, re) => fake.hits.filter((h) => re.test(h.k)).length;
 
-test('게이트웨이 플래그: 기본(핀)·옛 브리지 끔·새 링크 켬', { timeout: 120_000 }, async () => {
+test('게이트웨이 플래그(0.1.115): 기본 = 새 링크 켬·옛 브리지 끔, 0.1.114로 되돌리기, 무료 0', { timeout: 120_000 }, async () => {
   const scenes = [
-    { label: '기본', env: {}, legacy: true, link: false },
-    { label: 'ARGO_MSGR_LEGACY=off', env: { ARGO_MSGR_LEGACY: 'off' }, legacy: false, link: false },
-    { label: 'ARGO_AGENT_LINK=1', env: { ARGO_AGENT_LINK: '1' }, legacy: true, link: true },
-    { label: 'ARGO_AGENT_LINK=1 + 무료', env: { ARGO_AGENT_LINK: '1' }, plan: 'free', legacy: false, link: false },
+    { label: '기본', env: {}, legacy: false, link: true },
+    { label: 'ARGO_AGENT_LINK=0 + ARGO_MSGR_LEGACY=on(0.1.114로)', env: { ARGO_AGENT_LINK: '0', ARGO_MSGR_LEGACY: 'on' }, legacy: true, link: false },
+    { label: 'ARGO_MSGR_LEGACY=on', env: { ARGO_MSGR_LEGACY: 'on' }, legacy: true, link: true },
+    { label: '기본 + 무료', env: {}, plan: 'free', legacy: false, link: false },
   ];
   const runs = await Promise.all(scenes.map(async (s) => {
     const fake = await startFakeSupabase({ plan: s.plan ?? 'pro' }); fakes.push(fake);
@@ -66,7 +67,7 @@ test('게이트웨이 플래그: 기본(핀)·옛 브리지 끔·새 링크 켬'
     else assert.equal(polls, 0, `${s.label}: 옛 브리지가 돌았다 — 조회 ${polls}`);
     if (s.link) assert.ok(reg >= 1, `${s.label}: 새 링크가 기기 등록을 시도해야 한다 — ${reg} ${kid.err.slice(-300)}`);
     else {
-      assert.equal(reg, 0, `${s.label}: 플래그 없이 새 링크 요청 ${reg}`);
+      assert.equal(reg, 0, `${s.label}: 새 링크 요청 ${reg}`);
       assert.equal(countRe(fake, LINK_ANY), 0, `${s.label}: msgr2_ 요청이 있다`);
     }
   }

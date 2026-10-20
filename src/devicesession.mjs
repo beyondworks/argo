@@ -13,7 +13,7 @@ import { WS_ROOT } from './workspace.mjs';
 import { withLock, withDirLock } from './mutex.mjs';
 import { createHash } from 'node:crypto';
 import { appGateState, refreshAppGate, appGateClient as gateClient } from './app-gate.mjs';
-import { agentLinkEnabled } from './agent-link-flags.mjs'; // 메신저 v2 로그인 직후 runner 기기 잠금(옵트인 — 켜졌을 때만 연결부를 부른다)
+import { agentLinkEnabled } from './agent-link-flags.mjs'; // 메신저 v2 로그인 직후 runner 기기 잠금(0.1.115부터 기본 켬 — 켜졌을 때만 연결부를 부른다)
 import { planIsFreeLocal } from './plan-cache.mjs';
 
 const FILE = '.device-session.json';
@@ -114,7 +114,7 @@ export async function saveDeviceSession({ url, anonKey, session }, { root = WS_R
   // 사용자 이름(프로필 표시 이름) — 로그인마다 1회. 잠금 밖에서 읽는다(네트워크를 기다리며 회전을 막지 않게). 실패하면 이름 없이 저장하고
   // nameAt=0으로 두어 다음 회전 때 한 번 더 읽는다(기기 연동 라우트처럼 만료된 토큰으로 저장하는 경로). 계정이 바뀌어도 옛 이름은 남지 않는다(user를 새로 만든다).
   const prof = await fetchProfileName({ url, anonKey, accessToken: session.access_token, userId: session.user.id }, _mkClient);
-  // 메신저 v2(옵트인 ARGO_AGENT_LINK=1): 세션 파일을 쓰기 **전에** 이 세션을 runner 기기로 잠근다 — 파일을 쓴 뒤에는 에이전트 셸이 그 세션으로
+  // 메신저 v2(기본 켬, 끄기 ARGO_AGENT_LINK=0): 세션 파일을 쓰기 **전에** 이 세션을 runner 기기로 잠근다 — 파일을 쓴 뒤에는 에이전트 셸이 그 세션으로
   // app 기기 등록을 먼저 할 수 있다(검수 1 #1071). 실패해도 로그인은 막지 않는다(연결부가 시작할 때 다시 등록하고, 그 전에는 v2 일을 받지 않는다).
   // 모듈을 읽는 것까지 try 안에 둔다 — import 실패(번들 누락·문법 오류)도 로그인을 깨지 않는다. 기다림은 registerRunnerOnLogin의 합계 상한(8초)까지.
   if (agentLinkEnabled()) {
