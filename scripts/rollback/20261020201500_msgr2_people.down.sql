@@ -1,5 +1,5 @@
--- 되돌림: 20261020120000_msgr2_people.sql — 사람 채팅 스위치·상한·퍼짐·알림 묶음·첫 글 첨부 기다림을 걷어내고 이전 정의로 돌린다
--- (lite·관문·사람 글 → 일 = 20261019160000, 글 방송·정리 = 20261018010000, 퍼짐 = 20261018020000, 알림 = 20261018061100).
+-- 되돌림: 20261020201500_msgr2_people.sql — 사람 채팅 스위치·상한·퍼짐·알림 묶음·첫 글 첨부 기다림을 걷어내고 이전 정의로 돌린다
+-- (lite·관문·사람 글 → 일 = 20261020201400, 글 방송·정리 = 20261020200300, 퍼짐 = 20261020200400, 알림 = 20261020201100).
 -- 멈춤: 첨부를 기다리는 글(msgr2_msg_waits)이 남아 있으면 멈춘다 — select public._msgr2_flush_waits(null, null)(기한이 지난 것만)로 비우거나 기다린다.
 -- 이미 만든 팀 공간·방·사람 글은 지우지 않는다(기억 데이터). files_expected 열은 지운다(첨부 수 표시만).
 do $$ begin
@@ -9,6 +9,8 @@ do $$ begin
 end $$;
 delete from public.msgr_settings where key = 'msgr2_people';
 drop trigger if exists msgr2_lite_guard on public.msgr2_space_members;
+drop trigger if exists msgr2_rate_guard on public.msgr2_reactions; -- 20261020201600(속도 상한)이 사람 채팅 판정에 기댄다 — 그 파일을 먼저 되돌리지 않았어도 깨지지 않게
+drop trigger if exists msgr2_rate_guard on public.msgr2_rooms;
 create or replace function public._msgr2_lite() returns boolean
   language sql stable security definer set search_path = public, pg_temp as $$
   select coalesce(public._msgr2_setting('msgr2_lite'), 'on') <> 'off' $$;

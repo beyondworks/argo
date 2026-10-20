@@ -1,4 +1,4 @@
-// 메신저 v2 U8 — 이전 작업 창 표지(msgr_settings 'msgr2_migration_window') 동안 옛 계정 삭제·보관 조직 영구 삭제를 막는다(20261018052000).
+// 메신저 v2 U8 — 이전 작업 창 표지(msgr_settings 'msgr2_migration_window') 동안 옛 계정 삭제·보관 조직 영구 삭제를 막는다(20261020200900).
 // 표지 없음 = 배포본과 같음(원래 함수 본문이 20261012160000 정의와 같고 결과가 같다), 표지 있음 = 거부(데이터 불변), 표지 끈 뒤 다시 정상, 되돌림.
 // 실행: bash scripts/billing-pg-drill.sh test/msgr2-migration-window-pg.test.mjs
 import test, { before } from 'node:test';
@@ -10,7 +10,7 @@ import { setupFull } from './helpers/msgr2-work-pg.mjs';
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/msgr2-migration-window-pg.test.mjs';
 const read = (rel) => readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)), 'utf8');
-const DOWN = read('scripts/rollback/20261018052000_msgr2_migration_window.down.sql');
+const DOWN = read('scripts/rollback/20261020200900_msgr2_migration_window.down.sql');
 const ORIG = read('supabase/migrations/20261012160000_msgr_account_delete_storage_sweep.sql');
 // 20261012160000의 함수 본문($$ … $$ 사이) — 이름을 바꾼 원래 함수의 prosrc와 같아야 한다
 const bodyOf = (src, name) => { const i = src.indexOf(`create or replace function public.${name}(`); const a = src.indexOf('$$', i) + 2; return src.slice(a, src.indexOf('$$;', a)); };

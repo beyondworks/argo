@@ -1,10 +1,10 @@
--- 되돌림: supabase/migrations/20261018040000_msgr2_rooms.sql(U6d — 방·공간·초대·안 읽음·검색·1:1 목록·방 설정·신고, 옛 표 접점)을 걷어 낸다.
+-- 되돌림: supabase/migrations/20261020200600_msgr2_rooms.sql(U6d — 방·공간·초대·안 읽음·검색·1:1 목록·방 설정·신고, 옛 표 접점)을 걷어 낸다.
 -- 바로 실행하는 파일이다(마이그레이션이 아니다). 순서는 역순만: U6d → U2b → U2 → U3 → U1.
 -- 멈추는 조건(아무것도 바꾸지 않는다): 초대 행이 있다 · 옛 표(신고·일지)에 v2 글·방을 가리키는 행(옛 표에는 없고 v2 표에 있는 값)이 있다 —
 --   그 행은 기억 데이터라 지우지 않는다(CLAUDE.md DB 위생 1). 처리 방법을 정한 뒤 다시 돌린다.
 -- 옛 FK는 원래 이름·규칙에 NOT VALID로 복원한다 — 옛 앱이 채널·글을 지워 생긴 고아 행(어느 표에도 없는 값)이 있어도 멈추지 않고, 기존 행은 검사·수정하지 않는다.
 -- 남는 것: v2 RPC로 만든 공간·방·멤버 행(U1 표)과 같은 id의 옛 조직 행(msgr_orgs·주인 멤버·요금 행) — 정상 행이라 지우지 않는다. storage.objects는 건드리지 않는다.
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261018040000_msgr2_rooms.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261020200600_msgr2_rooms.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
 do $g$ declare n bigint; t record; begin
@@ -59,7 +59,7 @@ do $f$ begin
   if to_regclass('public.msgr_orgs') is not null then drop trigger if exists msgr2_org_delete_guard on public.msgr_orgs; end if;
 end $f$;
 
--- _msgr2_access_for를 U2 본문으로(20261018000000 그대로)
+-- _msgr2_access_for를 U2 본문으로(20261020200200 그대로)
 create or replace function public._msgr2_access_for(p_room uuid, p_uid uuid) returns public.msgr2_access_t
   language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare

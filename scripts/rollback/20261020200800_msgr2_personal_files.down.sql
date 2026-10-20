@@ -1,7 +1,7 @@
--- 되돌림: supabase/migrations/20261018051000_msgr2_personal_files.sql(U8 후속 — 옛 개인 방 첨부 p/<방>/…를 v2 판정으로)을 걷어 낸다.
--- 바로 실행하는 파일이다(마이그레이션이 아니다). 세 함수를 원래 본문으로 되돌린다: _msgr2_storage_room·_msgr2_storage_write(U2b 20261018010000), msgr2_insert_stamp(U1 20261017151000).
+-- 되돌림: supabase/migrations/20261020200800_msgr2_personal_files.sql(U8 후속 — 옛 개인 방 첨부 p/<방>/…를 v2 판정으로)을 걷어 낸다.
+-- 바로 실행하는 파일이다(마이그레이션이 아니다). 세 함수를 원래 본문으로 되돌린다: _msgr2_storage_room·_msgr2_storage_write(U2b 20261020200300), msgr2_insert_stamp(U1 20261020200000).
 -- 데이터는 바꾸지 않는다. 되돌리면 'p/…' 객체는 다시 옛 정책에만 기댄다(v2 방 멤버가 못 연다).
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261018051000_msgr2_personal_files.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261020200800_msgr2_personal_files.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
 -- U2b 본문 그대로(시험이 원본 파일의 본문과 같은지 본다)

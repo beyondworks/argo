@@ -1,4 +1,4 @@
-// 메신저 A+ 서버(20261019160000_msgr2_aplus.sql) — Pro 전용·1:1 밖 막기(lite)·회의방·외부 봇·상한·약속 v1.1 받기.
+// 메신저 A+ 서버(20261020201400_msgr2_aplus.sql) — Pro 전용·1:1 밖 막기(lite)·회의방·외부 봇·상한·약속 v1.1 받기.
 // 2026-10-19 유건 "A+ 진행"(라운드 2 고정). #1116 검수가 이 PR에서 잠그라고 한 4건: ① 회의 일 result의 handoffs 거부(H1)
 // ② features 없는 본체(v1.0)에는 회의·봇 offer 없음 ③ agent.sync 저장 화이트리스트 ④ pro_required.
 // 실행: bash scripts/billing-pg-drill.sh test/msgr2-aplus-pg.test.mjs
@@ -12,8 +12,8 @@ import { setup, seedDevice } from './helpers/msgr2-work-pg.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/msgr2-aplus-pg.test.mjs';
-const MIG = fileURLToPath(new URL('../supabase/migrations/20261019160000_msgr2_aplus.sql', import.meta.url));
-const DOWN = fileURLToPath(new URL('../scripts/rollback/20261019160000_msgr2_aplus.down.sql', import.meta.url));
+const MIG = fileURLToPath(new URL('../supabase/migrations/20261020201400_msgr2_aplus.sql', import.meta.url));
+const DOWN = fileURLToPath(new URL('../scripts/rollback/20261020201400_msgr2_aplus.down.sql', import.meta.url));
 const P = 'a0000000-0000-4000-8000-000000000001'; // Pro 주인
 const F = 'a0000000-0000-4000-8000-000000000002'; // 무료 주인
 const X = 'a0000000-0000-4000-8000-000000000003'; // 남
@@ -266,9 +266,9 @@ test('되돌림 — down.sql 뒤 새 열·함수·트리거가 없고 offer 함�
   assert.ok(!db.sql(`select prosrc from pg_proc where proname = 'msgr2_on_user_message'`).includes('meeting'));
   assert.ok(!db.sql(`select prosrc from pg_proc where proname = 'msgr2_link_send'`).includes('post_denied'));
   db.psql(['-c', readFileSync(MIG, 'utf8')]);
-  // 이 파일 뒤의 msgr2 파일(예: 20261020120000 사람 채팅)이 같은 함수를 다시 정의한다 — setup()과 같은 순서로 다시 적용해 비교한다
+  // 이 파일 뒤의 msgr2 파일(예: 20261020201500 사람 채팅)이 같은 함수를 다시 정의한다 — setup()과 같은 순서로 다시 적용해 비교한다
   const dir = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
-  for (const f of readdirSync(dir).filter((x) => /_msgr2_.*\.sql$/.test(x) && x > '20261019160000_msgr2_aplus.sql').sort()) db.psql(['-c', readFileSync(dir + f, 'utf8')]);
+  for (const f of readdirSync(dir).filter((x) => /_msgr2_.*\.sql$/.test(x) && x > '20261020201400_msgr2_aplus.sql').sort()) db.psql(['-c', readFileSync(dir + f, 'utf8')]);
   assert.equal(shape(), applied);
 });
 

@@ -78,7 +78,7 @@ test('작은 읽기: 중단 표지·기기 id·업로드 경로(같은 글의 �
 });
 
 test('첨부 제한(#1077 검수 3) — 서버 msgr2_attachment_add와 같은 값·같은 이름 정리', () => {
-  const sql = readFileSync(new URL('../../../supabase/migrations/20261018000000_msgr2_work.sql', import.meta.url), 'utf8');
+  const sql = readFileSync(new URL('../../../supabase/migrations/20261020200200_msgr2_work.sql', import.meta.url), 'utf8');
   const fn = sql.slice(sql.indexOf('create or replace function public.msgr2_attachment_add('), sql.indexOf('end $$;', sql.indexOf('create or replace function public.msgr2_attachment_add(')));
   assert.match(fn, new RegExp(`p_index not between 0 and ${ATTACH_LIMITS.maxFiles - 1}\\b`), '파일 수');
   assert.match(fn, new RegExp(`char_length\\(nm\\) > ${ATTACH_LIMITS.maxName}\\b`), '이름 길이');

@@ -43,7 +43,7 @@ SQL
     done
     # pg_net 판(#1092 검수: 한 묶음이 끝나야 다음을 집는 판이면 푸시 상한 20초가 다른 pg_net 호출을 붙잡는다) — 판정 문서에 적는다
     echo "pg_net $(q "select coalesce((select extversion from pg_extension where extname = 'pg_net'), '없음')"), pg_cron $(q "select coalesce((select extversion from pg_extension where extname = 'pg_cron'), '없음')")"
-    # A+ Pro 검사(20261019160000)는 is_pro_for(uuid)가 없으면 통과한다(fail-open) — qbwr에 없으면 무료 계정 시험이 무의미하다(#1117 검수)
+    # A+ Pro 검사(20261020201400)는 is_pro_for(uuid)가 없으면 통과한다(fail-open) — qbwr에 없으면 무료 계정 시험이 무의미하다(#1117 검수)
     [ "$(q "select (to_regprocedure('public.is_pro_for(uuid)') is not null)::text")" = true ] && echo "is_pro_for 있음(Pro 검사 실효)" \
       || echo "주의  is_pro_for(uuid) 없음 — Pro 검사가 모두 통과한다. 요금제 마이그레이션(20260714150000 entitlements … 20260929110000 plan_no_trial)을 먼저 적용할 것"
     echo "끝  ${n}개 적용, 마지막 기록 버전 $(q "select max(version) from supabase_migrations.schema_migrations"), $(TZ=Asia/Seoul date '+%Y-%m-%d(%a) %H:%M KST')" ;;

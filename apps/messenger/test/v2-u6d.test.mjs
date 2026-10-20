@@ -1,4 +1,4 @@
-// 메신저 v2 U6c-2b — 기존 셸의 옛 RPC·쓰기가 U6d 서버 RPC(20261018040000_msgr2_rooms.sql)로 바뀌어 나가고 결과가 옛 모양으로 돌아오는지,
+// 메신저 v2 U6c-2b — 기존 셸의 옛 RPC·쓰기가 U6d 서버 RPC(20261020200600_msgr2_rooms.sql)로 바뀌어 나가고 결과가 옛 모양으로 돌아오는지,
 // 읽음은 msgr2_mark_read로만 쓰는지, 끼워 읽기(방)·초대·공간 만들기·방 멤버·안 읽음·찾기·오류 문구·방 사건.
 import test from 'node:test';
 import assert from 'node:assert/strict';

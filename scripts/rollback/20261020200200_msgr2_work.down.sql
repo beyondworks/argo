@@ -1,7 +1,7 @@
--- 되돌림: supabase/migrations/20261018000000_msgr2_work.sql(U2 — 일·약속 서버)를 걷어 낸다. U1이 정의한 msgr2_access·msgr2_lock_cols는 U1 본문으로 되돌린다.
+-- 되돌림: supabase/migrations/20261020200200_msgr2_work.sql(U2 — 일·약속 서버)를 걷어 낸다. U1이 정의한 msgr2_access·msgr2_lock_cols는 U1 본문으로 되돌린다.
 -- 바로 실행하는 파일이다(마이그레이션이 아니다). 순서는 역순만: U2b → U2 → U3 → U1. 앞 단위가 남아 있으면 그 단위를 먼저 되돌린다.
 -- 빈 표만 지운다 — 행이 하나라도 있으면 아무것도 바꾸지 않고 멈춘다(기억 데이터·기록 보존, CLAUDE.md DB 위생 1). storage.objects는 건드리지 않는다.
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261018000000_msgr2_work.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261020200200_msgr2_work.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
 do $g$ declare t text; n bigint; begin
@@ -23,7 +23,7 @@ drop trigger if exists msgr2_pause_guard on public.msgr2_messages;
 drop table if exists public.msgr2_work_events, public.msgr2_approvals, public.msgr2_effects, public.msgr2_work_files, public.msgr2_agent_leases, public.msgr2_room_counters, public.msgr2_works;
 alter table public.msgr2_messages drop constraint if exists msgr2_messages_mentions_max;
 alter table public.msgr2_messages drop column if exists mentions, drop column if exists work_id;
--- U1 본문으로 되돌림(20261017151000_msgr2_space.sql에서 그대로 옮김 — 시험이 적용 전 본문과 같은지 본다)
+-- U1 본문으로 되돌림(20261020200000_msgr2_space.sql에서 그대로 옮김 — 시험이 적용 전 본문과 같은지 본다)
 create or replace function public.msgr2_lock_cols() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 declare col text; n jsonb := to_jsonb(new); o jsonb := to_jsonb(old);

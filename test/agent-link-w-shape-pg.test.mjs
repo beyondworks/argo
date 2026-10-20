@@ -1,5 +1,5 @@
 // 본체가 v2:w: 방송을 실제 모양 그대로 받는다(2026-10-18 U9 조사에서 찾은 결함의 잠금).
-// 서버 _msgr2_send_w(20261018010000)는 realtime.send(payload = {envelope: 봉투}, event = 봉투 type, 'v2:w:<uid>')로 보낸다.
+// 서버 _msgr2_send_w(20261020200300)는 realtime.send(payload = {envelope: 봉투}, event = 봉투 type, 'v2:w:<uid>')로 보낸다.
 // 종전 본체(src/agent-link-host.mjs)는 event 'envelope'만 받고 payload를 봉투로 썼다 → offer·cancel·approval_decision이 즉시 오지 않고 재접속 따라잡기로만 왔다.
 // 이 시험은 PG에서 서버가 실제로 남긴 방송 행(realtime.sent = realtime.send 대역)을 꺼내, realtime-js가 넘기는 모양({type, event, payload})으로
 // 실제 전송부(supabaseTransport)의 구독 핸들러에 흘려 넣는다.

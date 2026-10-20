@@ -1,7 +1,7 @@
--- 되돌림: supabase/migrations/20261017151000_msgr2_space.sql(U1 — 공간·방·에이전트·판정)를 걷어 낸다.
+-- 되돌림: supabase/migrations/20261020200000_msgr2_space.sql(U1 — 공간·방·에이전트·판정)를 걷어 낸다.
 -- 바로 실행하는 파일이다(마이그레이션이 아니다). 순서는 역순만: U2b → U2 → U3 → U1. 앞 단위가 남아 있으면 그 단위를 먼저 되돌린다.
 -- 빈 표만 지운다 — 행이 하나라도 있으면 아무것도 바꾸지 않고 멈춘다(기억 데이터·기록 보존, CLAUDE.md DB 위생 1). storage.objects는 건드리지 않는다.
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261017151000_msgr2_space.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261020200000_msgr2_space.down.sql   (파일 안의 begin/commit — -1 없이)
 -- pgcrypto 확장은 남긴다(다른 기능도 쓴다).
 begin;
 set local lock_timeout = '5s';

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 메신저 v2 이전(U8) 실행기 — supabase/migrations/20261018050000_msgr2_backfill.sql의 함수를 부른다. 런북: scripts/msgr2-migrate-runbook.md
+# 메신저 v2 이전(U8) 실행기 — supabase/migrations/20261020200700_msgr2_backfill.sql의 함수를 부른다. 런북: scripts/msgr2-migrate-runbook.md
 # 사용: bash scripts/msgr2-migrate.sh <status|run|verify|restart|rollback>
 #   status   작업 행(단계·세대·체크포인트·끝난 시각·쓴 행 수) 보기
 #   run      앞 단계부터 끝날 때까지 한 묶음씩 부른다. 멈췄다가 다시 부르면 체크포인트부터 간다. 다른 실행기가 잡고 있으면(busy) 기다렸다가 다시, 세대가 바뀌면(stale) 멈춘다

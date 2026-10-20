@@ -1,7 +1,7 @@
--- 되돌림: supabase/migrations/20261018050000_msgr2_backfill.sql(U8 — 이전 함수·작업 행)을 걷어 낸다. msgr2_on_user_message는 U2 본문으로 되돌린다.
+-- 되돌림: supabase/migrations/20261020200700_msgr2_backfill.sql(U8 — 이전 함수·작업 행)을 걷어 낸다. msgr2_on_user_message는 U2 본문으로 되돌린다.
 -- 바로 실행하는 파일이다(마이그레이션이 아니다). 새 표의 데이터는 건드리지 않는다 — 백필 사본을 비우는 것은 scripts/msgr2-migrate-rollback.sql이 먼저 한다.
 -- 백필이 한 번이라도 돈 기록(작업 행의 runs > 0)이 있으면 멈춘다(사본 비우기·검증 기록을 먼저 정리하라는 뜻 — 기록 보존).
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261018050000_msgr2_backfill.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261020200700_msgr2_backfill.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
 do $g$ declare n bigint; begin
@@ -18,7 +18,7 @@ drop function if exists public.msgr2_backfill_run(text, int, text), public.msgr2
   public._msgr2_bf_room_members_src(), public._msgr2_bf_target_pin(uuid, uuid), public._msgr2_bf_room_shape(uuid),
   public._msgr2_bf_uuid(text), public._msgr2_bf_begin();
 drop table if exists public.msgr2_backfill_jobs, public.msgr2_backfill_cmid_dups;
--- U2 본문으로 되돌림(20261018000000_msgr2_work.sql에서 그대로 옮김 — 시험이 적용 전 본문과 같은지 본다)
+-- U2 본문으로 되돌림(20261020200200_msgr2_work.sql에서 그대로 옮김 — 시험이 적용 전 본문과 같은지 본다)
 create or replace function public.msgr2_on_user_message() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 declare ag uuid; targets uuid[];

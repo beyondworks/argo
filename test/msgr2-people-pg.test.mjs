@@ -1,4 +1,4 @@
-// 메신저 사람 채팅 스위치(msgr2_people) + 첫 글 첨부 기다림(20261020120000_msgr2_people.sql).
+// 메신저 사람 채팅 스위치(msgr2_people) + 첫 글 첨부 기다림(20261020201500_msgr2_people.sql).
 // 경우 표(PR 본문)의 칸: 스위치 꺼짐 = A+ lite 그대로 · 켬 = Pro끼리 팀 공간·초대·방·글, 무료 = msgr2_pro_required, 무료를 바로 넣기 = msgr2_member_not_pro,
 // 초대 만들기는 요금제를 보지 않고 수락 때 판정 · 사람 방 상한(공간 인원·사람 글 분당) · 회의방 상한은 lite와 무관 · 첨부를 다 올린 뒤에만 일 ·
 // 기한이 지나면 다음 사건(다음 글·ready·하루 정리)에서 첨부 없이 일 + 안내 1줄 · 쉬는 동안 쓰기 0 · 백필은 사람 채팅 켬일 때 허용 · 되돌림.
@@ -11,8 +11,8 @@ import { setup, seedDevice } from './helpers/msgr2-work-pg.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/msgr2-people-pg.test.mjs';
-const MIG = fileURLToPath(new URL('../supabase/migrations/20261020120000_msgr2_people.sql', import.meta.url));
-const DOWN = fileURLToPath(new URL('../scripts/rollback/20261020120000_msgr2_people.down.sql', import.meta.url));
+const MIG = fileURLToPath(new URL('../supabase/migrations/20261020201500_msgr2_people.sql', import.meta.url));
+const DOWN = fileURLToPath(new URL('../scripts/rollback/20261020201500_msgr2_people.down.sql', import.meta.url));
 const P = 'b0000000-0000-4000-8000-000000000001'; // Pro
 const Q = 'b0000000-0000-4000-8000-000000000002'; // Pro 2
 const F = 'b0000000-0000-4000-8000-000000000003'; // 무료
@@ -291,6 +291,64 @@ test('쉬는 동안 쓰기 0(사람 방이 있어도) — 글이 없으면 msgr2
     db.sql('select public.msgr2_retention_prune()'); // 하루 1번 도는 유일한 주기 작업
     assert.equal(snap(), a);
   } finally { people(false); }
+});
+
+test('폭주 상한 보강 — 반응 달기·지우기 분당, 방 만들기 분당·하루, 방 보관 바꾸기 분당(공간당 1,000 상한 돌리기 차단), 꺼짐이면 관문 없음', { skip }, () => {
+  people(true);
+  try {
+    const sp = teamWith([qApp]);
+    const room = val(pApp, `select public.msgr2_room_create('${sp}', 'private', '반응', '{${Q}}')`);
+    const mid = say(pApp, room, '반응 받을 글');
+    setting('msgr2_limit_reactions_min', '2');
+    val(qApp, `insert into public.msgr2_reactions (message_id, user_id, emoji) values (${mid}, '${Q}', 'a') returning emoji`);
+    val(qApp, `delete from public.msgr2_reactions where message_id = ${mid} and user_id = '${Q}' and emoji = 'a' returning emoji`);
+    assert.match(err(qApp, `insert into public.msgr2_reactions (message_id, user_id, emoji) values (${mid}, '${Q}', 'b')`), /msgr2_limit/, '달기·지우기를 함께 센다');
+    setting('msgr2_limit_reactions_min', '999');
+    assert.equal(db.sql(`select public._msgr2_clamp('msgr2_limit_reactions_min', 60, 120)`), '120');
+    setting('msgr2_limit_reactions_min', null);
+    db.sql(`delete from public.msgr2_rate_hits where user_id = '${P}'`); // 앞 시험이 만든 방 수를 비운다(속도 세기 칸 — 기억 데이터 아님)
+    setting('msgr2_limit_room_create_min', '2');
+    val(pApp, `select public.msgr2_room_create('${sp}', 'private', '하나')`);
+    val(pApp, `select public.msgr2_room_create('${sp}', 'private', '둘')`);
+    assert.match(err(pApp, `select public.msgr2_room_create('${sp}', 'private', '셋')`), /msgr2_limit/);
+    setting('msgr2_limit_room_create_min', null);
+    db.sql(`update public.msgr2_rate_hits set n = 200 where user_id = '${P}' and kind = 'room_create:day'`);
+    assert.match(err(pApp, `select public.msgr2_room_create('${sp}', 'private', '하루 넘침')`), /msgr2_limit/, '하루 200');
+    db.sql(`delete from public.msgr2_rate_hits where user_id = '${P}'`);
+    // 보관 바꾸기: 1:1을 다시 열면 보관을 푼다(지금 사람 경로는 이것뿐) — 분당 1로 두고 두 번째 풀기 거부
+    const dm = JSON.parse(val(pApp, `select public.msgr2_dm_open('${Q}', '${sp}')::text`)).room_id;
+    setting('msgr2_limit_room_archive_min', '1');
+    db.sql(`update public.msgr2_rooms set archived_at = now() where id = '${dm}'`);
+    val(pApp, `select public.msgr2_dm_open('${Q}', '${sp}')::text`);
+    db.sql(`update public.msgr2_rooms set archived_at = now() where id = '${dm}'`);
+    assert.match(err(pApp, `select public.msgr2_dm_open('${Q}', '${sp}')`), /msgr2_limit/);
+    setting('msgr2_limit_room_archive_min', null);
+  } finally { ['msgr2_limit_reactions_min', 'msgr2_limit_room_create_min', 'msgr2_limit_room_archive_min'].forEach((k) => setting(k, null)); people(false); }
+  // 꺼짐: 관문·세기 쓰기 없음
+  const before = db.sql('select count(*) from public.msgr2_rate_hits');
+  const r = agentRoom(P, PS, A1); const m2 = say(pApp, r, '꺼짐 반응');
+  val(pApp, `insert into public.msgr2_reactions (message_id, user_id, emoji) values (${m2}, '${P}', 'x') returning emoji`);
+  assert.equal(db.sql('select count(*) from public.msgr2_rate_hits'), before, '꺼짐이면 세지 않는다');
+});
+
+test('속도 세기 칸 — 쉬는 동안 쓰기 0, 하루 정리가 이틀 지난 칸만 지운다', { skip }, () => {
+  db.sql(`insert into public.msgr2_rate_hits (user_id, kind, bucket, n) values ('${P}', 'old:minute', now() - interval '3 days', 1), ('${P}', 'new:minute', now(), 1) on conflict do nothing`);
+  db.sql('select public.msgr2_retention_prune()');
+  assert.equal(db.sql(`select string_agg(kind, ',' order by kind) from public.msgr2_rate_hits where user_id = '${P}' and kind in ('old:minute', 'new:minute')`), 'new:minute');
+  const x = db.sql('select count(*) || \':\' || coalesce(max(xmin::text::bigint), 0) from public.msgr2_rate_hits');
+  db.sql('select public.msgr2_retention_prune()');
+  assert.equal(db.sql('select count(*) || \':\' || coalesce(max(xmin::text::bigint), 0) from public.msgr2_rate_hits'), x);
+});
+
+test('속도 상한 되돌림 — 트리거·함수·표가 없어지고 다시 적용된다', { skip }, () => {
+  const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261020201600_msgr2_rate.down.sql', import.meta.url)), 'utf8');
+  const mig = readFileSync(fileURLToPath(new URL('../supabase/migrations/20261020201600_msgr2_rate.sql', import.meta.url)), 'utf8');
+  db.psql(['-c', down]);
+  assert.equal(db.sql(`select count(*) from pg_trigger where tgname = 'msgr2_rate_guard'`), '0');
+  assert.equal(db.sql(`select to_regclass('public.msgr2_rate_hits') is null`), 't');
+  assert.ok(!db.sql(`select prosrc from pg_proc where proname = 'msgr2_retention_prune'`).includes('msgr2_rate_hits'));
+  db.psql(['-c', mig]);
+  assert.equal(db.sql(`select count(*) from pg_trigger where tgname = 'msgr2_rate_guard'`), '2');
 });
 
 test('되돌림 — 기다림이 있으면 멈추고, 비우면 A+ 정의로 돌아간다(다시 적용 가능)', { skip }, () => {

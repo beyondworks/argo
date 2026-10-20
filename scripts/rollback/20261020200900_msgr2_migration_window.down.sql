@@ -1,7 +1,7 @@
--- 되돌림: supabase/migrations/20261018052000_msgr2_migration_window.sql(이전 작업 창 동안 옛 계정 삭제·보관 조직 영구 삭제 막기)을 걷어 낸다.
+-- 되돌림: supabase/migrations/20261020200900_msgr2_migration_window.sql(이전 작업 창 동안 옛 계정 삭제·보관 조직 영구 삭제 막기)을 걷어 낸다.
 -- 바로 실행하는 파일이다(마이그레이션이 아니다). 감싸개를 지우고, 이름을 바꿔 둔 원래 함수를 원래 이름·원래 권한으로 되돌린다. 데이터는 바꾸지 않는다.
 -- 표지(msgr_settings 'msgr2_migration_window')가 남아 있으면 멈춘다 — 이전 작업 창이 열린 채 막기만 사라지는 것을 막는다(먼저 표지를 지운다).
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261018052000_msgr2_migration_window.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261020200900_msgr2_migration_window.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
 do $g$ begin

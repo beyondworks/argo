@@ -1,6 +1,6 @@
--- 되돌림: supabase/migrations/20261019155000_msgr2_link_v1_1_check.sql(약속 v1.1 봉투 검사)을 20261018000000 정의로 되돌린다.
--- 바로 실행하는 파일이다(마이그레이션이 아니다). 20261019160000(A+)을 먼저 되돌린 뒤 실행한다.
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261019155000_msgr2_link_v1_1_check.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 되돌림: supabase/migrations/20261020201300_msgr2_link_v1_1_check.sql(약속 v1.1 봉투 검사)을 20261020200200 정의로 되돌린다.
+-- 바로 실행하는 파일이다(마이그레이션이 아니다). 20261020201400(A+)을 먼저 되돌린 뒤 실행한다.
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261020201300_msgr2_link_v1_1_check.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
 create or replace function public._msgr2_env_check(e jsonb, p_min_v int, p_max_v int) returns text

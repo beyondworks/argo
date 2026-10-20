@@ -1,23 +1,52 @@
--- 되돌림: supabase/migrations/20261019160000_msgr2_aplus.sql(메신저 A+ 서버)을 그 앞 정의로 되돌린다.
--- 바로 실행하는 파일이다(마이그레이션이 아니다). 회의방·봇 일 기록이 있으면 먼저 확인한다(열을 지우면 회의 표시·사슬 기록이 사라진다).
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261019160000_msgr2_aplus.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 되돌림: supabase/migrations/20261020200300_msgr2_realtime_storage.sql(U2b — 방송·토픽 권한·Storage 정책·보존 함수)를 걷어 낸다. 표는 만들지 않았으므로 지우는 표가 없다.
+-- 바로 실행하는 파일이다(마이그레이션이 아니다). 순서는 역순만: U2b → U2 → U3 → U1. 앞 단위가 남아 있으면 그 단위를 먼저 되돌린다.
+-- 빈 표만 지운다 — 행이 하나라도 있으면 아무것도 바꾸지 않고 멈춘다(기억 데이터·기록 보존, CLAUDE.md DB 위생 1). storage.objects는 건드리지 않는다.
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261020200300_msgr2_realtime_storage.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
-drop trigger if exists msgr2_lite_guard on public.msgr2_spaces;
-drop trigger if exists msgr2_lite_guard on public.msgr2_space_invites;
-drop trigger if exists msgr2_lite_guard on public.msgr2_room_members;
-drop trigger if exists msgr2_lite_guard on public.msgr2_messages;
-drop trigger if exists msgr2_lite_guard on public.msgr2_space_members; -- 20261020120000(사람 채팅)이 더한 트리거 — 그 파일을 먼저 되돌리지 않았어도 이 함수를 지울 수 있게
-drop function if exists public.msgr2_lite_guard();
-drop function if exists public.msgr2_meeting_create(text, uuid[]);
-create or replace function public._msgr2_bf_begin() returns void
+drop policy if exists msgr2_realtime_recv on realtime.messages;
+drop policy if exists msgr2_files_select on storage.objects;
+drop policy if exists msgr2_files_insert on storage.objects;
+drop policy if exists msgr2_files_update on storage.objects;
+drop policy if exists msgr2_realtime_send on realtime.messages;
+drop policy if exists msgr2_files_gate_select on storage.objects;
+drop policy if exists msgr2_files_gate_insert on storage.objects;
+drop policy if exists msgr2_files_gate_update on storage.objects;
+drop policy if exists msgr2_files_gate_delete on storage.objects;
+-- 옛 정리 후보를 20261011150000 본문으로 되돌린다(v2 제외 조건 빼기). 옛 함수가 없는 DB면 건너뛴다.
+do $sw$ begin
+  if to_regprocedure('public.msgr_storage_sweep_list(integer)') is not null then
+    execute $f$
+create or replace function public.msgr_storage_sweep_list(p_limit int default 200) returns setof text
+  language plpgsql stable security definer set search_path = public, pg_temp as $b$
+begin
+  return query
+    select o.name from public._msgr_live_objects() o
+     where (not exists (select 1 from public.msgr_channels c where c.id = public.msgr_uuid_or_null(split_part(o.name, '/', 2)))
+            or (o.created_at < now() - interval '24 hours'
+                and not exists (select 1 from public.msgr_attachments a where a.storage_path = o.name)))
+     order by o.created_at
+     limit greatest(1, least(coalesce(p_limit, 200), 1000));
+end $b$;
+$f$;
+  end if;
+end $sw$;
+drop trigger if exists msgr2_on_message_broadcast on public.msgr2_messages;
+drop trigger if exists msgr2_on_user_gen on public.msgr2_user_gen;
+do $t$ begin
+  if to_regclass('public.msgr_settings') is not null then drop trigger if exists msgr2_on_pause_setting on public.msgr_settings; end if;
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then -- cron.job은 확장이 있을 때만 있다(같은 if에 두면 확장 없는 DB에서 오류)
+    if exists (select 1 from cron.job where jobname = 'msgr2-retention-prune') then perform cron.unschedule('msgr2-retention-prune'); end if;
+  end if;
+end $t$;
+-- 0절에서 갱신한 U2·U3 함수를 U2·U3 본문으로 되돌린다(20261020200200_msgr2_work.sql·20261020200100_msgr2_device.sql에서 그대로 옮김)
+create or replace function public._msgr2_send_w(p_uid uuid, p_env jsonb) returns void
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
 begin
-  if auth.uid() is not null then raise exception 'msgr2_backfill_service_only' using errcode = '42501'; end if;
-  if exists (select 1 from public.msgr_settings where key in ('msgr2_switched_at', 'msgr2_enabled')) then
-    raise exception 'msgr2_backfill_after_switch' using errcode = '55000', hint = '스위치 뒤(msgr2_switched_at·msgr2_enabled)에는 백필하지 않는다(v2 변경을 옛 값으로 덮는다)'; end if;
-  perform set_config('msgr2.backfill', 'on', true);
+  perform realtime.send(jsonb_build_object('envelope', p_env), coalesce(p_env->>'type', 'event'), 'w:' || p_uid::text, true);
+exception when others then null;
 end $$;
+
 create or replace function public._msgr2_make_offer(p_room uuid, p_topic uuid, p_agent uuid, p_from_kind text, p_from_id uuid, p_root_user uuid,
   p_text text, p_source bigint, p_parent uuid, p_depth int) returns uuid
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
@@ -83,30 +112,12 @@ begin
   select l.device_id into dev from public.msgr2_agent_leases l where l.agent_id = p_agent and l.lease_until > now();
   perform public._msgr2_server_event(wid, 'work.offer', dev, jsonb_build_object(
     'room', p_room, 'topic', tid, 'from', jsonb_build_object('kind', p_from_kind, 'id', p_from_id), 'text', left(coalesce(p_text, ''), 20000),
-    'context', ctx, 'attachments', public._msgr2_attachments_of(p_source), 'memory', r.memory, 'peers', public._msgr2_peers(p_room, p_agent, p_root_user, tier),
+    'context', ctx, 'attachments', '[]'::jsonb, 'memory', r.memory, 'peers', public._msgr2_peers(p_room, p_agent, p_root_user, tier),
     'limits', jsonb_build_object('tier', tier, 'max_turn_s', public._msgr2_setting_int('msgr2_max_turn_s', 900), 'budget', null),
     'expires_at', to_char((now() + make_interval(secs => ttl_s)) at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')));
   return wid;
 end $$;
-create or replace function public.msgr2_on_user_message() returns trigger
-  language plpgsql security definer set search_path = public, pg_temp as $$
-declare ag uuid; targets uuid[];
-begin
-  if auth.uid() is null and coalesce(current_setting('msgr2.backfill', true), '') = 'on' then return null; end if; -- 이전(U8) 백필: offer·카운터 쓰기 없음
-  if new.author_kind <> 'user' then return null; end if;
-  update public.msgr2_room_counters set agent_streak = 0, streak_noted = false where room_id = new.room_id and (agent_streak <> 0 or streak_noted);
-  if cardinality(new.mentions) > 0 then
-    select array_agg(distinct m.member_id) into targets from public.msgr2_room_members m
-      where m.room_id = new.room_id and m.member_kind = 'agent' and m.removed_at is null and m.member_id = any (new.mentions);
-  elsif (select count(*) from public.msgr2_room_members m where m.room_id = new.room_id and m.member_kind = 'user' and m.removed_at is null and m.member_id <> new.author_user_id) = 0
-        and (select count(*) from public.msgr2_room_members m where m.room_id = new.room_id and m.member_kind = 'agent' and m.removed_at is null) = 1 then
-    select array_agg(m.member_id) into targets from public.msgr2_room_members m where m.room_id = new.room_id and m.member_kind = 'agent' and m.removed_at is null;
-  end if;
-  foreach ag in array coalesce(targets, '{}') loop
-    perform public._msgr2_make_offer(new.room_id, new.topic_id, ag, 'user', new.author_user_id, new.author_user_id, new.body, new.id, null, 0);
-  end loop;
-  return null;
-end $$;
+
 create or replace function public.msgr2_link_send(p_env jsonb) returns jsonb
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare
@@ -235,19 +246,39 @@ begin
   insert into public.msgr2_work_events (work_id, sender, seq, type, envelope_id, device_id, envelope)
   values (w.id, 'runner', (p_env->>'seq')::bigint, t, (p_env->>'id')::uuid, dv.id, p_env);
   return jsonb_build_object('ok', true, 'state', ns.to_state)
-    || case when t = 'work.accept' then jsonb_build_object('lease_gen', lg, 'lease_until', to_char(v_until at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-         'attachments', public._msgr2_attachments_of(w.source_message_id)) else '{}'::jsonb end; -- 사람 글의 첨부는 글을 넣은 뒤에 붙어 offer에 없을 수 있다
+    || case when t = 'work.accept' then jsonb_build_object('lease_gen', lg, 'lease_until', to_char(v_until at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) else '{}'::jsonb end;
 end $$;
-drop function if exists public._msgr2_make_offer_x(uuid, uuid, uuid, text, uuid, uuid, text, bigint, uuid, int, uuid[]);
-drop function if exists public._msgr2_runner_has(uuid, text);
-drop function if exists public._msgr2_lite_room_ok(uuid);
-drop function if exists public._msgr2_lite();
-drop function if exists public._msgr2_pro_ok(uuid);
-drop function if exists public._msgr2_clamp(text, int, int);
-revoke all on function public._msgr2_make_offer(uuid, uuid, uuid, text, uuid, uuid, text, bigint, uuid, int) from public, anon, authenticated;
-drop index if exists public.msgr2_works_chain_root;
-alter table public.msgr2_works drop constraint if exists msgr2_works_kind_check;
-alter table public.msgr2_works drop column if exists chain_root, drop column if exists meeting_rounds, drop column if exists meeting_agents, drop column if exists kind;
-alter table public.msgr2_rooms drop column if exists meeting;
-alter table public.msgr2_devices drop column if exists features;
+
+create or replace function public.msgr2_work_status(p_work uuid) returns jsonb
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare w public.msgr2_works; st text;
+begin
+  select * into w from public.msgr2_works where id = p_work;
+  if not found or not (select (public.msgr2_access(w.room_id)).read) then return null; end if;
+  st := public._msgr2_effective_state(w.state, w.expires_at, w.lease_until, w.has_result);
+  return jsonb_build_object('work', w.id, 'state', st, 'late', w.late, 'error', w.error_code, 'has_result', w.has_result,
+    'unknown_effects', case when st in ('done', 'failed', 'cancelled', 'stalled') then
+      coalesce((select jsonb_agg(e.effect_key order by e.at) from public.msgr2_effects e where e.work_id = w.id and e.state = 'intent'), '[]'::jsonb) else '[]'::jsonb end);
+end $$;
+
+create or replace function public.msgr2_device_revoke(p_device uuid) returns boolean
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare me uuid := auth.uid(); t public.msgr2_devices%rowtype;
+begin
+  if not public._msgr2_device_app() then raise exception 'msgr2_app_device_required' using errcode = '42501'; end if;
+  select * into t from public.msgr2_devices where id = p_device and user_id = me;
+  if not found then raise exception 'msgr2_device_not_found' using errcode = '42501'; end if;
+  if t.revoked_at is not null then return false; end if;
+  update public.msgr2_devices set revoked_at = now() where id = t.id and revoked_at is null;
+  perform realtime.send(jsonb_build_object('device_id', t.id), 'device_revoked', 'u:' || me::text, true);
+  return true;
+end $$;
+
+do $d$ declare f regprocedure; begin
+  for f in select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname = any (array['_msgr2_attachments_of', '_msgr2_msg_payload', '_msgr2_room_humans', '_msgr2_rt_topic_ok', '_msgr2_rt_send_ok', '_msgr2_storage_gate', '_msgr2_send_s', '_msgr2_send_u', '_msgr2_storage_read', '_msgr2_storage_room', '_msgr2_storage_write', 'msgr2_on_message_broadcast', 'msgr2_on_pause_setting', 'msgr2_on_user_gen', 'msgr2_retention_prune']) loop
+    execute format('drop function %s', f);
+  end loop;
+end $d$;
+notify pgrst, 'reload schema';
 commit;
