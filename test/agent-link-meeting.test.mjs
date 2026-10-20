@@ -132,6 +132,40 @@ test('회의 offer — 참가자 2 × 라운드 2 = posts 4개(round 1·2), text
   assert.ok(calls.chat.every((c) => c.opts.hop === 2 && c.opts.abortTag === o.work && c.opts.mirrorCtx.scope.work === o.work));
 });
 
+// R5 결함 2(2026-10-20): A+ 앱은 회의방 글에 멘션을 붙이지 않는다. 서버는 멘션이 없으면 방의 에이전트 전원을 participants로 보낸다 —
+// 본체도 전원을 발언시켜야 한다(종전: runRoomCore 폴백 = 첫 크루 1명·1라운드). 이름 멘션이 있으면 그 사람만, @전체는 전원. 데스크톱 회의실은 종전대로(room-speakers 핀).
+const three = (id) => [{ agent: id('pm'), name: '에이', role: '기획' }, { agent: id('dev'), name: '비', role: '개발' }, { agent: id('x0'), name: '엑스0', role: '' }];
+test('회의 offer 멘션 없음 — 서버가 보낸 참가자 3명 전원 × 2라운드 = posts 6', async () => {
+  const { server, calls, id } = await setup({ extra: 1 });
+  const o = meetingOffer(server, id, { text: '분기 계획을 정해 주세요', participants: three(id) });
+  server.push(o); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  const res = server.sentOf('work.result', o.work)[0].data;
+  assert.equal(res.posts.length, 6);
+  assert.deepEqual(res.posts.map((p) => p.round).sort(), [1, 1, 1, 2, 2, 2]);
+  assert.deepEqual(new Set(res.posts.map((p) => p.agent)), new Set([id('pm'), id('dev'), id('x0')]));
+  assert.equal(calls.chat.length, 6);
+});
+test('회의 offer 이름 멘션 1명 — 그 사람만(1라운드 1글), @전체 — 전원', async () => {
+  const { server, calls, id } = await setup({ extra: 1 });
+  const o = meetingOffer(server, id, { text: '@비 일정만 봐 주세요', participants: three(id) });
+  server.push(o); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  assert.deepEqual(server.sentOf('work.result', o.work)[0].data.posts.map((p) => [p.agent, p.round]), [[id('dev'), 1]]);
+  assert.deepEqual(calls.chat.map((c) => c.slug), ['dev']);
+  const o2 = meetingOffer(server, id, { text: '@전체 각자 의견', participants: three(id) });
+  server.push(o2); await flush();
+  await until(() => server.sentOf('work.result', o2.work).length > 0);
+  assert.equal(server.sentOf('work.result', o2.work)[0].data.posts.length, 6);
+});
+test('데스크톱 경로(runMeeting 기본값) — 멘션 없음은 종전대로 첫 에이전트 1명', async () => {
+  const st = [];
+  const r = await runMeeting({ text: '그냥 질문', participants: [{ kind: 'agent', ref: 'a', ws: 'w', slug: 'a', name: '에이' }, { kind: 'agent', ref: 'b', ws: 'w', slug: 'b', name: '비' }], tag: 't' },
+    { chat: async (ws, slug) => { st.push(slug); return { reply: `${slug} 답` }; }, interruptTurn: async () => {}, callBot: async () => ({ text: '' }), mirrorCtxFor: () => ({ kind: 'scope', scope: { kind: 'link', work: 't', room: 'r', owner: true } }) });
+  assert.deepEqual(st, ['a']);
+  assert.equal(r.posts.length, 1);
+});
+
 test('회의 offer rounds 1 — 반응 라운드 없이 참가자당 1개', async () => {
   const { server, id } = await setup();
   const o = meetingOffer(server, id, { rounds: 1 });
