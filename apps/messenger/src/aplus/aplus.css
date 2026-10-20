@@ -68,7 +68,7 @@
 .ap-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: calc(env(safe-area-inset-top, 0px) + 14px) 16px 8px; }
 .ap-head h1 { margin: 0; font-size: 22px; white-space: nowrap; }
 .ap-app.phone .ap-scroll { padding: 0 8px 12px; }
-.ap-tabbar { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border-soft); background: var(--card); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.ap-tabbar { flex: none; display: grid; grid-template-columns: repeat(5, 1fr); border-top: 1px solid var(--border-soft); background: var(--card); padding-bottom: env(safe-area-inset-bottom, 0px); }
 .ap-tabbar button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0 6px; font-size: 11px; color: var(--fg-3); min-width: 0; }
 .ap-tabbar button span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .ap-tabbar button.on { color: var(--fg); font-weight: 600; }
@@ -141,3 +141,59 @@
 .ap-rowsub.ap-addr { white-space: normal; overflow-wrap: anywhere; }
 .ap-sysline { align-self: center; max-width: min(520px, 92%); margin: 0; padding: 6px 12px; border-radius: 10px; background: var(--card-2); color: var(--fg-2); font-size: 12.5px; line-height: 1.5; text-align: center; }
 .ap-steps-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; line-height: 1.55; color: var(--fg); }
+
+/* 사람 탭(2026-10-20) — 팀 공간·채널·사람 1:1·초대·멤버 */
+.ap-people { display: flex; flex-direction: column; gap: 6px; }
+.ap-sec { display: flex; flex-direction: column; gap: 2px; }
+.ap-sec h3 { margin: 8px 10px 2px; display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 28px; font-size: 12px; font-weight: 700; color: var(--fg-3); letter-spacing: .01em; }
+.ap-sheet .ap-sec h3 { margin: 4px 2px 2px; }
+.ap-iconbtn.sm { width: 28px; height: 28px; border-radius: 8px; }
+.ap-iconbtn.xs { width: 22px; height: 22px; border-radius: 6px; }
+.ap-spacebtn { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--border-soft); background: var(--card); text-align: left; min-width: 0; color: var(--fg-2); }
+.ap-spacebtn:hover { background: var(--secondary); }
+.ap-face.square { border-radius: 9px; }
+.ap-hash { flex: none; width: 32px; height: 32px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: var(--secondary); color: var(--fg-2); }
+.ap-hash.big { width: 36px; height: 36px; }
+.ap-pill.on { background: var(--primary); color: var(--primary-fg); }
+.ap-pro .ap-tag { margin-bottom: 2px; }
+.ap-rowbtn.static.mid { align-items: center; }
+.ap-rowbtn.static.mid .btn { flex: none; }
+.ap-headend { margin-left: auto; }
+.ap-check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.ap-check input { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--primary); }
+.ap-check > span { display: flex; flex-direction: column; gap: 2px; font-size: 13px; line-height: 1.5; }
+.ap-code { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--border-soft); font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
+.ap-invcard { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--card-2); }
+.ap-invcard strong { font-size: 15px; color: var(--fg); }
+.ap-invcard p { margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; }
+.ap-legacy { flex: none; display: flex; align-items: center; gap: 6px; padding: 7px 16px; background: var(--card-2); border-bottom: 1px solid var(--border-soft); font-size: 12.5px; color: var(--fg-2); }
+.ap-legacy svg { flex: none; }
+.ap-readonly { display: flex; align-items: center; gap: 6px; justify-content: center; padding: 8px 0; }
+.ap-head .ap-row { flex-wrap: nowrap; }
+
+/* 첨부 */
+.ap-msgbody { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ap-msg.me .ap-msgbody { align-items: flex-end; }
+.ap-files { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.ap-files.mine { align-items: flex-end; }
+.ap-file { display: flex; align-items: center; gap: 10px; width: 280px; max-width: 100%; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--border-soft); background: var(--card); text-align: left; color: var(--fg-3); min-width: 0; }
+.ap-file:hover { background: var(--secondary); }
+.ap-fileicon { flex: none; width: 34px; height: 34px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: var(--secondary); color: var(--fg-2); }
+.ap-img { display: block; padding: 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--border-soft); max-width: min(320px, 100%); }
+.ap-img img { display: block; width: 100%; height: auto; max-height: 260px; object-fit: cover; }
+.ap-attach { flex: none; width: 34px; height: 34px; margin-left: -8px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--fg-2); }
+.ap-attach:hover { background: var(--secondary); }
+.ap-attach:disabled { opacity: .35; }
+.ap-chips { list-style: none; margin: 0 0 8px; padding: 0; display: flex; gap: 6px; flex-wrap: wrap; }
+.ap-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 4px 4px 10px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--border-soft); font-size: 12.5px; color: var(--fg-2); min-width: 0; }
+.ap-chipname { min-width: 0; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+.ap-chip .ap-muted { white-space: nowrap; }
+
+/* 휴대폰 머리줄의 사람 탭 단추: 좁으면 글자를 숨기고 아이콘만 */
+@media (max-width: 420px) { .ap-head .icononly-phone > :not(svg) { display: none; } }
+@media (min-width: 421px) { .ap-head .icononly-phone { width: auto; padding: 0 12px; } }
+/* 레일 탭 4칸(1:1·회의방·사람·외부 봇): 아이콘 위·글자 아래로 — 가로 한 줄이면 880·영어에서 잘린다 */
+.ap-rail .ap-seg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ap-rail .ap-seg button { flex-direction: column; gap: 2px; height: 46px; padding: 0 2px; font-size: 11.5px; }
+.ap-rail .ap-seg button svg { flex: none; }
+.ap-head .icononly-phone { width: 36px; height: 36px; padding: 0; justify-content: center; }

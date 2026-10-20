@@ -4,9 +4,14 @@
 // 회의 글 = 에이전트별 글(meta.round 1..2), 외부 봇 = msgr2_agents.hosting 'bot'(주소·키는 서버에 없음), 상한 안내 = system 글 meta.limit.
 // 그 전 서버(열·함수 없음, 42703·PGRST202)에서는 화면이 '아직 열리지 않음'을 그린다(notOpenYet).
 // 무료 계정은 plan() 한 번 뒤 start()를 부르지 않는다(기계·등록·구독 0).
+// 사람 탭(2026-10-20): 팀 공간·채널·사람 1:1·초대·멤버 — v2 서버 RPC(msgr2_space_create·room_create·dm_open·invite_*)와 v2/data.mjs 읽기를 그대로 쓴다.
+//   읽기는 탭·방을 열 때와 기계 사건(spaces·rooms·invite)이 왔을 때만. 무료면 서버가 msgr2_pro_required로 거부한다(화면 판정은 people.mjs peopleGate).
 import { createV2Runtime, gaveUpOf } from '../v2/runtime.mjs';
 import { bindLifecycle } from '../link/lifecycle.mjs';
-import { loadRoom } from '../v2/data.mjs';
+import { loadRoom, loadSpaces, loadRooms } from '../v2/data.mjs';
+import { spaceList, liveSpaceIds } from '../v2/spaces.mjs';
+import { loadMyInvites } from '../v2/my-invites.mjs';
+import { declineInvite } from '../v2/invite-box.mjs';
 import { planOf } from '../pro-checkout.mjs';
 import { runStateOf, effectiveState, afterCancel, errorKey } from './model.mjs';
 
@@ -20,11 +25,15 @@ export function createAPlusSource({ raw, uid, appVersion = null }) {
   const offs = [];
   const emit = (type, payload) => { for (const fn of listeners.get(type) ?? []) { try { fn(payload); } catch { /* 화면 쪽 오류 */ } } };
   const ready = async () => { if (!rt) throw notReady(); await rt.ready(); };
-  const toMsg = (m) => ({ id: m.id, author: m.author_kind === 'user' ? (m.author_user_id === uid ? 'me' : m.author_user_id) : m.author_kind === 'system' ? 'system' : m.author_agent_id, body: m.body ?? '', at: Date.parse(m.created_at ?? '') || Date.now(), kind: m.kind, round: m.meta?.round ?? null, workId: m.work_id ?? null, meta: m.kind === 'system' ? m.meta ?? null : null });
+  const toMsg = (m) => ({ id: m.id, author: m.author_kind === 'user' ? (m.author_user_id === uid ? 'me' : m.author_user_id) : m.author_kind === 'system' ? 'system' : m.author_agent_id, body: m.body ?? '', at: Date.parse(m.created_at ?? '') || Date.now(), kind: m.kind, round: m.meta?.round ?? null, workId: m.work_id ?? null, meta: m.kind === 'system' ? m.meta ?? null : null, legacy: !!m.meta?.legacy_author });
   // 봇 일이 bot_unreachable·bot_limit 등으로 실패하면 그 방에 안내 줄 하나(글이 아니라 화면용 — 서버에 쓰지 않는다)
   const errNote = (w) => (w?.state === 'failed' && errorKey(w.error_code) ? { id: `werr-${w.id}`, author: 'system', kind: 'note', errKey: errorKey(w.error_code), at: Date.parse(w.updated_at ?? w.created_at ?? '') || Date.now() } : null);
   const meetingRooms = new Map(); // roomId → { workId, total } — 취소할 일, 사건으로 온 일의 진행
   // 진행 = 서버가 읽을 때 계산하는 상태와 같은 계산(effectiveState). until = 기한이 지나면 끝남으로 바뀌는 시각(offered만 — 리스는 본체가 늘리므로 다시 읽을 때만 본다)
+  // 구독할 팀 공간(v2:s:) — 시작 때 1회, 공간 사건이 오면 500ms 묶어 1회. 실패(서버 스위치 꺼짐·무료)는 조용히 둔다(다음 사건·시작 때 다시).
+  let spacesTimer = null;
+  const liveSpaces = async () => { try { if (!rt) return; await rt.ready(); const list = spaceList(await loadSpaces(raw, uid)).filter((s) => !s.personal); rt?.machine.setSpaces?.(liveSpaceIds(list)); return list; } catch { return null; } };
+  const liveSpacesSoon = () => { clearTimeout(spacesTimer); spacesTimer = setTimeout(() => { spacesTimer = null; void liveSpaces(); }, 500); };
   const runOf = (w, total) => ({ workId: w.id, state: runStateOf(effectiveState(w)), until: w.state === 'offered' ? Date.parse(w.expires_at ?? '') || null : null, total });
   return {
     uid,
@@ -39,6 +48,8 @@ export function createAPlusSource({ raw, uid, appVersion = null }) {
       offs.push(rt.machine.on('messages', (e) => emit('messages', { roomId: e.roomId, messages: e.messages.map(toMsg) })));
       offs.push(rt.machine.on('state', (s) => emit('state', s)));
       offs.push(rt.machine.on('badge', (b) => emit('badge', b)));
+      offs.push(rt.machine.on('attachments', (e) => emit('attachments', e))); // 첨부 표지(요청 0) — 글 뒤에 붙는다
+      offs.push(rt.machine.on('event', (e) => { if (!['spaces', 'rooms', 'invite'].includes(e?.event)) return; emit('people', e); if (e.event === 'spaces') liveSpacesSoon(); })); // 공간·방·초대 사건 → 사람 탭이 한 번 다시 읽는다, 공간이 바뀌면 구독할 공간도
       offs.push(rt.machine.on('works', (e) => {
         for (const w of e.works) {
           const m = meetingRooms.get(e.roomId);
@@ -48,10 +59,11 @@ export function createAPlusSource({ raw, uid, appVersion = null }) {
       }));
       offs.push(bindLifecycle(rt.machine)); // 앱 앞·뒤·네트워크 복귀 — 뒤로 가면 소켓을 닫고(쉬는 동안 요청 0), 앞으로 오면 다시 붙는다(지금 셸과 같은 연결)
       await rt.machine.start();
+      void liveSpaces(); // 팀 공간 open 방 글은 v2:s:<공간>으로만 온다(워커 계약 — 사람 탭을 열지 않아도) — 시작 때 1회(요청 3)
     },
     /** 사람이 누른 다시 시도 — 다시 붙기를 그만둔(gave_up) 기계만 다시 붙인다. */
     retry() { if (rt && gaveUpOf(rt.machine.getSnapshot())) rt.retry(); },
-    stop() { for (const off of offs.splice(0)) off(); rt?.dispose(); rt = null; },
+    stop() { for (const off of offs.splice(0)) off(); clearTimeout(spacesTimer); spacesTimer = null; rt?.dispose(); rt = null; },
     async agents() {
       await ready();
       return ok(await raw.from('msgr2_agents').select('id, owner_user_id, display_name, slug, role_text, status, hosting').eq('owner_user_id', uid).neq('status', 'retired')) ?? [];
@@ -63,9 +75,53 @@ export function createAPlusSource({ raw, uid, appVersion = null }) {
       await ready(); rt.machine.setActiveRoom?.(roomId);
       const r = await loadRoom(raw, roomId);
       const notes = r.works.map(errNote).filter(Boolean);
-      return [...r.messages.filter((m) => !m.deleted_at).map(toMsg), ...notes].sort((a, b) => a.at - b.at);
+      const files = new Map(); for (const a of r.attachments ?? []) { if (!files.has(a.message_id)) files.set(a.message_id, []); files.get(a.message_id).push(a); }
+      return [...r.messages.filter((m) => !m.deleted_at).map((m) => ({ ...toMsg(m), files: files.get(m.id) ?? [] })), ...notes].sort((a, b) => a.at - b.at);
     },
-    async send(roomId, body) { if (!rt) return { ok: false, code: 'aplus_not_ready' }; return rt.machine.send({ roomId, body }); },
+    /** files: [{ name, mime, bytes, data }] — 기계가 글(files_expected) → 첨부 행 → 업로드 → msgr2_message_ready를 한 번에 한다. */
+    async send(roomId, body, files = []) { if (!rt) return { ok: false, code: 'aplus_not_ready' }; return rt.machine.send({ roomId, body, files }); },
+    /** 마지막으로 읽은 글(값이 커질 때만 서버가 쓴다). 화면은 createReadMarker로 묶어 부른다(글마다 부르지 않음). */
+    async markRead(roomId, lastId) { if (!rt) return; await raw.rpc('msgr2_mark_read', { p_room: roomId, p_last_id: lastId }); },
+    /** 첨부 보기 주소(1시간). storage_path = '버킷/객체'. */
+    async fileUrl(path) {
+      const s = String(path || ''); const i = s.indexOf('/'); if (i <= 0) return null;
+      const r = await raw.storage.from(s.slice(0, i)).createSignedUrl(s.slice(i + 1), 3600);
+      return r?.data?.signedUrl ?? null;
+    },
+    // ── 사람 탭 ──
+    /** 내 팀 공간(개인 공간 제외). 실시간: 멤버인 팀 공간을 기계에 알린다(큰 방 글이 v2:s:로 온다). */
+    async spaces() {
+      await ready();
+      const list = spaceList(await loadSpaces(raw, uid)).filter((s) => !s.personal);
+      rt.machine.setSpaces?.(liveSpaceIds(list));
+      return list;
+    },
+    /** 공간 하나: 방·방 멤버·공간 멤버(이름·역할)·보이는 에이전트. 요청 4~5. */
+    async space(spaceId) {
+      await ready();
+      const { rooms, members, agents } = await loadRooms(raw, spaceId);
+      const people = ok(await raw.from('msgr2_space_members').select('user_id, display_name, role, removed_at, expires_at').eq('space_id', spaceId)) ?? [];
+      return { rooms, members, agents, people: people.map((p) => ({ ...p, name: p.display_name || '' })) };
+    },
+    async createSpace(name) { await ready(); return ok(await raw.rpc('msgr2_space_create', { p_name: name })); },
+    async createChannel(spaceId, name, priv = false) { await ready(); return ok(await raw.rpc('msgr2_room_create', { p_space: spaceId, p_kind: priv ? 'private' : 'open', p_name: name })); },
+    async openUserDm(userId, spaceId) { await ready(); return ok(await raw.rpc('msgr2_dm_open', { p_user: userId, p_space: spaceId }))?.room_id ?? null; },
+    /** 초대 만들기 — 사람 지정(userId)이면 그 사람에게만, 아니면 링크 코드(7일, 1회). 서버가 무료 상대를 거부하면 그 코드를 그대로 던진다. */
+    async createInvite(spaceId, { userId = null } = {}) { await ready(); return ok(await raw.rpc('msgr2_invite_create', { p_space: spaceId, p_role: 'member', p_user: userId })); },
+    /** 초대할 사람 고르기 재료: 내 다른 팀 공간의 사람(이 공간 멤버·나 제외). 시트를 열 때 1회(요청 1). */
+    async contacts(spaceId) {
+      await ready();
+      const mine = spaceList(await loadSpaces(raw, uid)).filter((s) => !s.personal).map((s) => s.id);
+      if (!mine.length) return [];
+      const rows = ok(await raw.from('msgr2_space_members').select('space_id, user_id, display_name, removed_at').in('space_id', mine).is('removed_at', null)) ?? [];
+      const here = new Set(rows.filter((r) => r.space_id === spaceId).map((r) => r.user_id));
+      const out = new Map(); for (const r of rows) if (r.user_id !== uid && !here.has(r.user_id) && !out.has(r.user_id)) out.set(r.user_id, { id: r.user_id, name: r.display_name || '?' });
+      return [...out.values()];
+    },
+    async myInvites() { await ready(); return (await loadMyInvites((n, a) => raw.rpc(n, a))) ?? []; },
+    async previewInvite(code) { await ready(); return ok(await raw.rpc('msgr2_invite_preview', { p_code: code })); },
+    async acceptInvite(code) { await ready(); return ok(await raw.rpc('msgr2_invite_accept', { p_code: code })); },
+    async declineInvite(code) { await ready(); return declineInvite((n, a) => raw.rpc(n, a), code); },
     /** 회의방 목록: 내 개인 공간의 meeting 방 + 참가 에이전트 + 방마다 마지막 일(진행 상태). 탭을 열 때 1회(요청 4). */
     async meetings() {
       await ready();
