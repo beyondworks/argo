@@ -5,9 +5,15 @@ import { cloudConfigProblem } from './scripts/cloud-config-gate.mjs';
 
 // 공유 순수 모듈은 별칭으로(복사 금지 — 사본 드리프트). 루트 워크스페이스 전환은 후속(lockfile·CI 파장).
 const shared = (p) => fileURLToPath(new URL(`../../${p}`, import.meta.url));
+// 메신저 v2·A+(사람 탭·사람 채팅 포함) 화면은 발행 빌드에서 기본으로 켠다(0.1.64, 공개 계획서 S5) — 데스크톱 CI·iOS·Android가 모두 vite build를 거치므로 여기 한 곳에서 정한다.
+// 이미 값이 있으면(예: VITE_MSGR_V2=0으로 옛 화면 빌드) 그대로 둔다. dev 서버는 종전처럼 localStorage·환경변수로만 켠다. 사람 채팅 자체는 서버 스위치(msgr2_people)가 연다.
+export const RELEASE_UI_DEFAULTS = { VITE_MSGR_V2: '1', VITE_MSGR_APLUS: '1' };
 export default defineConfig(({ command, mode }) => {
+  const fileEnv = loadEnv(mode, fileURLToPath(new URL('.', import.meta.url)), 'VITE_');
+  // 설정 파일(.env*)이나 환경변수에 값이 없을 때만 기본값을 넣는다 — 둘 중 하나에 0이 있으면 그 값이 이긴다
+  if (command === 'build') for (const [k, v] of Object.entries(RELEASE_UI_DEFAULTS)) if (fileEnv[k] === undefined) process.env[k] ??= v;
   // 발행 빌드 관문 — 서버 주소 없이 나가는 앱 차단(scripts/cloud-config-gate.mjs)
-  const problem = cloudConfigProblem({ command, platform: process.env.TAURI_ENV_PLATFORM, env: { ...loadEnv(mode, fileURLToPath(new URL('.', import.meta.url)), 'VITE_'), ...process.env } });
+  const problem = cloudConfigProblem({ command, platform: process.env.TAURI_ENV_PLATFORM, env: { ...fileEnv, ...process.env } });
   if (problem) throw new Error(problem);
   return {
   plugins: [react()],

@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "argo-messenger"
-version = "0.1.63"
+version = "0.1.64"
 dependencies = [
  "block2",
  "chrono",
