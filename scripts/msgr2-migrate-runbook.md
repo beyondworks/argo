@@ -137,6 +137,7 @@ delete from public.msgr_settings where key = 'msgr2_migration_window';
 
 | 구분 | 내용 | 고칠 방향 |
 |---|---|---|
-| **열기 전 필수**(사람 채팅·v2 전체 셸) | 사람 글의 첫 첨부가 본체 턴에 실리지 않는다. 앱 기계는 글 넣기 → `msgr2_attachment_add` → Storage 업로드 순서인데, 서버는 글을 넣는 순간 offer를 만들고 본체는 약 20ms 뒤 accept한다(실측 순서: 글·offer → 첨부 행 → accept → 업로드). A+ 앱에는 첨부가 없어 지금은 막지 않는다 | 실제 빈칸은 "첨부 행은 있는데 Storage 객체가 아직 없음"이다(#1122 검수). 후보 ① 서버 한 곳: 앱이 글 `meta.files = n`을 싣고, 사람 글 트리거는 n>0이면 offer를 마지막 첨부 객체가 생긴 뒤로 미룬다(기한을 넘기면 첨부 없이) ② 본체가 첨부 객체가 생길 때까지 잠깐 기다린 뒤 받는다(상한을 두고) |
+| **열기 전 필수 → #1124에서 고침**(files_expected + msgr2_message_ready, 기한 120초 폴백) | 사람 글의 첫 첨부가 본체 턴에 실리지 않는다. 앱 기계는 글 넣기 → `msgr2_attachment_add` → Storage 업로드 순서인데, 서버는 글을 넣는 순간 offer를 만들고 본체는 약 20ms 뒤 accept한다(실측 순서: 글·offer → 첨부 행 → accept → 업로드). A+ 앱에는 첨부가 없어 지금은 막지 않는다 | 실제 빈칸은 "첨부 행은 있는데 Storage 객체가 아직 없음"이다(#1122 검수). 후보 ① 서버 한 곳: 앱이 글 `meta.files = n`을 싣고, 사람 글 트리거는 n>0이면 offer를 마지막 첨부 객체가 생긴 뒤로 미룬다(기한을 넘기면 첨부 없이) ② 본체가 첨부 객체가 생길 때까지 잠깐 기다린 뒤 받는다(상한을 두고) |
 | 막지 않음 | 무료 계정 본체가 첫 부팅에서 `pro_required`를 받으면 `createAgentLinkHost` boot가 멈춘 링크(null)에 `start()`를 불러 "boot failed TypeError" 로그 1줄이 남는다(요청 추가 없음) | boot에서 `resync` 뒤 `link`가 null이면 돌아간다 |
 | 막지 않음 | 진행 방송(`supabaseTransport.broadcast`)이 구독 전 채널에 `send`해 supabase-js가 REST로 대신 보내며 경고를 낸다(동작함) | `httpSend` 또는 구독 뒤 보내기 |
+| 막지 않음(총괄 수용, 2026-10-20) | 사람 채팅의 private 방·1:1 글은 Realtime 방송을 사람마다 1행 쓴다(방 인원 상한 50에 비례). 부하 시험 하루 26,175행(한 달 약 80만, Pro 포함량 월 500만 메시지 안) | 방 토픽(v2:r:<방>) + 앱의 방별 구독으로 글당 1행(상수)으로 — 구독 수가 방 수만큼 늘어나는 것과 함께 검토 |
