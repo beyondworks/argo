@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLang } from '@argo/i18n';
 import { t as tm } from '../i18n.js';
 import { I } from '../icons.jsx';
-import { accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, meetingPickable, deriveRun, errorKey, limitKey, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_MIN, MEETING_ROUNDS, TITLE_MAX, BOT_KINDS } from './model.mjs';
+import { watchLinkState, accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, meetingPickable, deriveRun, errorKey, limitKey, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_MIN, MEETING_ROUNDS, TITLE_MAX, BOT_KINDS } from './model.mjs';
 import { usePeople, PeopleList, PeopleActions, PeopleSheets } from './People.jsx';
 import { addFiles, canSend, toUpload, formatBytes, fileIcon, isImage, legacyRoom, peopleErrorKey, createReadMarker } from './people.mjs';
 import './aplus.css';
@@ -20,7 +20,7 @@ const initials = (name) => String(name || '?').trim().slice(0, 1).toUpperCase();
 function Face({ name, size = 32, muted = false }) { return <span className={`ap-face${muted ? ' muted' : ''}`} style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }} aria-hidden="true">{initials(name)}</span>; }
 
 /** 진입: 플랜 확인 → 무료면 안내, 확인 못 하면 다시 확인, Pro면 작업 화면. */
-export default function APlusApp({ source, onSignOut, purchase = null, onStarted = null }) {
+export default function APlusApp({ source, onSignOut, onSignOutNotice = null, purchase = null, onStarted = null }) {
   const { lang, setLang } = useLang();
   const t = useCallback((k, v) => tm(k, lang, v), [lang]);
   const [access, setAccess] = useState('loading');
@@ -29,7 +29,7 @@ export default function APlusApp({ source, onSignOut, purchase = null, onStarted
   if (access === 'loading') return <div className="ap-center"><span className="ap-muted">{t('aplus.plan.checking')}</span></div>;
   if (access === 'free') return <FreeGate t={t} purchase={purchase} onRecheck={check} onSignOut={onSignOut} />;
   if (access === 'unknown') return <div className="ap-center"><div className="ap-gate"><h1>{t('aplus.plan.unknown.title')}</h1><p>{t('aplus.plan.unknown.body')}</p><div className="ap-row"><button type="button" className="btn btn-primary" onClick={check}>{t('aplus.plan.recheck')}</button><button type="button" className="btn" onClick={onSignOut}>{t('aplus.me.signOut')}</button></div></div></div>;
-  return <Workspace source={source} t={t} lang={lang} setLang={setLang} onSignOut={onSignOut} onStarted={onStarted} purchase={purchase} />;
+  return <Workspace source={source} t={t} lang={lang} setLang={setLang} onSignOut={onSignOut} onSignOutNotice={onSignOutNotice} onStarted={onStarted} purchase={purchase} />;
 }
 
 function FreeGate({ t, purchase, onRecheck, onSignOut }) {
@@ -47,7 +47,7 @@ function FreeGate({ t, purchase, onRecheck, onSignOut }) {
 
 const TABS = [['dm', 'memory'], ['meet', 'chat'], ['people', 'person'], ['bots', 'node'], ['me', 'gear']];
 
-function Workspace({ source, t, lang, setLang, onSignOut, onStarted, purchase }) {
+function Workspace({ source, t, lang, setLang, onSignOut, onSignOutNotice, onStarted, purchase }) {
   const width = useWidth(); const layout = layoutOf(width);
   const [tab, setTab] = useState('dm');
   const [online, setOnline] = useState(() => source.online());
@@ -60,6 +60,8 @@ function Workspace({ source, t, lang, setLang, onSignOut, onStarted, purchase })
   const people = usePeople({ source, active: tab === 'people' });
   const [toast, setToast] = useState('');
   useEffect(() => { let live = true; source.start?.().then(() => { if (live) onStarted?.(); }, () => {}); return () => { live = false; source.stop?.(); }; }, [source]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [linkBar, setLinkBar] = useState(null); // 기계 상태 안내 줄(중단·업데이트 필요·연결할 수 없음) — v2 셸과 같은 키
+  useEffect(() => watchLinkState(source, { onBar: setLinkBar, onNotice: (key) => (onSignOutNotice ? onSignOutNotice(key) : onSignOut?.()) }), [source, onSignOutNotice, onSignOut]); // 기기 폐기·다시 로그인 필요 → 로그인 화면으로(#1127 검수)
   useEffect(() => { const on = () => setOnline(source.online()); window.addEventListener('online', on); window.addEventListener('offline', on); return () => { window.removeEventListener('online', on); window.removeEventListener('offline', on); }; }, [source]);
   const loadAgents = useCallback(() => { setLoadErr(''); source.retry?.(); Promise.all([source.agents(), source.dms()]).then(([a, d]) => { setAgents(a); setDms(d); }, () => setLoadErr(t('aplus.load.failed'))); }, [source, t]);
   useEffect(() => { loadAgents(); }, [loadAgents]);
@@ -95,7 +97,8 @@ function Workspace({ source, t, lang, setLang, onSignOut, onStarted, purchase })
     <PeopleSheets t={t} source={source} p={people} sheet={psheet} setSheet={setPsheet} onOpen={(o) => { setTab('people'); setOpen(o); }} setToast={setToast} />
     {toast && <div className="ap-toast" role="status">{toast}</div>}
   </>;
-  const banner = !online && <div className="ap-offline" role="status"><I name="nodeoff" size={14} />{t('aplus.offline')}</div>;
+  const banner = !online ? <div className="ap-offline" role="status"><I name="nodeoff" size={14} />{t('aplus.offline')}</div>
+    : linkBar && <div className="ap-offline" role="status"><I name="nodeoff" size={14} />{t(linkBar)}{linkBar === 'v2.state.unreachable' && <> <button type="button" className="btn sm ghost" onClick={() => source.machine()?.retry?.()}>{t('v2.state.retry')}</button></>}</div>;
 
   if (layout === 'phone') {
     return (
