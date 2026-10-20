@@ -5,7 +5,7 @@
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { validateEnvelope } from '../packages/agent-link/contract/v1.mjs';
 import { setup, seedDevice } from './helpers/msgr2-work-pg.mjs';
@@ -266,6 +266,9 @@ test('되돌림 — down.sql 뒤 새 열·함수·트리거가 없고 offer 함�
   assert.ok(!db.sql(`select prosrc from pg_proc where proname = 'msgr2_on_user_message'`).includes('meeting'));
   assert.ok(!db.sql(`select prosrc from pg_proc where proname = 'msgr2_link_send'`).includes('post_denied'));
   db.psql(['-c', readFileSync(MIG, 'utf8')]);
+  // 이 파일 뒤의 msgr2 파일(예: 20261020120000 사람 채팅)이 같은 함수를 다시 정의한다 — setup()과 같은 순서로 다시 적용해 비교한다
+  const dir = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
+  for (const f of readdirSync(dir).filter((x) => /_msgr2_.*\.sql$/.test(x) && x > '20261019160000_msgr2_aplus.sql').sort()) db.psql(['-c', readFileSync(dir + f, 'utf8')]);
   assert.equal(shape(), applied);
 });
 

@@ -219,7 +219,8 @@ test('BOT_RATE(약속 v1.1 상수) — 동시 2번째는 앞 호출이 끝난 �
   assert.equal(BOT_LIMITS.perMinute, BOT_RATE.perMin); assert.equal(BOT_LIMITS.retry429, BOT_RATE.retryOn429); assert.equal(BOT_LIMITS.concurrent, BOT_RATE.concurrent);
   // 동시 2번째 대기 — 첫 요청이 끝나기 전에는 둘째 요청이 서버에 닿지 않는다
   let releaseFirst; const firstHeld = new Promise((r) => { releaseFirst = r; });
-  const srv = await fakeBot(async (q, st) => { if (st.reqs.length === 1) await firstHeld; return hermesOk(`답${st.reqs.length}`); });
+  // 답 번호는 요청이 도착한 순간의 순번으로(기다림 뒤에 세면 끝나는 시점에 따라 번호가 바뀐다 — 맥 CI 간헐 실패)
+  const srv = await fakeBot(async (q, st) => { const n = st.reqs.length; if (n === 1) await firstHeld; return hermesOk(`답${n}`); });
   try {
     const w = await ws();
     await saveBot(w, { id: 'h', kind: 'hermes', url: srv.url, key: KEY });
@@ -228,7 +229,9 @@ test('BOT_RATE(약속 v1.1 상수) — 동시 2번째는 앞 호출이 끝난 �
     await new Promise((r) => setTimeout(r, 60));
     assert.equal(srv.reqs.length, 1, '둘째는 대기 중');
     releaseFirst();
-    assert.deepEqual([(await a).text, (await b).text], ['답1', '답2']);
+    // 동시 두 호출 가운데 누가 먼저 나가는지는 약속이 아니다(각자 자격 파일을 읽은 뒤 줄에 선다) — 둘 다 답을 받고, 한 번에 하나만 나갔는지를 본다
+    assert.deepEqual([(await a).text, (await b).text].sort(), ['답1', '답2']);
+    assert.equal(srv.max, 1, "봇 서버에 동시에 닿은 요청은 1개");
     assert.equal(srv.reqs.length, 2);
     for (let i = 0; i < 4; i++) await callBot({ ws: w, id: 'h' }, { text: 'x' });
     const e = await callBot({ ws: w, id: 'h' }, { text: '7번째' }).catch((x) => x);

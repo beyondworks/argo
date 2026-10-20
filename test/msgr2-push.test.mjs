@@ -168,7 +168,10 @@ test('순서: 생성 시각만 읽고 → 기다린 뒤 → 장부를 잡고 →
   await e.send();
   assert.deepEqual(e.calls.order.slice(0, 5), ['head', 'sleep', 'claim', 'msg', 'rpc']);
   const cut = edge({ msg: { created_at: new Date().toISOString() }, hangSleep: true });
-  const pending = cut.send(); await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+  const pending = cut.send();
+  // 느린 러너(Windows CI)에서는 setImmediate 두 번 안에 첫 단계도 못 갈 수 있다 — 자는 단계에 들어갈 때까지 기다린 뒤 본다(최대 5초)
+  for (let i = 0; i < 500 && !cut.calls.order.includes('sleep'); i++) await new Promise((r) => setTimeout(r, 10));
+  await new Promise((r) => setImmediate(r));
   assert.deepEqual(cut.calls.order, ['head', 'sleep'], '자는 동안 끊김 — 장부를 잡지 않았다(장부가 비어 있다)');
   void pending;
 });
