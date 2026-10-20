@@ -36,7 +36,8 @@ export function snapshot(db) {
 
 // U6d 적용 전 판에서 빼는 후속 마이그레이션(U6d 표에 기댄다) — 각각 setupFull 시험이 따로 본다
 export const NEEDS_ROOMS = ['20261018061300_msgr2_invite_revoke_signal.sql', // test/msgr2-invite-revoke-pg.test.mjs
-  '20261019160000_msgr2_aplus.sql']; // test/msgr2-aplus-pg.test.mjs(A+ — 1:1 밖 막기 트리거가 초대 표에 걸린다)
+  '20261019160000_msgr2_aplus.sql', // test/msgr2-aplus-pg.test.mjs(A+ — 1:1 밖 막기 트리거가 초대 표에 걸린다)
+  '20261020120000_msgr2_people.sql']; // test/msgr2-people-pg.test.mjs(사람 채팅 — 관문이 초대 표를 센다)
 
 // msgr2 파일을 버전 순서로 적용하되 U6d(이 파일)만 뺀다 — 적용 전·후를 비교하려고(setup()은 U2b 뒤 파일을 모두 적용한다)
 function setupWithoutRooms(DB) {

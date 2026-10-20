@@ -420,6 +420,20 @@ test('10d) 개인 방 첨부(p/<방>/…): 백필 뒤 v2 방 멤버는 열고(�
   assert.match(probe(CH.FDM, 10012, `msgr/p/${CH.FDM}/../x`), /msgr2_attachment_path/);
 });
 
+test('10e) 오피스 전용 조직(메신저 채널·자리 없음)은 팀 공간·멤버로 옮기지 않는다, 검증은 그대로 ok(2026-10-20 오피스 외래키 이동)', { skip }, () => {
+  const OFF = id(190), OU = id(191);
+  db.psql(['-c', `insert into auth.users (id) values ('${OU}') on conflict do nothing;
+    insert into public.msgr_orgs (id, name, slug, owner_user_id) values ('${OFF}', 'Office only', 'office-only-b8', '${OU}');`]); // 주인 멤버 행은 트리거가 넣는다
+  assert.equal(migrate('restart').status, 0);
+  const r = migrate('run');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(one(`select count(*) from public.msgr2_spaces where id = '${OFF}'`), '0', '팀 공간 없음');
+  assert.equal(one(`select count(*) from public.msgr2_space_members where user_id = '${OU}'`), '0', '멤버·개인 공간 없음');
+  assert.equal(one(`select count(*) from public.msgr2_spaces where owner_user_id = '${OU}'`), '0');
+  assert.equal(json('select public.msgr2_backfill_verify(50)').ok, true, '검증 기준도 같다');
+  assert.equal(one(`select count(*) from public.msgr2_spaces where id = '${T2}' and kind = 'team'`), '1', '채널이 있는 지운 조직은 그대로 옮긴다');
+});
+
 test('11) 이 마이그레이션 되돌림: 백필이 돈 기록이 있으면 멈추고, 없으면 함수·작업 행을 걷어 내고 offer 트리거를 U2 본문으로', { skip }, () => {
   // 개인 방 첨부 판정(051000) 되돌림 → 세 함수가 U2b·U1 본문으로
   const downPf = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261018051000_msgr2_personal_files.down.sql', import.meta.url)), 'utf8');
