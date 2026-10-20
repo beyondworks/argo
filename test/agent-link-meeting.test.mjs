@@ -72,6 +72,8 @@ async function setup({ meeting = true, plan = 'pro', chatImpl = null, bots = [],
     log: (...a) => calls.logs.push(a.join(' ')),
   });
   host.start(); await flush();
+  // 목록 보내기(agent.sync)가 끝나 대응표가 찰 때까지 — 봇 목록은 파일을 읽어 느린 러너(Windows CI)에서 flush보다 늦다. 그 전의 offer는 이 본체가 맡지 않아 무시된다
+  if (plan !== 'free') await until(() => host.agents.size >= agents.length + (meeting ? bots.length : 0), 5_000);
   const id = (slug) => server.agentIds.get(`${ws}/${slug}`);
   return { ws, server, host, calls, clock, planRef, id };
 }
