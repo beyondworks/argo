@@ -121,6 +121,9 @@ test('release-messenger.yml: 3타깃·작업 디렉터리·버전 게이트·고
   assert.match(y, /if: success\(\) && startsWith/);
   assert.doesNotMatch(y, /MANIFEST-INCOMPLETE|if: always\(\)/);
   assert.match(y, /VITE_SUPABASE_URL: \$\{\{ secrets\.NEXT_PUBLIC_SUPABASE_URL \}\}/);
+  assert.match(y, /VITE_MSGR_V2: "1"/, '0.1.64부터 v2 화면 공개 빌드');
+  assert.match(y, /VITE_MSGR_APLUS: "1"/, '0.1.64부터 A+(사람 탭) 공개 빌드');
+  assert.match(read('apps/messenger/vite.config.js'), /RELEASE_UI_DEFAULTS = \{ VITE_MSGR_V2: '1', VITE_MSGR_APLUS: '1' \}/, '모바일 빌드도 같은 기본값(vite build 한 곳)');
   assert.doesNotMatch(y, /SERVICE_ROLE/, '서버 시크릿은 데스크톱 빌드에 넣지 않는다');
 });
 

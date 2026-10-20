@@ -195,6 +195,8 @@ export function createFakeSource({ scenario = 'pro-many', lang = 'ko', now = Dat
     async declineInvite(code) { calls.push('declineInvite'); const i = invites.findIndex((x) => x.code === code); if (i >= 0) invites.splice(i, 1); return later(i >= 0 ? 'declined' : 'gone'); },
     reads: [],
     /** 시험 보조: 그 방에 남의 글 n개가 한꺼번에 온다(실시간 사건 흉내, 요청 0). */
+    /** 시험·화면 확인용: 기계 상태 사건(signed_out·paused·update_required…)을 낸다(#1127 검수). */
+    linkState(s) { emit('state', s); },
     push(roomId, n = 1, author = 'u-hyowon') { const r = rooms.get(roomId); const ms = Array.from({ length: n }, (_, i) => ({ id: ++seq, author, body: `#${i + 1}`, at: Date.now() })); r?.messages.push(...ms); emit('messages', { roomId, messages: ms }); return ms.length; },
     async markRead(roomId, lastId) { calls.push('markRead'); src.reads.push([roomId, lastId]); },
     async fileUrl(path) { calls.push('fileUrl'); return later(path ? `#file:${path}` : null); },

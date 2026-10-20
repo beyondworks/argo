@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, meetingPickable, deriveRun, runStateOf, effectiveState, afterCancel, errorKey, limitKey, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_ROUNDS } from '../src/aplus/model.mjs';
 import { aplusEnabled, APLUS_FLAG_KEY } from '../src/aplus/flag.mjs';
 import { createFakeSource } from '../src/aplus/fake.mjs';
+import { watchLinkState } from '../src/aplus/model.mjs';
 import { DICT } from '../src/i18n.js';
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
@@ -196,4 +197,20 @@ test('재검수: 회의 취소는 RPC가 돌려준 상태로 바로 바꾼다(�
     assert.equal(meetingView({ state: afterCancel(st) }).canSend, true, `${st} 뒤에는 다시 보낼 수 있다`);
   }
   assert.match(src, /select\('id, room_id, state, created_at, expires_at, lease_until, has_result'\)/);
+});
+
+test('기계 상태 → A+: signed_out(login_required)이면 로그인 안내 1회(반복돼도 한 번), 중단·업데이트는 안내 줄, ready면 줄 없음(#1127 검수)', () => {
+  const src = createFakeSource({ scenario: 'pro-many' });
+  const notices = []; const bars = [];
+  const off = watchLinkState(src, { onNotice: (k) => notices.push(k), onBar: (b) => bars.push(b) });
+  src.linkState({ state: 'paused' }); src.linkState({ state: 'update_required' }); src.linkState({ state: 'ready' });
+  assert.deepEqual(bars, ['v2.state.paused', 'v2.state.update', null]);
+  assert.deepEqual(notices, []);
+  src.linkState({ state: 'signed_out', reason: 'login_required' }); src.linkState({ state: 'signed_out', reason: 'login_required' });
+  assert.deepEqual(notices, ['v2.state.loginRequired'], '한 번만');
+  off(); src.linkState({ state: 'paused' });
+  assert.equal(bars.length, 5, '구독을 끊으면 더 받지 않는다');
+  const s3 = createFakeSource(); const n3 = []; watchLinkState(s3, { onNotice: (k) => n3.push(k) }); s3.linkState({ state: 'signed_out', reason: 'revoked' });
+  assert.deepEqual(n3, ['v2.state.signedOut']);
+  for (const k of ['v2.state.loginRequired', 'v2.state.signedOut', 'v2.state.paused', 'v2.state.update', 'v2.state.unreachable', 'v2.state.retry']) assert.ok(DICT[k]?.[0] && DICT[k]?.[1], `${k} ko/en`);
 });

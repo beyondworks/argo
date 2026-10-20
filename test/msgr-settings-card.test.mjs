@@ -142,7 +142,7 @@ test('메신저 로그아웃은 이 기기(scope local)만 — 전역이면 같�
   assert.doesNotMatch(sessionRecovery, /auth\.signOut\(\)/, '범위 없는 signOut()이 남아 있다');
   const scopes = [...sessionRecovery.matchAll(/auth\.signOut\(([^)]*)\)/g)].map((match) => match[1].trim());
   assert.deepEqual(new Set(scopes), new Set(["{ scope: 'local' }"]), '모든 로그아웃 수명주기는 이 기기 local 범위여야 한다');
-  assert.equal((app.match(/useContext\(SignOutContext\)/g) ?? []).length, 2, '레일·설정 모두 토큰 해제 포함 공용 로그아웃을 사용');
+  assert.equal((app.match(/useContext\(SignOutContext\)/g) ?? []).length, 3, '레일·설정·A+ 진입(다시 로그인 필요 안내, #1127) 모두 토큰 해제 포함 공용 로그아웃을 사용');
 });
 
 test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(고위험=관리자 기본), 정책 카드에 고위험 결재권 행, 브리지가 risk를 싣는다', () => {

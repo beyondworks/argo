@@ -502,12 +502,13 @@ export default function App() {
 
 // 축소판 A+ 진입(2026-10-19) — 플랜 확인 → 무료는 안내만(기계·등록 0), Pro는 A+ 셸. 휴대폰이면 기계가 선 뒤 푸시 토큰을 싣는다(R3).
 function APlusRoot({ session, onSignOut }) {
+  const { signOutNotice } = useContext(SignOutContext); // 기기 폐기·다시 로그인 필요 → 로그아웃 + 로그인 화면 안내(v2 셸과 같은 길, #1127 검수)
   const source = useMemo(() => createAPlusSource({ raw: rawSupabase, uid: session.user.id, appVersion: APP_VERSION }), [session.user.id]);
   const unbindPush = useRef(null);
   useEffect(() => { markAppReady(); return () => { unbindPush.current?.(); unbindPush.current = null; }; }, []);
   const onStarted = useCallback(() => { if (!isMobilePlatform || unbindPush.current) return; unbindPush.current = bindV2Push({ machine: source.machine(), getToken: getPushToken, observeResume: observeMobileResume }); }, [source]);
   const purchase = purchaseChannel({ ios: isIos, customServer }) === 'web' ? { url: proCheckoutUrl({ plan: 'free', user: session.user }) } : null; // iOS·회사 서버는 구매 경로 없음(App Store 3.1.1, #944)
-  return <APlusApp source={source} onSignOut={onSignOut} purchase={purchase} onStarted={onStarted} />;
+  return <APlusApp source={source} onSignOut={onSignOut} onSignOutNotice={signOutNotice} purchase={purchase} onStarted={onStarted} />;
 }
 
 function ConnectionWaiting({ t, onRetry, onSignIn, error, busy }) {

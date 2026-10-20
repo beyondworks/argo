@@ -1,6 +1,7 @@
 // 메신저 축소판 A+(2026-10-19 유건 승인) 화면 판단 — 순수 모듈(React·Supabase 없음, test/aplus-model.test.mjs가 잠근다).
 // A+ = ① 내 Argo 에이전트별 1:1 ② 사람은 나 혼자인 '내 에이전트 회의방'(라운드 2 고정) ③ 내 PC의 Argo가 직접 부르는 외부 봇(헤르메스·오픈클로).
 // 채널·조직·파견·사람 채팅은 이번 범위가 아니다 — A+ 셸에는 그 화면이 없다(서버도 막는다). 메신저는 Pro 전용, 무료는 서버를 쓰지 않는다.
+import { v2StateBar, v2SignOutNotice } from '../v2/devices.mjs'; // 기계 상태 판정은 v2 셸과 한 곳(순수 모듈)
 
 export const MEETING_MIN = 2; // 1명이면 1:1과 같다
 export const MEETING_MAX = 5; // 위험 R11 — 서버도 S ≤ 5를 강제한다
@@ -125,3 +126,15 @@ export const layoutOf = (width) => (width < 640 ? 'phone' : 'split');
 
 /** 서버가 아직 열지 않은 기능(회의방·외부 봇 — 서버 스위치로 차례로 연다)의 오류인가. 화면은 오류가 아니라 '아직 열리지 않음'으로 그린다. */
 export const notOpenYet = (e) => /\b(aplus_not_ready|feature_closed|PGRST202|PGRST204|42703)\b/.test(String(e?.code ?? '') + ' ' + String(e?.message ?? '')); // 함수·열이 아직 없음(#1117 병합 전 서버)
+
+/** 기계 상태(state 사건) → 화면. 기기 폐기·다시 로그인 필요(signed_out)는 로그아웃 + 로그인 화면 안내를 **한 번만**(onNotice),
+    중단·업데이트 필요·연결할 수 없음은 안내 줄 키(onBar, 없으면 null). v2 셸(App.jsx Shell)과 같은 판정(v2/devices.mjs)을 쓴다 —
+    0.1.64에서 A+를 처음 여는 기존 사용자는 서버가 앱 기기 새 등록을 로그인 10분 안 세션만 받아(device_login_required) 여기서 다시 로그인으로 간다(#1127 검수). */
+export function watchLinkState(source, { onNotice, onBar }) {
+  let noticed = false;
+  return source.on('state', (s) => {
+    onBar?.(v2StateBar(s));
+    const key = v2SignOutNotice(s);
+    if (key && !noticed) { noticed = true; onNotice?.(key); }
+  });
+}
