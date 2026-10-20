@@ -530,7 +530,8 @@ export function createAgentLinkHost(deps) {
     const runners = deps.detectRunners ? await detectRunnerIds(() => deps.detectRunners(s.uid)) : [];
     const reg = await transport.rpc('msgr2_device_register', runnerRegisterArgs({ appVersion: deps.appVersion ?? null, runners }));
     const device = reg?.data?.device_id;
-    if ((reg?.data?.code ?? reg?.error?.code) === 'pro_required') { log('pro_required', 'device_register'); proBlock(); return; } // 기기 등록에서 온 무료 거부도 같은 쉼(다시 등록하지 않는다)
+    // 기기 등록에서 온 무료 거부도 같은 쉼(다시 등록하지 않는다). 서버는 새 행을 'msgr2_pro_required'(42501) 예외로 거부한다(20261020201700) — 코드가 아니라 문구에 실린다
+    if ((reg?.data?.code ?? reg?.error?.code) === 'pro_required' || /\bmsgr2_pro_required\b/.test(String(reg?.error?.message ?? ''))) { log('pro_required', 'device_register'); proBlock(); return; }
     if (reg.error || !device) { log('device register failed', reg.error?.code ?? reg.data?.code ?? 'no device_id'); return retryLater(); }
     tries = 0;
     lastResync = clock.now();

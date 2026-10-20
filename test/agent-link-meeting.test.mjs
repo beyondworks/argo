@@ -366,3 +366,18 @@ test('pro_required가 기기 등록에서 와도 같은 쉼 — 다시 등록하
   reject = false; planRef.plan = 'pro'; clock.advance(10_000); await host.resync(); await flush();
   assert.ok(host.link && calls.plans >= 1, 'Pro 확인 뒤 다시 연다');
 });
+
+test('기기 등록의 서버 예외 msgr2_pro_required(42501, 20261020201700)도 같은 쉼 — 재시도 0', async () => {
+  const { server, host } = await setup({ plan: 'free' });
+  host.stop();
+  const rpc1 = server.transport.rpc;
+  server.transport.rpc = async (name, args) => {
+    if (name === 'msgr2_device_register') { server.log.push({ name, args }); return { data: null, error: { code: '42501', message: 'msgr2_pro_required', details: null, hint: null } }; }
+    return rpc1(name, args);
+  };
+  host.start(); await flush();
+  assert.equal(host.proBlocked, true, '예외 문구로도 쉼에 들어간다');
+  const n = server.log.filter((x) => x.name === 'msgr2_device_register').length;
+  for (let i = 0; i < 5; i++) await host.resync();
+  assert.equal(server.log.filter((x) => x.name === 'msgr2_device_register').length, n, '다시 등록하지 않는다');
+});

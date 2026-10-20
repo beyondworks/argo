@@ -427,6 +427,28 @@ test('saveDeviceSession: 플래그가 켜지면(기본) 세션 파일을 쓰기 
   }
 });
 
+test('saveDeviceSession: 확정 무료 계정이면 기본 켬이어도 runner 등록 요청 0(무료 계정 클라우드 0, #1128 검수)', async () => {
+  const { saveDeviceSession } = await import('../src/devicesession.mjs');
+  const { rememberPlan, notePlanSeen, invalidatePlanCache } = await import('../src/plan-cache.mjs');
+  const { existsSync } = await import('node:fs');
+  for (const plan of ['free', 'pro']) {
+    const root = await mkdtemp(join(tmpdir(), 'argo-link-login-free-'));
+    const seen = [];
+    const _mkClient = () => ({
+      rpc: async (name) => { seen.push(name); return { data: { device_id: DEVICE }, error: null }; },
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }),
+    });
+    rememberPlan('u1|u1', { plan }); notePlanSeen({ key: 'u1|u1', plan });
+    const prev = process.env.ARGO_AGENT_LINK;
+    delete process.env.ARGO_AGENT_LINK; // 기본(켬)
+    try {
+      await saveDeviceSession({ url: 'https://x.invalid', anonKey: 'k', session: { access_token: 'a.b.c', refresh_token: 'r', expires_at: 9e9, user: { id: 'u1', email: '' } } }, { root, _mkClient });
+    } finally { if (prev !== undefined) process.env.ARGO_AGENT_LINK = prev; invalidatePlanCache(); notePlanSeen(null); }
+    assert.equal(seen.filter((x) => x === 'msgr2_device_register').length, plan === 'free' ? 0 : 1, `${plan}: 등록 요청 수`);
+    assert.ok(existsSync(join(root, '.device-session.json')), '로그인은 그대로 저장된다');
+  }
+});
+
 // ── 결재 다리(U4b): chat() 결재 ↔ work.approval_request / work.approval_decision ──
 const approvalOf = (server, work) => server.log.filter((x) => x.args?.p_env?.type === 'work.approval_request' && x.args.p_env.work === work).map((x) => x.args.p_env);
 

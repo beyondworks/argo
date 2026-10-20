@@ -117,7 +117,8 @@ export async function saveDeviceSession({ url, anonKey, session }, { root = WS_R
   // 메신저 v2(기본 켬, 끄기 ARGO_AGENT_LINK=0): 세션 파일을 쓰기 **전에** 이 세션을 runner 기기로 잠근다 — 파일을 쓴 뒤에는 에이전트 셸이 그 세션으로
   // app 기기 등록을 먼저 할 수 있다(검수 1 #1071). 실패해도 로그인은 막지 않는다(연결부가 시작할 때 다시 등록하고, 그 전에는 v2 일을 받지 않는다).
   // 모듈을 읽는 것까지 try 안에 둔다 — import 실패(번들 누락·문법 오류)도 로그인을 깨지 않는다. 기다림은 registerRunnerOnLogin의 합계 상한(8초)까지.
-  if (agentLinkEnabled()) {
+  // 확정 무료 계정은 부르지 않는다(무료 계정 클라우드 0, #1110·#1128 검수) — 서버도 새 행을 msgr2_pro_required로 거부한다(20261020201700)
+  if (agentLinkEnabled() && !planIsFreeLocal()) {
     try {
       const { APP_VERSION, registerRunnerOnLogin } = await _loadLinkReg();
       await registerRunnerOnLogin({ url, anonKey, accessToken: session.access_token }, { mkClient: _mkClient, appVersion: APP_VERSION });
