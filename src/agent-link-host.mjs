@@ -1,5 +1,5 @@
 // 본체 ↔ agent-link 연결부(메신저 v2, 설계 2026-10-17 3절·U4). packages/agent-link/link.mjs에 Supabase 연결과 Argo 턴 실행을 넣는다.
-// 옵트인: ARGO_AGENT_LINK=1일 때만 켠다(기본 꺼짐 — 지금 배포본 동작 그대로). 옛 메신저 브리지는 ARGO_MSGR_LEGACY=off일 때만 끈다(기본 켜짐).
+// 0.1.115부터 기본 켬(끄기 ARGO_AGENT_LINK=0). 옛 메신저 브리지는 기본 끔(켜기 ARGO_MSGR_LEGACY=on). 판정은 agent-link-flags.mjs 한 곳.
 // 두 플래그는 따로다: 새 링크를 켜도 옛 브리지는 그대로 돈다(옛 표는 서버의 중단 스위치가 막는다). 옛 브리지를 끄는 것은 이전이 끝난 뒤의 일이다.
 //
 // 턴은 범위 턴(mirrorCtx {kind:'scope', scope:{kind:'link', work, room, owner}})으로 돈다(U4b):
@@ -530,7 +530,8 @@ export function createAgentLinkHost(deps) {
     const runners = deps.detectRunners ? await detectRunnerIds(() => deps.detectRunners(s.uid)) : [];
     const reg = await transport.rpc('msgr2_device_register', runnerRegisterArgs({ appVersion: deps.appVersion ?? null, runners }));
     const device = reg?.data?.device_id;
-    if ((reg?.data?.code ?? reg?.error?.code) === 'pro_required') { log('pro_required', 'device_register'); proBlock(); return; } // 기기 등록에서 온 무료 거부도 같은 쉼(다시 등록하지 않는다)
+    // 기기 등록에서 온 무료 거부도 같은 쉼(다시 등록하지 않는다). 서버는 새 행을 'msgr2_pro_required'(42501) 예외로 거부한다(20261020201700) — 코드가 아니라 문구에 실린다
+    if ((reg?.data?.code ?? reg?.error?.code) === 'pro_required' || /\bmsgr2_pro_required\b/.test(String(reg?.error?.message ?? ''))) { log('pro_required', 'device_register'); proBlock(); return; }
     if (reg.error || !device) { log('device register failed', reg.error?.code ?? reg.data?.code ?? 'no device_id'); return retryLater(); }
     tries = 0;
     lastResync = clock.now();

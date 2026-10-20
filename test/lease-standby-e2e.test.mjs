@@ -18,6 +18,8 @@ import { seedRoot, spawnLeaseChild, runnersAt, childEnv, srcUrl } from './helper
 const LEASE_KEY = 'companies/u1/_device-lease.json';
 const LEASE_PUT = 'POST /storage/v1/object/companies/u1/_device-lease.json';
 const FAST = { ARGO_SYNC_CYCLE_MS: '1000' };
+// 옛 메신저 브리지의 예비 기기 동작을 본다 — 0.1.115부터 옛 브리지는 기본 꺼짐이라 명시해서 켜고, v2 연결은 끈다(v2의 예비 기기 판정은 같은 standbyIdle 관문)
+const LEGACY = { ARGO_MSGR_LEGACY: 'on', ARGO_AGENT_LINK: '0' };
 const fakes = []; const kids = [];
 after(async () => { for (const k of kids) await k.kill(); for (const f of fakes) await f.close(); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -114,7 +116,7 @@ const sync = await import(${JSON.stringify(srcUrl('sync.mjs'))});
 const gw = await import(${JSON.stringify(srcUrl('gateway.mjs'))});
 sync.ensureSync(); gw.ensureGateway();
 setInterval(() => process.stdout.write('\\n@@' + JSON.stringify({ t: Date.now(), cloud: sync.isCloudLeader() }) + '\\n'), 500);`;
-  const p = spawn(process.execPath, ['--input-type=module', '-e', script], { env: childEnv(root, { ...FAST, ...env }), stdio: ['ignore', 'pipe', 'pipe'] });
+  const p = spawn(process.execPath, ['--input-type=module', '-e', script], { env: childEnv(root, { ...FAST, ...LEGACY, ...env }), stdio: ['ignore', 'pipe', 'pipe'] });
   const samples = []; let buf = ''; let err = ''; let exited = false;
   p.stdout.on('data', (c) => { buf += c; const lines = buf.split('\n'); buf = lines.pop(); for (const l of lines) if (l.startsWith('@@')) samples.push(JSON.parse(l.slice(2))); });
   p.stderr.on('data', (c) => { err += c; });

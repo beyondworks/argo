@@ -98,13 +98,16 @@ test('resync는 1분 제한과 무관하게 매번 transport.refresh를 부른�
   await host.resync();
 });
 
-test('플래그: ARGO_AGENT_LINK는 정확히 1일 때만 켬, 옛 브리지는 off일 때만 끔(기본 = 지금 그대로)', () => {
-  assert.equal(agentLinkEnabled({}), false);
+test('플래그 기본값(0.1.115): 새 연결 켬·옛 브리지 끔, 0.1.114 동작은 ARGO_AGENT_LINK=0 + ARGO_MSGR_LEGACY=on', () => {
+  assert.equal(agentLinkEnabled({}), true, '기본 켬');
+  assert.equal(agentLinkEnabled({ ARGO_AGENT_LINK: '' }), true);
   assert.equal(agentLinkEnabled({ ARGO_AGENT_LINK: '1' }), true);
-  assert.equal(agentLinkEnabled({ ARGO_AGENT_LINK: 'true' }), false);
-  assert.equal(legacyMsgrBridgeEnabled({}), true);
-  assert.equal(legacyMsgrBridgeEnabled({ ARGO_MSGR_LEGACY: ' OFF ' }), false);
-  assert.equal(legacyMsgrBridgeEnabled({ ARGO_MSGR_LEGACY: '0' }), true);
+  for (const v of ['0', 'off', ' OFF ', 'false', 'no']) assert.equal(agentLinkEnabled({ ARGO_AGENT_LINK: v }), false, `끄기 ${v}`);
+  assert.equal(agentLinkEnabled({ ARGO_AGENT_LINK: 'nope' }), true, '모르는 값은 기본(켬)');
+  assert.equal(legacyMsgrBridgeEnabled({}), false, '기본 끔');
+  assert.equal(legacyMsgrBridgeEnabled({ ARGO_MSGR_LEGACY: 'off' }), false);
+  assert.equal(legacyMsgrBridgeEnabled({ ARGO_MSGR_LEGACY: '0' }), false);
+  for (const v of ['1', 'on', ' ON ', 'true', 'yes']) assert.equal(legacyMsgrBridgeEnabled({ ARGO_MSGR_LEGACY: v }), true, `켜기 ${v}`);
 });
 
 test('시작: runner 기기 등록(약속 범위) → 에이전트 목록 보내기 → 대응표 → v2:w:<uid> 따라잡기', async () => {
@@ -402,7 +405,7 @@ test('saveDeviceSession: 등록 모듈을 못 읽어도(import 실패) 로그인
   assert.ok(existsSync(join(root, '.device-session.json')), '로그인은 그대로 저장된다');
 });
 
-test('saveDeviceSession: 플래그가 켜지면 세션 파일을 쓰기 **전에** runner 등록, 꺼지면 등록 요청 0(배포본과 같음)', async () => {
+test('saveDeviceSession: 플래그가 켜지면(기본) 세션 파일을 쓰기 **전에** runner 등록, 끄면(ARGO_AGENT_LINK=0) 등록 요청 0(0.1.114와 같음)', async () => {
   const { saveDeviceSession } = await import('../src/devicesession.mjs');
   const { existsSync } = await import('node:fs');
   for (const on of [true, false]) {
@@ -413,13 +416,35 @@ test('saveDeviceSession: 플래그가 켜지면 세션 파일을 쓰기 **전에
       from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { display_name: 'Y' }, error: null }) }) }) }),
     });
     const prev = process.env.ARGO_AGENT_LINK;
-    process.env.ARGO_AGENT_LINK = on ? '1' : '';
+    process.env.ARGO_AGENT_LINK = on ? '' : '0'; // 0.1.115 기본 켬 — 빈 값이 켬, 0이 끔
     try {
       await saveDeviceSession({ url: 'https://x.invalid', anonKey: 'k', session: { access_token: 'a.b.c', refresh_token: 'r', expires_at: 9e9, user: { id: 'u1', email: '' } } }, { root, _mkClient });
     } finally { if (prev === undefined) delete process.env.ARGO_AGENT_LINK; else process.env.ARGO_AGENT_LINK = prev; }
     const reg = seen.filter((x) => x.name === 'msgr2_device_register');
     if (on) { assert.equal(reg.length, 1); assert.equal(reg[0].fileExists, false, '세션 파일보다 먼저'); }
     else assert.equal(reg.length, 0);
+    assert.ok(existsSync(join(root, '.device-session.json')), '로그인은 그대로 저장된다');
+  }
+});
+
+test('saveDeviceSession: 확정 무료 계정이면 기본 켬이어도 runner 등록 요청 0(무료 계정 클라우드 0, #1128 검수)', async () => {
+  const { saveDeviceSession } = await import('../src/devicesession.mjs');
+  const { rememberPlan, notePlanSeen, invalidatePlanCache } = await import('../src/plan-cache.mjs');
+  const { existsSync } = await import('node:fs');
+  for (const plan of ['free', 'pro']) {
+    const root = await mkdtemp(join(tmpdir(), 'argo-link-login-free-'));
+    const seen = [];
+    const _mkClient = () => ({
+      rpc: async (name) => { seen.push(name); return { data: { device_id: DEVICE }, error: null }; },
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }),
+    });
+    rememberPlan('u1|u1', { plan }); notePlanSeen({ key: 'u1|u1', plan });
+    const prev = process.env.ARGO_AGENT_LINK;
+    delete process.env.ARGO_AGENT_LINK; // 기본(켬)
+    try {
+      await saveDeviceSession({ url: 'https://x.invalid', anonKey: 'k', session: { access_token: 'a.b.c', refresh_token: 'r', expires_at: 9e9, user: { id: 'u1', email: '' } } }, { root, _mkClient });
+    } finally { if (prev !== undefined) process.env.ARGO_AGENT_LINK = prev; invalidatePlanCache(); notePlanSeen(null); }
+    assert.equal(seen.filter((x) => x === 'msgr2_device_register').length, plan === 'free' ? 0 : 1, `${plan}: 등록 요청 수`);
     assert.ok(existsSync(join(root, '.device-session.json')), '로그인은 그대로 저장된다');
   }
 });
