@@ -68,6 +68,19 @@ test('혼합: 넣은 방마다 1행 — 팀 방·개인 1:1·친구 공간 방�
   assert.deepEqual([c[R.others].agents, c[R.others].space_kind], [[G.C1], 'team']);
 });
 
+test('주인 조건: 같은 팀 방에 있는 남의 에이전트는 내 결과에 없다(가), 남의 개인 방을 물으면 빈 목록·공간 없음(나)', { skip }, () => {
+  const B1 = agent(U.B, 'b-helper'); seat(B1, S.T1);
+  db.sql('insert into public.msgr2_room_members (room_id, member_kind, member_id) values (' + q(R.gen) + ", 'agent', " + q(B1) + ')');
+  const runB = seedDevice(db, U.B, 'runner');
+  const a = byRoom(rooms(runA, [R.gen]))[R.gen];
+  assert.ok(!a.agents.includes(B1), '(가) 같은 방의 B 에이전트는 A 결과에 없다');
+  assert.ok(a.agents.includes(G.A1), 'A 자기 에이전트는 있다');
+  assert.ok(byRoom(rooms(runB, [R.gen]))[R.gen].agents.includes(B1), 'B에게는 B 에이전트');
+  const pb = room(S.PB, 'private', 'B 혼자', [U.B], [B1]);
+  assert.deepEqual(Object.values(byRoom(rooms(runA, [pb]))[pb]).slice(1), [[], null, null], '(나) A가 B 개인 방(B 혼자 + B1)을 물으면 agents [], space null');
+  assert.deepEqual(byRoom(rooms(runB, [pb]))[pb].space_kind, 'personal', 'B에게는 자기 개인 방');
+});
+
 test('기기: runner·resident만 — 앱 기기는 msgr2_runner_only, 기기 없음은 msgr2_device_invalid, 501개는 msgr2_too_many_rooms', { skip }, () => {
   assert.match(db.asErr(appA.uid, appA.sid, 'select * from public.msgr2_agent_rooms(' + arr([R.gen]) + ')') ?? '', /msgr2_runner_only/);
   assert.match(db.asErr(U.A, '00000000-0000-4000-8000-000000000000', 'select * from public.msgr2_agent_rooms(' + arr([R.gen]) + ')') ?? '', /msgr2_device_invalid/);
