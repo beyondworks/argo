@@ -157,8 +157,8 @@ test('회수(recallLinkRooms): 서버가 "없음"이라 한 팀 방만 — 직�
   assert.match(JSON.stringify(await loadThread(ws, 'seoyun')), /GONE_LINE/);
   // 1차: GONE에서 이 에이전트가 빠짐(다른 내 에이전트도 없음), KEEP 그대로, SHARED에는 이 에이전트는 없지만 내 다른 에이전트가 있다
   const asked = [];
-  const answer = (map) => async (pairs) => { asked.push(...pairs.map((p) => p.id)); const out = new Map(); for (const p of pairs) { const [mine, any] = map[p.id]; out.set(`${p.slug}:${p.id}`, mine); out.set(`*:${p.id}`, any); } return out; };
-  const sum = await recallLinkRooms(ws, ['seoyun'], answer({ [GONE]: [false, false], [KEEP]: [true, true], [SHARED]: [false, true] }), cfg);
+  const answer = (map) => async (pairs) => { asked.push(...pairs.map((p) => p.id)); const out = new Map(); for (const p of pairs) { if (!map[p.id]) continue; const [mine, any] = map[p.id]; out.set(`${p.slug}:${p.id}`, mine); out.set(`*:${p.id}`, any); } return out; }; // map에 없는 방 = 서버 답에 없는 방
+  const sum = await recallLinkRooms(ws, ['seoyun'], answer({ [GONE]: [false, false], [SHARED]: [false, true] }), cfg); // KEEP은 답에 없다 — 지우지 않는다(검수 권고 1)
   assert.deepEqual(new Set(asked), new Set([GONE, KEEP, SHARED]), '묻는 방 = 팀이라고 명시된 링크 방만 — 개인·모름·옛 메신저 방은 묻지 않는다(I-2)');
   assert.deepEqual([sum.channels, sum.journals, sum.transcripts], [1, 1, 1]);
   let t = JSON.stringify(await loadThread(ws, 'seoyun'));
