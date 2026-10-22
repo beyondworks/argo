@@ -83,13 +83,29 @@ test('배선: 데스크톱 v2는 공간 바꾸기 단추 없이 한 목록 구�
   for (const s of ['joinable.map(', 'deletedOrgs.map(', 'orgJoinForms(isPhone)']) assert.ok(menu.includes(s), `조직 메뉴: ${s}`);
   const sheet = app.slice(app.indexOf('function NewTalkSheet('), app.indexOf('function DmGroupSheet('));
   for (const k of ['onelist.new.person', 'onelist.new.agent', 'onelist.new.group', 'onelist.new.channel']) assert.ok(sheet.includes(`t('${k}')`), k);
-  assert.match(sheet, /orgs\.length === 1 \? onChannel\(orgs\[0\]\.id\) : setStep\('org'\)/, '조직이 하나면 바로, 여럿이면 한 번 고른다');
-  assert.match(app, /onChannel=\{\(oid\) => \{ setOlNew\(false\); setTabQ\(null\); runInSpace\(oid, \(fn\) => fn\.openNewCh\(\)\); \}\}/, '그 조직으로 맞춘 뒤의 새 채널 칸');
+  assert.match(sheet, /orgs\.length === 1 \? goOrg\(orgs\[0\]\) : setStep\('org'\)/, '조직이 하나면 바로, 여럿이면 한 번 고른다');
+  assert.match(sheet, /pick\(t\('phone\.ch\.new'\)[^\n]*onChannel\(org\.id\)[^\n]*!org\.canNew\)/, '그 조직에서 만들 수 없으면(손님) 만들기 칸은 꺼짐');
+  assert.match(sheet, /pick\(t\('ch\.browse'\)[^\n]*onBrowse\(org\.id\)/, '공개 채널 둘러보기·참여 입구(분리 검수 4 — inbox에는 안 들어간 채널이 없다)');
+  assert.match(sheet, /step === 'person' && onAddFriend && pick\(t\('friends\.add'\)/, '친구가 있어도 친구 추가 입구(분리 검수 3 — 폰 v2는 친구 탭이 없다)');
+  assert.match(app, /onChannel=\{\(oid\) => \{ setOlNew\(false\); setTabQ\(null\); setBrowse\(null\); runInSpace\(oid, \(fn\) => fn\.openNewCh\(\)\); \}\}/, '그 조직으로 맞춘 뒤의 새 채널 칸');
   assert.match(app, /latestOpen\.current\.openNewCh = openNewCh;/);
+  assert.match(app, /onBrowse=\{\(oid\) => \{ setOlNew\(false\); setTabQ\(null\); setNewCh\(null\); runInSpace\(oid, \(fn\) => fn\.openBrowse\(\)\); \}\}/, '둘러보기도 그 조직으로 맞춘 뒤');
   assert.match(app, /onGroup=\{\(\) => \{ setOlNew\(false\); setTabQ\(null\); runInSpace\(PERSONAL, \(\) => setDmGroup\(true\)\); \}\}/);
 });
 
 test('배선: 폰 v2 아래 탭 4개(대화·에이전트·기억·나), 나 = 설정', () => {
   assert.match(app, /const V2_PHONE_TABS = \['chats', 'agents', 'memory', 'me'\];/);
   assert.match(app, /<PhoneTabs v2 tabs=\{V2_PHONE_TABS\}[^\n]*onPick=\{\(k\) => \(k === 'me' \? openSettings\(\) : pickRoot\(k\)\)\}/);
+});
+
+test('배선(분리 검수 반영): 검색은 이름을 붙인 뒤, 옛 조직 에이전트 1:1은 개인 1:1로, 목록 읽기 실패는 다시 시도, 들어간 채널은 한 번 다시 읽기', () => {
+  assert.match(app, /const olShown = oneListView\(olRows\?\.map\(\(r\) => \(\{ \.\.\.r, _title: olName\(r\) \}\)\), \{ filter: olFilter/, '이름 먼저 — 1:1은 방 이름이 비어 있다');
+  assert.match(app, /const maybeAgentDm = row\.space_kind === 'team' && row\.users === 1 && row\.agents === 1;[^\n]*if \(maybeAgentDm && fn\.redirect\?\.\(row\.room_id, 'list'\)\) return;/);
+  assert.match(app, /latestOpen\.current\.redirect = openAgentDmInstead;/);
+  assert.match(app, /if \(r\.error\) \{ if \(r\.error\.pro\) setOlPro\(true\); else setOlErr\(true\); return; \}/);
+  assert.match(app, /const olLoadNote = olErr \? [^\n]*onClick=\{\(\) => \{ setOlErr\(false\); bumpOl\(\); \}\}/, '다시 시도 = 한 번 다시 읽기(자동 재시도 없음)');
+  assert.match(app, /if \(V2\) bumpOl\(\); \/\/ 한 목록: 들어간 채널/);
+  assert.match(app, /const olOrgGated = V2 && \(aiConsent === undefined \? !aiConsentFailOpen : !aiConsented\);/, 'AI 이용 동의 전·조회 중엔 조직 방을 뺀다(9/27)');
+  assert.match(app, /const olRows = olOrgGated && ol \? ol\.filter\(\(r\) => r\.space_kind !== 'team'\) : ol;/);
+  for (const k of ['olOrgList = oneListOrgs(olRows)', 'olUnreadN = oneListUnread(olRows)']) assert.ok(app.includes(k), `칩·탭 숫자도 거른 행: ${k}`);
 });

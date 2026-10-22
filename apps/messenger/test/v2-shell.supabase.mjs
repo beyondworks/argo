@@ -14,7 +14,7 @@ const state = window.__v2Fixture = { calls: [], topics: new Map(), signedIn: tru
   msgr2_rooms: [
     { id: GEN, space_id: T, kind: 'open', name: '일반', memory: true, agent_policy: 'allowed', created_at: at(500), archived_at: null },
     { id: PLAN, space_id: T, kind: 'private', name: '기획', memory: true, agent_policy: 'approval', created_at: at(400), archived_at: null },
-    { id: DM, space_id: P, kind: 'direct', pair_key: 'me-research', name: null, memory: true, agent_policy: 'allowed', created_at: at(300), archived_at: null },
+    { id: DM, space_id: P, kind: 'private', name: '', /* 서버 msgr2_agent_dm_open과 같이 에이전트 1:1은 이름 없는 private 방(20261020200600) */ memory: true, agent_policy: 'allowed', created_at: at(300), archived_at: null },
     { id: NEWS, space_id: T, kind: 'open', name: '공지', memory: true, agent_policy: 'allowed', created_at: at(450), archived_at: null }, // 참여 전 open 방(둘러보기)
   ],
   msgr2_room_members: [
@@ -144,10 +144,10 @@ const rpcs = {
   msgr2_agent_dm_open: ({ p_agent }) => {
     const T_ = state.tables; const ag = T_.msgr2_agents.find((x) => x.id === p_agent);
     if (!ag || ag.owner_user_id !== uid) throw Object.assign(new Error('msgr2_agent_not_found'), { code: '42501' });
-    const r = T_.msgr2_rooms.find((x) => x.space_id === P && x.kind === 'direct' && !x.archived_at && T_.msgr2_room_members.some((m) => m.room_id === x.id && m.member_kind === 'agent' && m.member_id === p_agent && !m.removed_at));
+    const r = T_.msgr2_rooms.find((x) => x.space_id === P && x.kind === 'private' && !x.archived_at && T_.msgr2_room_members.some((m) => m.room_id === x.id && m.member_kind === 'agent' && m.member_id === p_agent && !m.removed_at));
     if (r) return { room_id: r.id, space_id: P, existing: true };
     const id = `7f40${String(T_.msgr2_rooms.length).padStart(4, '0')}-0000-4000-8000-${p_agent.slice(-12)}`;
-    T_.msgr2_rooms.push({ id, space_id: P, kind: 'direct', pair_key: `me-${ag.slug}`, name: null, memory: true, agent_policy: 'allowed', created_at: new Date().toISOString(), archived_at: null });
+    T_.msgr2_rooms.push({ id, space_id: P, kind: 'private', name: '', memory: true, agent_policy: 'allowed', created_at: new Date().toISOString(), archived_at: null });
     T_.msgr2_room_members.push({ room_id: id, member_kind: 'user', member_id: uid, removed_at: null }, { room_id: id, member_kind: 'agent', member_id: p_agent, removed_at: null });
     state.createdDm = (state.createdDm ?? 0) + 1; fire(`v2:u:${uid}`, 'rooms', { space_id: P, room_id: id });
     return { room_id: id, space_id: P, existing: false };
