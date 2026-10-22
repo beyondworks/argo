@@ -64,7 +64,7 @@ import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
 import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDeniedKey, scopePendingApprovals, highPolicyOrgs, approvalDenied, approvalCmdMode, decideApproval, readRoomJoinRequests, singleFlight } from './approval-display.js';
-import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, v2MyAgents, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, earlierLineLabel, archivedRoomFor, archivedSearchRooms, ARCHIVED_ROOM_COLS, archivedReadStep, clearEarlierUnread, saveAgentLook, fillAgentLooks, ownRowsReader, withAgentCol, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
+import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, v2PersonalTwin, v2MyAgents, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, earlierLineLabel, archivedRoomFor, archivedSearchRooms, ARCHIVED_ROOM_COLS, archivedReadStep, clearEarlierUnread, saveAgentLook, fillAgentLooks, ownRowsReader, withAgentCol, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -2311,11 +2311,11 @@ function Shell({ session }) {
   // 내 에이전트의 열 수 있는 개인 공간 행 — 판정은 agent-groups.mjs personalRoomFor(주인 확인·조회 주입, 행동 테스트). 조직 크루 목록에는 회사(ws_id)가 없어
   // 1:1을 열 때만 내 행 중 같은 slug를 한 번 읽고(RLS: 개인 행은 주인만 읽힌다), 외부 봇이면 준비 상태(msgr_personal_room_crews의 ready)를 한 번 더 읽는다.
   // 주기 호출 없음. 읽기에 실패하거나 봇이 준비 안 됐으면(다시 연결 필요·조직을 나감) null — 종전 조직 1:1로 연다.
-  const personalTwin = (c) => personalRoomFor(c, { uid,
+  const personalTwin = (c) => V2 ? Promise.resolve(v2PersonalTwin(c, uid)) /* v2: 에이전트 한 행 — 조회 없이 그 자신(조직에 1:1 방을 만들던 결함, 2026-10-22) */ : personalRoomFor(c, { uid,
     ownRows: (slug) => q(supabase.from('msgr_crews').select('id, org_id, owner_user_id, ws_id, slug, status, hosting').eq('owner_user_id', uid).eq('slug', slug).in('status', ['active', 'available'])),
     roomCrews: () => q(supabase.rpc('msgr_personal_room_crews')) });
   // 버튼 이름(유건 2026-10-04) — 조직 화면의 '1:1 대화'·'1:1로 시키기'가 개인 1:1로 가면 '개인 1:1 …'. 이미 가진 행(myAgents)으로만 판정하고 렌더마다 조회하지 않는다(모르면 지금 문구)
-  const dmGoesPersonal = (c) => !isPersonal && personalRoomKnown(c, myAgents, uid);
+  const dmGoesPersonal = (c) => !isPersonal && (V2 ? !!v2PersonalTwin(c, uid) : personalRoomKnown(c, myAgents, uid));
   const openDm = async (kind, id, text = '', opts = {}) => {
     if (isPersonal && kind === 'crew') return openPersonalCrewDm(id, text);
     if (isPersonal && kind === 'user') return openPersonalDm(id, text); // 개인 공간에서 사람을 누르면(검색·새 채팅 시트) 개인 1:1 — 조직 DM 생성은 가상 org id로 400이었다

@@ -100,9 +100,12 @@ export async function personalRoomFor(crew, { uid, ownRows, roomCrews }) {
   } catch { return null; }
 }
 
-/** 버튼 이름(유건 2026-10-04) — 조직 화면의 '1:1 대화'·'1:1로 시키기'가 개인 1:1로 가는지, **이미 가진 행만으로** 판정한다(조회하지 않는다).
-    rows = 내 에이전트 목록(App myAgents — 조직 행은 회사(ws_id)가 있고, 개인 행은 msgr_personal_room_crews의 ready가 있다). 관문과 같은 함수(personalTwinOf + 1:1 대상 판정).
-    판단할 수 없으면(목록 없음·이 크루의 내 조직 행 없음·남의 크루·개인 행이 대상 아님) false — 지금 문구 */
+/** 메신저 v2: 에이전트는 한 행(msgr2_agents — 조직·개인 공간이 같은 id)이라 쌍둥이 행을 찾지 않는다. 내 에이전트면 그 자신이 개인 1:1 상대(서버 msgr2_agent_dm_open이
+    개인 공간 direct 방을 열거나 만든다), 남의 에이전트·모르는 행은 null(종전대로 주인과의 1:1). 유건 2026-10-03 "에이전트 = 한 사람", 2026-10-13 1:1은 개인 공간 하나 */
+export function v2PersonalTwin(crew, uid) {
+  return crew?.id && uid && crew.owner_user_id === uid ? { id: crew.id } : null;
+}
+
 /** 메신저 v2 폰 에이전트 탭의 내 에이전트 — v2 연결기는 내 에이전트를 공간 없이(org_id null) 한 행씩 돌려준다(v2/source.mjs CrewBuilder, 옛 개인 공간 행 msgr_personal_room_crews는 'none').
     그 행이 곧 개인 공간의 그 에이전트다(유건 2026-10-03 "에이전트 = 한 사람"). 내 것·활성만, 같은 id는 한 번. 옛 모델(조직별 쌍둥이 행)은 이 함수를 쓰지 않는다 */
 export function v2MyAgents(ownRows, uid) {
@@ -110,6 +113,9 @@ export function v2MyAgents(ownRows, uid) {
   return (ownRows ?? []).filter((c) => c?.id && c.owner_user_id === uid && c.status === 'active' && !seen.has(c.id) && seen.add(c.id)).map((c) => ({ ...c, org_id: null }));
 }
 
+/** 버튼 이름(유건 2026-10-04) — 조직 화면의 '1:1 대화'·'1:1로 시키기'가 개인 1:1로 가는지, **이미 가진 행만으로** 판정한다(조회하지 않는다).
+    rows = 내 에이전트 목록(App myAgents — 조직 행은 회사(ws_id)가 있고, 개인 행은 msgr_personal_room_crews의 ready가 있다). 관문과 같은 함수(personalTwinOf + 1:1 대상 판정).
+    판단할 수 없으면(목록 없음·이 크루의 내 조직 행 없음·남의 크루·개인 행이 대상 아님) false — 지금 문구 */
 export function personalRoomKnown(crew, rows, uid) {
   if (!crew?.id || !rows?.length) return false;
   const twin = personalTwinOf(rows.find((r) => r.id === crew.id), rows, uid);
