@@ -2493,35 +2493,3 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-olorgmenu .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-olorgmenu .msgr-inline { padding: 4px 2px 6px; }
 .msgr-olorgmenu .msgr-av.sm.ghost { width: 20px; height: 20px; }
-
-/* ─── 표면 단계 위계(유건 2026-10-22 18:5x "디자인 똑바로 … lean polish 적용", #1143) ───
-   primary는 작은 액션(승인 단추·입력이 있을 때의 보내기)에만. 넓은 면·선택·배지는 표면 단계(--card-2 → --secondary)와 글자 굵기로 가른다.
-   유채색 primary 테마(monokai 노랑 등)에서 결재 머리띠·선택 줄·칩·배지가 노란 판으로 보였다. graphite-dark에서도 같은 자리가 밝은 판이었다. */
-/* 1. 결재 카드 머리띠: 채움 대신 한 단계 밝은 표면 + 왼쪽 2px primary 선(기다리는 중·승인됨만) */
-.msgr-v2-work .band, .msgr-v2-work.pending .band, .msgr-v2-work.approved .band { background: var(--card-2); color: var(--fg); }
-.msgr-v2-work.pending .band, .msgr-v2-work.approved .band { box-shadow: inset 2px 0 0 var(--primary); }
-.msgr-v2-work.rejected .band, .msgr-v2-work.expired .band { background: var(--card-2); color: var(--fg-2); box-shadow: none; }
-/* 2. 선택된 대화 줄: 표면(--secondary) + 글자 --fg 600. hover는 --card-2(위 규칙). 안 읽음 줄은 바탕 없이 굵은 이름 + 배지라 구분된다 */
-.msgr-list .item.active { background: color-mix(in srgb, var(--fg) 9%, transparent); color: var(--fg); font-weight: 600; } /* --secondary는 graphite-light 레일(#f0f0f0)과 밝기가 거의 같아 안 보였다 — 본체 graphite .nav-item.active(검정 8.5%·흰색 11%)와 같은 방식 */
-.msgr-list .item.active .mi, .msgr-list .item.active.unread .name { color: var(--fg); }
-/* 3. 고르기 칩(분절): 활성 = 한 단계 밝은 표면 + 600(primary 채움 아님 — 10/02 A안 검은 알약을 갈음, 총괄 확인 요청). 데스크톱 한 목록은 내용 폭 */
-.msgr-seg[role='radiogroup'] > button.active, .msgr-seg button.active { background-color: var(--card); color: var(--fg); font-weight: 600; box-shadow: 0 0 0 1px var(--border-soft), 0 1px 2px rgba(0, 0, 0, 0.06); }
-.msgr-inboxseg { display: inline-flex; width: auto; max-width: 100%; margin: 2px 0 8px 2px; } /* 왼쪽 끝을 대화 줄 왼쪽 끝(16px)과 같은 세로선에 */
-.msgr-inboxseg > button { padding: 0 12px; }
-/* 4. 안 읽음 배지: 채운 원 대신 작은 숫자 알약(--secondary 바탕·--fg-2 글자). 멘션만 primary-soft */
-.msgr-badge, .msgr-list .item .msgr-badge, .msgr-list .item.active .msgr-badge, .msgr-org .msgr-badge, .msgr-bigtitle .msgr-badge { background: var(--card-2); color: var(--fg-2); font-weight: 600; box-shadow: inset 0 0 0 1px var(--fg-2); } /* 채운 잉크 원 대신 얇은 1px 테두리 알약 — 경계 3:1·숫자 4.5:1(badge-contrast 시험, 10/01 '숫자만 떠 보임' 제보)은 테두리가 맡는다 */
-.msgr-badge.mark, .msgr-list .item .msgr-badge.mark, .msgr-list .item.active .msgr-badge.mark { background: var(--mark); color: var(--mark-fg); box-shadow: 0 0 0 1px var(--msgr-badge-ring, transparent); } /* 멘션만 의미색(--mark) 작은 알약 — 종전 그대로(라이트 노랑 테마 테두리 포함). primary 테두리는 argo-light에서 경계 1.6:1이었다 */
-.msgr-badge.dim, .msgr-list .item .msgr-badge.dim { background: transparent; color: var(--fg-3); box-shadow: inset 0 0 0 1px var(--border-soft); }
-/* 5. 그 밖의 넓은 primary 면: 내가 보낸 말풍선(총괄 확인 요청), 보내기는 입력이 있을 때만 primary */
-.msgr-mine .bubble { background: var(--secondary); color: var(--fg); }
-.msgr-tools .send { background: var(--primary); color: var(--primary-fg); }
-.msgr-tools .send:disabled { background: var(--card-2); color: var(--fg-3); opacity: 1; }
-@media (max-width: 760px) {
-  .msgr-phone .ph-root .ph-kbadges .msgr-badge, .msgr-phone .ph-root .ph-sechead .msgr-badge, .msgr-phone.phone-home .msgr-side .item.active .msgr-badge, .msgr-phone.phone-home .msgr-side .item .msgr-badge, .msgr-phone .msgr-bigtitle .msgr-badge { background: var(--card-2); color: var(--fg-2); box-shadow: inset 0 0 0 1px var(--fg-2); }
-  .msgr-phone.phone-home .msgr-side .item.active .msgr-badge.mark, .msgr-phone.phone-home .msgr-side .item .msgr-badge.mark, .msgr-phone .ph-root .ph-kbadges .msgr-badge.mark { background: var(--mark); color: var(--mark-fg); box-shadow: 0 0 0 1px var(--msgr-badge-ring, transparent); }
-  .msgr-phone .ph-root .ph-kbadges .msgr-badge.dim { background: transparent; color: var(--fg-3); box-shadow: inset 0 0 0 1px var(--border-soft); }
-  .msgr-phone .ph-at { background: var(--primary-soft); color: var(--fg); }
-  .msgr-phone .ph-chips button.active { background: color-mix(in srgb, var(--fg) 9%, transparent); border-color: color-mix(in srgb, var(--fg) 22%, transparent); color: var(--fg); font-weight: 600; }
-  .msgr-phone .ph-apcard.on .ph-apic { background: color-mix(in srgb, var(--fg) 9%, transparent); color: var(--fg); border-color: var(--border-soft); }
-  .msgr-island button.on, .msgr-phone .msgr-island button.on, .msgr-phone .msgr-island button.on:active { background: var(--fg); color: var(--bg); } /* 폰 아래 탭 선택 원(유건 10/01 '채운 원') — 노랑(--mark) 대신 무채색 잉크. 표면 단계로 바꾸면 안 고른 탭 원과 구별이 안 됐다(앱 안 브라우저 실측) */
-}

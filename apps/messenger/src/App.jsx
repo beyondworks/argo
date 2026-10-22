@@ -3223,7 +3223,7 @@ function Shell({ session }) {
         {olAvatar(row, true)}
         <span className="ph-kbody">
           <span className="ph-kl1"><span className="name">{row._title}</span>{row.room_kind !== 'direct' && row.users > 2 && <span className="ph-kcount" aria-label={t('phone.row.members', { n: row.users })}>{row.users}</span>}{row.space_name && <span className="msgr-orglabel ph-korg">{row.space_name}</span>}{row.pinned && <I name="pin" size={13} className="ph-kic" />}{row.muted && <I name="belloff" size={13} className="ph-kic" />}<span className="when">{row.last_at ? fmtWhen(row.last_at, lang) : ''}</span></span>
-          <span className="ph-kl2"><span className="snip">{olSnip(row)}</span><span className="ph-kbadges">{row.unread > 0 && <span className={`msgr-badge${row.muted ? ' dim' : ''}`}>{badgeText(row.unread)}</span>}{/* 옛 폰 줄(kRow)과 같은 숫자 알약 */}</span></span>
+          <span className="ph-kl2"><span className="snip">{olSnip(row)}</span><span className="ph-kbadges">{row.unread > 0 && <span className={`msgr-tabn ph-kn${row.muted ? ' dim' : ''}`}>{badgeText(row.unread)}</span>}</span></span>
         </span>
       </button>
     </div>

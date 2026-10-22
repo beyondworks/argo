@@ -60,9 +60,8 @@ test('폰 채팅 목록 — 선택 행의 이름 색은 바탕(var(--bg))과 달
   }
 });
 
-test('데스크톱 목록(폰 홈 밖) — 활성 줄은 채운 띠가 아니라 표면 단계(유건 2026-10-22 lean-polish): 이름은 --fg, 배지는 다른 줄과 같은 테두리 알약', () => {
+test('데스크톱 목록(폰 홈 밖)은 그대로 — 채운 활성 띠 위의 이름·배지는 primary-fg', () => {
   const desk = (cls, el) => [['msgr-list'], ['item', ...cls], [el]];
-  assert.equal(winner(desk(['active', 'unread'], 'name'), 'color'), 'var(--fg)');
-  assert.equal(winner(desk(['active'], 'msgr-badge'), 'background'), 'var(--card-2)');
-  assert.equal(winner(desk([], 'msgr-badge'), 'background'), 'var(--card-2)', '다른 줄과 같다');
+  assert.equal(winner(desk(['active', 'unread'], 'name'), 'color'), 'var(--primary-fg)');
+  assert.equal(winner(desk(['active'], 'msgr-badge'), 'background'), 'var(--primary-fg)');
 });
