@@ -6,8 +6,9 @@ export const hasPublicChannel = (channels = [], preview = []) => channels.some((
 export const newChannelKind = (channels, preview) => (hasPublicChannel(channels, preview) ? 'private' : 'public');
 
 // 단계 표지: 'done' 끝남 · 'mark' 지금 할 일(하나) · '' 아직. 초대 단계는 관리자에게만 있다.
+// 순서 = 에이전트 연결 → 첫 채널 → 동료 초대(선택, 관리자만) — UX 정리 P1(2026-10-22): 핵심 흐름(에이전트에게 일 시키기)이 맨 뒤에 있었다
 export function stepMarks({ hasChannel, isAdmin, invited, hasCrew }) {
-  const next = !hasChannel ? 'channel' : isAdmin && !invited ? 'invite' : 'agent';
+  const next = !hasCrew ? 'agent' : !hasChannel ? 'channel' : isAdmin && !invited ? 'invite' : null;
   const st = (k, done) => (done ? 'done' : k === next ? 'mark' : '');
   return { channel: st('channel', hasChannel), ...(isAdmin ? { invite: st('invite', invited) } : {}), agent: st('agent', hasCrew) };
 }

@@ -3279,7 +3279,7 @@ function Shell({ session }) {
           </div>
         ) : isPhone && org && isAdmin && !isPersonal && !previewChannels.length ? <div className="msgr-phsteps"><OrgStepList steps={orgSteps({ t, ...onboard, hasChannel: false, createChannel: chOffer.can ? openNewCh : null, newWhy: chOffer.why, invite: orgInvite })} /></div>
           : org && previewChannels.length ? <div className="msgr-hint">{t('inv.empty.title')} <button type="button" className="btn sm" onClick={() => { setRail(true); openBrowse(); }}><I name="hash" size={13} />{t('inv.empty.browse')}</button></div>
-          : isPhone && !orgId ? <div className="msgr-phsteps"><OrgStepList steps={noOrgSteps({ t, createOrg: () => { setOrgMenu(true); setNewOrg(''); }, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg })} /></div>
+          : isPhone && !orgId ? <div className="msgr-phsteps"><OrgStepList steps={noOrgSteps({ t, createOrg: () => { setOrgMenu(true); setNewOrg(''); }, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg, hasAgent: (ownCrews?.rows.length ?? 0) > 0 })} /></div>
           : <div className="msgr-hint">{orgId ? t(chOffer.can ? 'ch.noneYet' : chOffer.why ?? 'ch.noneYet.short') : t('org.none')}</div>}{/* 폰 홈에는 빈 조직 안내(본문)가 안 보인다 — 같은 시작 단계를 목록 자리에(D3) */}
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: newChKind })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
                   {isPhone && org && previewChannels.length > 0 && <button type="button" className="item msgr-addrow msgr-chbrowse" onClick={() => browse ? setBrowse(null) : openBrowse()} aria-expanded={!!browse}><I name="hash" size={18} /><span className="name">{t('ch.browse.row')}</span></button>}{/* 폰은 구역 머리의 둘러보기 단추가 숨는다(.right display:none) — 참여할 수 있는 공개 채널이 있으면 새 채널 옆 행으로(점검 A·B #2) */}
@@ -3399,7 +3399,7 @@ function Shell({ session }) {
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
         ) : (
-          <EmptyOrg org={org} onMenu={openNav} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={chOffer.can ? openNewCh : null} newWhy={chOffer.why} invite={isAdmin ? orgInvite : null} askAdmin={askAdmin} browse={previewChannels.length ? () => { setRail(true); openBrowse(); } : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} joinWithCode={joinWithCode} onboard={onboard} />
+          <EmptyOrg org={org} onMenu={openNav} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createOrgNow={createOrg} orgCount={orgs?.length ?? 0} suggestName={orgNameSuggest(session.user.email, t)} hasAgent={(ownCrews?.rows.length ?? 0) > 0} createChannel={chOffer.can ? openNewCh : null} newWhy={chOffer.why} invite={isAdmin ? orgInvite : null} askAdmin={askAdmin} browse={previewChannels.length ? () => { setRail(true); openBrowse(); } : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} joinWithCode={joinWithCode} onboard={onboard} />
         )}
         </PageBoundary>
       </main>
@@ -4229,8 +4229,8 @@ function RunnerSheet({ hasOrg, onClose, onAgents, onNote, onError }) {
       <section className={`msgr-crewsheet msgr-dmpeek msgr-dmgroup msgr-runner${phone ? ' ph-friendadd' : ''}`} role="dialog" aria-label={t('runner.title')}>
         <header className="head"><strong>{t('runner.title')}</strong><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
         <div className="peek">
-          <p className="run-desc">{t('runner.desc')}</p>
-          {runnerOptions({ hasOrg, ios: isIos }).map((o) => (<div key={o.key} className="run-opt" data-opt={o.key}>
+          <p className="run-desc">{t('runner.lead')}</p>{/* 첫 화면은 '내 컴퓨터' 하나 — 서버·외부 봇은 '다른 방법', 문제 해결 설명은 '에이전트가 안 보여요?'로 접는다(UX 정리 P1 2026-10-22). 세 갈래(유건 2026-10-02)는 그대로 */}
+          {(() => { const opts = runnerOptions({ hasOrg, ios: isIos }); const one = (o) => (<div key={o.key} className="run-opt" data-opt={o.key}>
             <h3>{t(`runner.${o.key}`)}</h3>
             {o.key === 'computer' && <><p>{t('runner.computer.desc')}</p>{o.download && <button type="button" className="btn sm" onClick={() => openExternal(LEGAL.download)}><I name="doc" size={14} />{t('ch.step3.download')}</button>}</>}
             {o.key === 'server' && <>
@@ -4239,7 +4239,11 @@ function RunnerSheet({ hasOrg, onClose, onAgents, onNote, onError }) {
               <p className="run-small">{t('runner.server.only')}</p>
             </>}
             {o.key === 'external' && <button type="button" className="btn sm" onClick={onAgents}><I name="node" size={14} />{t('phone.set.ext')}</button>}
-          </div>))}
+          </div>); return (<>
+            {opts.filter((o) => o.key === 'computer').map(one)}
+            <details className="msgr-fold run-more"><summary>{t('runner.more')}</summary>{opts.filter((o) => o.key !== 'computer').map(one)}</details>
+            <details className="msgr-fold run-help"><summary>{t('runner.help')}</summary><p className="run-desc">{t('runner.desc')}</p></details>
+          </>); })()}
         </div>
       </section>
     </div>
@@ -6362,9 +6366,9 @@ function orgSteps({ t, hasChannel, hasPublic, invited, hasCrew, isAdmin, adminNa
   // [실행기 연결] — 'Argo 앱 받기'를 직접 걸던 자리(2026-10-02 아르고 패밀리 구조). 앱 받기 링크는 시트 안에 있고 iOS에서는 숨긴다(총괄 지시 2026-09-26, 3.1.1/3.1.3).
   const agentActs = <span key="c" className="acts">{openRunner && <button type="button" className={`btn sm${m.agent === 'mark' ? ' btn-primary' : ''}`} onClick={openRunner}><I name="node" size={13} />{t('runner.title')}</button>}{isAdmin && openAgents && <button type="button" className="btn sm" onClick={openAgents}><I name="star" size={13} />{t('ch.step3.bot')}</button>}</span>;
   return [
-    [m.channel, t('ch.step1'), t(!hasChannel && !createChannel && newWhy ? newWhy : hasPublic ? 'ch.step1.subPrivate' : 'ch.step1.sub'), hasChannel || !createChannel ? null : <button key="a" type="button" className="btn btn-primary sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>], // 만들 수 없으면 단추 대신 이유(2차 검수 L-b)
-    ...(isAdmin ? [[m.invite, t('ch.step2'), t('ch.step2.sub'), invite && !invited ? <button key="b" type="button" className={`btn sm${m.invite === 'mark' ? ' btn-primary' : ''}`} onClick={invite}><I name="copy" size={13} />{t('inv.org')}</button> : null]] : []),
-    [m.agent, t('ch.step3'), isAdmin ? t('ch.step3.sub') : adminName ? t('ch.step3.member', { name: adminName }) : t('ch.step3.memberAny'), hasCrew ? null : agentActs],
+    [m.agent, t('ch.step3'), isAdmin ? t('ch.step3.sub') : adminName ? t('ch.step3.member', { name: adminName }) : t('ch.step3.memberAny'), hasCrew ? null : agentActs], // 에이전트 먼저(UX 정리 P1 2026-10-22)
+    [m.channel, t('ch.step1'), t(!hasChannel && !createChannel && newWhy ? newWhy : hasPublic ? 'ch.step1.subPrivate' : 'ch.step1.sub'), hasChannel || !createChannel ? null : <button key="a" type="button" className={`btn sm${m.channel === 'mark' ? ' btn-primary' : ''}`} onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>], // 만들 수 없으면 단추 대신 이유(2차 검수 L-b)
+    ...(isAdmin ? [[m.invite, <>{t('ch.step2')} <span className="msgr-klabel">{t('ch.step.optional')}</span></>, t('ch.step2.sub'), invite && !invited ? <button key="b" type="button" className={`btn sm${m.invite === 'mark' ? ' btn-primary' : ''}`} onClick={invite}><I name="copy" size={13} />{t('inv.org')}</button> : null]] : []),
   ];
 }
 function OrgStepList({ steps }) {
@@ -6385,12 +6389,16 @@ function OnboardCard({ orgId, steps, t }) {
   </section>);
 }
 
+// 빈 화면 조직 이름 제안 — 이메일 앞부분 + '의 회사'(빈 칸 결정을 줄인다). 이메일이 없으면 빈 문자열(입력해야 만든다)
+const orgNameSuggest = (email, t) => { const local = String(email ?? '').split('@')[0].trim().slice(0, 40); return local ? t('org.name.suggest', { name: local }) : ''; };
 // 조직 없는 첫 화면 단계(데스크톱 본문·폰 홈이 같은 목록 — D22 S109)
-function noOrgSteps({ t, createOrg, joinWithCode, joinable = [], joinDomain, deletedOrgs = [], restoreOrg }) {
+function noOrgSteps({ t, createOrg, joinWithCode, joinable = [], joinDomain, deletedOrgs = [], restoreOrg, hasAgent = false, createForm = null }) {
+  // 에이전트 먼저(UX 정리 P1 2026-10-22) — 조직이 없어도 개인 공간에서 내 에이전트와 1:1로 일할 수 있다. 조직 만들기·초대 코드·복원·도메인 참여는 그대로
   return [
+    [hasAgent ? 'done' : joinable.length ? '' : 'mark', t('ch.step3'), t('org.step.agent.sub'), hasAgent ? null : <RunnerButton key="g" primary={!joinable.length} />], // 회사 도메인 가입 후보가 있으면 그 참여가 지금 할 일(J-3)
     ...(deletedOrgs.length ? [['', t('org.step.restore'), t('org.step.restore.sub'), <div key="r" className="msgr-chips">{deletedOrgs.map((o) => <button key={o.id} type="button" className="msgr-chan" onClick={() => restoreOrg(o)}><span>{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}</div>]] : []), // J-5
     ...(joinable.length ? [['mark', t('org.step.join'), t('org.step.join.sub'), <div key="j" className="msgr-chips">{joinable.map((o) => <button key={o.id} type="button" className="msgr-chan" onClick={() => joinDomain(o)}><span>{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}</div>]] : []), // J-3: 회사 도메인 계정이면 초대 없이 바로
-    [joinable.length ? '' : 'mark', t('org.step.create'), t('org.step.create.sub'), <button key="a" type="button" className="btn btn-primary sm" onClick={createOrg}><I name="plus" size={13} />{t('org.new')}</button>],
+    [joinable.length || !hasAgent ? '' : 'mark', t('org.step.create'), t('org.step.create.sub'), createForm ?? <button key="a" type="button" className={`btn sm${hasAgent && !joinable.length ? ' btn-primary' : ''}`} onClick={createOrg}><I name="plus" size={13} />{t('org.new')}</button>], // 조직이 0개인 데스크톱 빈 화면은 이름 입력을 바로(createForm)
     ['', t('org.step.invite'), t('org.step.invite.sub'), <button key="j" type="button" className="btn sm" onClick={joinWithCode}><I name="link" size={13} />{t('org.join.code')}</button>],
   ];
 }
@@ -6433,9 +6441,11 @@ function OrgGateLoading({ t, onMenu, bare = false }) {
   </>);
 }
 
-function EmptyOrg({ org, onMenu, createOrg, createChannel, newWhy = null, invite, askAdmin = null, browse = null, joinable = [], joinDomain, deletedOrgs = [], restoreOrg, joinWithCode, onboard }) {
+function EmptyOrg({ org, onMenu, createOrg, createOrgNow = null, orgCount = 0, suggestName = '', hasAgent = false, createChannel, newWhy = null, invite, askAdmin = null, browse = null, joinable = [], joinDomain, deletedOrgs = [], restoreOrg, joinWithCode, onboard }) {
   const { t } = useT();
-  const steps = org ? orgSteps({ t, ...onboard, hasChannel: false, isAdmin: true, createChannel, newWhy, invite }) : noOrgSteps({ t, createOrg, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg });
+  // 조직이 하나도 없으면 이름 입력을 본문에 바로(UX 정리 P1 — 조직 전환 메뉴 안 작은 칸이 처음 쓰는 사람에게 낯설었다). 둘째 조직부터는 종전처럼 메뉴
+  const createForm = !org && orgCount === 0 && createOrgNow ? <OrgCreateInline key="a" onCreate={createOrgNow} suggest={suggestName} primary={hasAgent && !joinable.length} /> : null;
+  const steps = org ? orgSteps({ t, ...onboard, hasChannel: false, isAdmin: true, createChannel, newWhy, invite }) : noOrgSteps({ t, createOrg, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg, hasAgent, createForm });
   return (<>
     <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t(browse ? 'ch.notJoined.short' : 'ch.noneYet.short') : t('org.none')}</span></div>
     <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
@@ -6452,6 +6462,17 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, newWhy = null, invite
       </>)}
     </div></div>
   </>);
+}
+
+/** 조직 이름 한 칸 + 만들기(빈 화면 전용). 비워 두면 제안 이름으로 만든다. 서버 쓰기는 부르는 쪽(createOrg — msgr_orgs 넣기, v2는 msgr2_space_create)이 한다 */
+function OrgCreateInline({ onCreate, suggest = '', primary = false }) {
+  const { t } = useT();
+  const [name, setName] = useState(''); const [busy, setBusy] = useState(false);
+  const go = async (e) => { e.preventDefault(); const v = (name.trim() || suggest).trim(); if (!v || busy) return; setBusy(true); try { await onCreate(v); } finally { setBusy(false); } };
+  return (<form className="msgr-orgnew" onSubmit={go}>
+    <input className="msgr-input" value={name} onChange={(e) => setName(e.target.value)} placeholder={suggest || t('org.name')} aria-label={t('org.name')} maxLength={60} />
+    <button type="submit" className={`btn sm${primary ? ' btn-primary' : ''}`} disabled={busy || !(name.trim() || suggest)}><I name="plus" size={13} />{t('org.new')}</button>
+  </form>);
 }
 
 /* ─── 채널 본문: 상단(제목·멤버 스택·세그먼트 탭) + 척추 스레드 + 2단 독 ─── */

@@ -11,12 +11,14 @@ test('새 채널 기본 종류 — 조직에 공개 채널이 없으면 공개, 
   assert.equal(hasPublicChannel(undefined, undefined), false);
 });
 
-test('단계 표지 — 지금 할 일은 하나, 첫 채널 뒤에도 초대·에이전트가 남는다(D3)', () => {
-  assert.deepEqual(stepMarks({ hasChannel: false, isAdmin: true, invited: false, hasCrew: false }), { channel: 'mark', invite: '', agent: '' });
-  assert.deepEqual(stepMarks({ hasChannel: true, isAdmin: true, invited: false, hasCrew: false }), { channel: 'done', invite: 'mark', agent: '' });
-  assert.deepEqual(stepMarks({ hasChannel: true, isAdmin: true, invited: true, hasCrew: false }), { channel: 'done', invite: 'done', agent: 'mark' });
+test('단계 표지 — 지금 할 일은 하나, 순서는 에이전트 → 첫 채널 → 초대(선택) (UX 정리 P1 2026-10-22, 종전 D3: 채널 → 초대 → 에이전트)', () => {
+  assert.deepEqual(stepMarks({ hasChannel: false, isAdmin: true, invited: false, hasCrew: false }), { channel: '', invite: '', agent: 'mark' }, '처음엔 에이전트');
+  assert.deepEqual(stepMarks({ hasChannel: false, isAdmin: true, invited: false, hasCrew: true }), { channel: 'mark', invite: '', agent: 'done' });
+  assert.deepEqual(stepMarks({ hasChannel: true, isAdmin: true, invited: false, hasCrew: true }), { channel: 'done', invite: 'mark', agent: 'done' });
+  assert.deepEqual(stepMarks({ hasChannel: true, isAdmin: true, invited: false, hasCrew: false }), { channel: 'done', invite: '', agent: 'mark' }, '채널이 있어도 에이전트가 먼저');
   assert.deepEqual(stepMarks({ hasChannel: true, isAdmin: true, invited: true, hasCrew: true }), { channel: 'done', invite: 'done', agent: 'done' });
-  assert.deepEqual(stepMarks({ hasChannel: true, isAdmin: false, invited: false, hasCrew: false }), { channel: 'done', agent: 'mark' }, '관리자 아니면 초대 단계 없음, 에이전트가 할 일');
+  assert.deepEqual(stepMarks({ hasChannel: true, isAdmin: false, invited: false, hasCrew: false }), { channel: 'done', agent: 'mark' }, '관리자 아니면 초대 단계 없음');
+  assert.deepEqual(stepMarks({ hasChannel: true, isAdmin: false, invited: false, hasCrew: true }), { channel: 'done', agent: 'done' }, '할 일이 없으면 표지 없음');
 });
 
 test('배선 — 새 채널을 여는 입구(데스크톱 +·폰 채널 탭 + 메뉴)가 모두 같은 기본값을 쓴다, 시작 단계는 빈 조직·첫 채널 뒤·폰 채널 탭 세 곳', async () => {
