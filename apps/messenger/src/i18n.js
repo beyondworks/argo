@@ -1568,6 +1568,7 @@ export const DICT = {
   'phone.agents.joinReq.named': ["'{crew}'을(를) '{room}' 방에 넣어 달라는 요청", "Request to add '{crew}' to '{room}'"],
   'phone.agents.joinReq.crew': ["'{crew}'을(를) 대화방에 넣어 달라는 요청", "Request to add '{crew}' to a conversation"],
   'phone.agents.approvals.tap': ['눌러서 쌓인 결재를 한곳에서 봅니다.', 'Tap to see every waiting approval in one place.'],
+  'desk.ap.open': ['결재 대기 — 누르면 가장 최근 결재가 있는 대화를 엽니다', 'Waiting approvals — opens the conversation with the latest one'],
   'phone.agents.approvals.more': ['그 밖에 {n}개 더', '{n} more'],
   'phone.agents.filter': ['에이전트 보기', 'Agent view'],
   'phone.agents.chip.fav': ['즐겨찾기', 'Favorites'],

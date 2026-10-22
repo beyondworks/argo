@@ -96,6 +96,7 @@ export function approvalDecider({ ap, uid, crewOwnerId, isAdmin, policy, persona
     org_id가 NULL인 행(조회가 org_id를 가져온다)은 개인 결재 — 주인이 결정. org_id가 빠진 행(undefined)은 개인으로 보지 않는다(종전 판정). */
 export function phoneApprovalDecider(it, { uid, orgs } = {}) {
   if (it?.kind !== 'approval') return { can: true, byAdmin: false, mode: null, high: false };
+  if (it.v2) return { can: it.crewOwnerId != null && it.crewOwnerId === uid, byAdmin: false, mode: 'owner', high: approvalExpandDefault(it) }; // v2 결재(v2/my-approvals.mjs) — 서버 msgr2_approval_decide는 등급과 무관하게 에이전트 주인만
   if (it.org_id === null) return approvalDecider({ ap: it, uid, crewOwnerId: it.crewOwnerId, personal: true });
   const role = (orgs ?? []).find((o) => o.id === it.org_id)?.role;
   return approvalDecider({ ap: it, uid, crewOwnerId: it.crewOwnerId, isAdmin: role === 'owner' || role === 'admin', policy: it.policy ?? null });
