@@ -170,7 +170,7 @@ const rpcs = {
   msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: '민지', handle: 'minji' }],
   msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => ({ user_id: id, display_name: id === uid ? '유건' : '민지' })),
   msgr_friend_request: () => 'sent', msgr_find_user: () => [{ user_id: '9b2d4f10-0000-4000-8000-000000000003', display_name: '지수', handle: 'jisu' }],
-  msgr_my_hidden_users: () => [], msgr_my_blocked: () => [], my_plan: () => ({ plan: 'pro' }) /* 서버 my_plan은 {plan, …} 객체(src/entitlement.mjs effectivePlanOf) */, msgr_my_ai_consent: () => true,
+  msgr_my_hidden_users: () => [], msgr_my_blocked: () => [], my_plan: () => ({ plan: 'pro' }) /* 서버 my_plan은 {plan, …} 객체(src/entitlement.mjs effectivePlanOf) */, msgr_my_ai_consent: () => new URLSearchParams(globalThis.location?.search ?? '').get('noconsent') !== '1', /* ?noconsent=1 = AI 이용 동의 전 계정(한 목록이 조직 방을 빼는지) */
 };
 
 function roomEvent(room) { const r = state.tables.msgr2_rooms.find((x) => x.id === room); setTimeout(() => fire(`v2:u:${uid}`, 'rooms', { space_id: r?.space_id ?? null, room_id: room }), 30); }

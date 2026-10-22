@@ -3137,9 +3137,12 @@ function Shell({ session }) {
   );
   // ── 한 목록 화면(v2) — 폰 대화 탭과 데스크톱 레일이 같은 자료·같은 거르개를 쓴다 ──
   const olName = (row) => oneListTitle(row, (k, id) => (k === 'agent' ? (myAgents?.find((g) => g.id === id)?.display_name ?? crewShown(id)?.display_name ?? null) : nameOfUser(id))) ?? t('onelist.untitled');
-  const olOrgList = oneListOrgs(ol);
-  const olShown = oneListView(ol, { filter: olFilter, org: olOrg, q: isPhone ? tabQText : '' }).map((r) => ({ ...r, _title: olName(r) }));
-  const olUnreadN = oneListUnread(ol);
+  // AI 이용 동의 전·조회 중엔 조직 방을 목록에서 뺀다(App Store 5.1.2 재검수 M-5, 유건 2026-09-27 — 동의 전엔 조직 공간 전체를 막는다. 동의는 계정 하나에 하나라 공간과 상관없이 같은 판정)
+  const olOrgGated = V2 && (aiConsent === undefined ? !aiConsentFailOpen : !aiConsented);
+  const olRows = olOrgGated && ol ? ol.filter((r) => r.space_kind !== 'team') : ol; const olGatedN = ol && olRows ? ol.length - olRows.length : 0;
+  const olOrgList = oneListOrgs(olRows);
+  const olShown = oneListView(olRows, { filter: olFilter, org: olOrg, q: isPhone ? tabQText : '' }).map((r) => ({ ...r, _title: olName(r) }));
+  const olUnreadN = oneListUnread(olRows);
   const olOrgName = olOrg ? (olOrgList.find((o) => o.id === olOrg)?.name ?? '') : null;
   const olOrgBtn = (
     <button type="button" className={`msgr-inboxorgbtn${olOrg ? ' active' : ''}`} onClick={(e) => { const top = e.currentTarget.getBoundingClientRect().bottom + 6; setOlOrgMenu((v) => (v ? false : isPhone ? top : true)); }} aria-haspopup="menu" aria-expanded={!!olOrgMenu} title={t('onelist.chip.org')}>{olOrgName || t('onelist.chip.org')}<I name="caret" size={12} /></button>
@@ -3182,7 +3185,8 @@ function Shell({ session }) {
       </button>
     </div>
   );
-  const olEmpty = ol !== null && !olShown.length && <div className="msgr-hint ph-empty" role="status">{t(ol.length ? 'onelist.empty.filter' : 'onelist.empty')}</div>;
+  const olEmpty = ol !== null && !olShown.length && <div className="msgr-hint ph-empty" role="status">{t(olRows.length ? 'onelist.empty.filter' : 'onelist.empty')}</div>;
+  const olGateNote = olGatedN > 0 && aiConsent !== undefined && <div className="msgr-hint" role="note">{t('onelist.gated', { n: olGatedN })} <button type="button" className="btn sm" onClick={() => { const r = ol.find((x) => x.space_kind === 'team'); if (r) runInSpace(r.space_id, () => { setPage('chat'); setRail(false); }); }}>{t('onelist.gated.go')}</button></div>; // 누르면 그 조직 공간으로 — 본문에 동의 화면(AiConsentGate)이 뜬다
   const olMoreNote = olMore && <div className="msgr-hint">{t('onelist.more', { n: ONE_LIST_LIMIT })}</div>;
   // 새 대화 단추 하나(설계 2절) — 재료: 친구(수락), 내 에이전트(한 사람 = 한 줄), 채널을 만들 수 있는 조직(손님 제외 — 최종 판정은 서버)
   const olNewSheet = V2 && olNew && <NewTalkSheet onClose={() => setOlNew(false)}
@@ -3240,7 +3244,7 @@ function Shell({ session }) {
           <div className="ph-chiprow"><div className="ph-chips" role="radiogroup" aria-label={t('onelist.filter')}>{ONE_LIST_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={!olOrg && olFilter === k} className={!olOrg && olFilter === k ? 'active' : ''} onClick={() => { setOlFilter(k); setOlOrg(null); }}>{k === 'unread' && olUnreadN ? t('phone.chip.unread', { n: olUnreadN }) : t(`onelist.chip.${k}`)}</button>)}{olOrgPick}</div></div>{olOrgMenuEl}
           {olNewChForm}
           <div className="msgr-list ph-rooms">{olShown.map(olPhoneRow)}</div>
-          {ol === null && <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>}{olEmpty}{olMoreNote}
+          {ol === null && <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>}{olEmpty}{olGateNote}{olMoreNote}
         </>)}
         {rootTab === 'chats' && !V2 && (<>
           {!tabQText.trim() && approvalItems.length > 0 && apCard}{/* 결재가 있을 때만 채팅 탭 맨 위에도 — 결재를 찾으러 에이전트 탭까지 가지 않게 */}
@@ -3363,7 +3367,7 @@ function Shell({ session }) {
           <Seg className="msgr-inboxseg" label={t('onelist.filter')} value={olOrg ? null : olFilter} onPick={(v) => { setOlFilter(v); setOlOrg(null); }} options={ONE_LIST_FILTERS.map((k) => ({ v: k, label: k === 'unread' && olUnreadN ? t('phone.chip.unread', { n: olUnreadN }) : t(`onelist.chip.${k}`) }))} />
           {olNewChForm}
           <div className="msgr-list">{olShown.map(olDeskRow)}</div>
-          {ol === null && <div className="msgr-hint">{t('ui.loading')}</div>}{olEmpty}{olMoreNote}
+          {ol === null && <div className="msgr-hint">{t('ui.loading')}</div>}{olEmpty}{olGateNote}{olMoreNote}
         </RailSection>)}
         {!(V2 && !isPhone) && !isPersonal && !orgBlocked && <RailSection id={orgId ? 'channels' : 'start'} label={orgId ? t('ch.list') : t('org.start')} right={!orgId ? null : <span className="right">
           {<button type="button" className="btn msgr-chbrowse" onClick={() => browse ? setBrowse(null) : openBrowse()} disabled={!orgId} title={t('ch.browse')} aria-label={t('ch.browse')} aria-expanded={!!browse}><I name="hash" size={14} /></button>}

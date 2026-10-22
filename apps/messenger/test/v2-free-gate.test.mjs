@@ -18,12 +18,12 @@ test('v2StateBar: 무료 등록 거부는 proRequired(연결할 수 없음이 �
 });
 
 test('셸 배선: Pro 안내는 조직 목록 대기 화면보다 먼저, 다시 확인 = 기계 retry + 조직 목록 다시 읽기, iOS·회사 서버는 결제 권유 없음', () => {
-  const gate = app.indexOf("if (V2 && v2StateBar(v2state, v2stuck) === 'v2.state.proRequired') return <FreeGate");
+  const gate = app.indexOf("if (V2 && (olPro || v2StateBar(v2state, v2stuck) === 'v2.state.proRequired')) return <FreeGate"); // olPro = 한 목록(msgr2_inbox)이 Pro 끝난 계정을 거절(메신저 단순화 1·2단계)
   const wait = app.indexOf('if (orgs === null) return <OrgsLoading');
   assert.ok(gate > 0 && wait > gate, 'Pro 안내가 대기 화면보다 먼저');
   const line = app.slice(gate, app.indexOf('\n', gate));
   assert.ok(line.includes("purchase={purchaseChannel({ ios: isIos, customServer }) === 'web' ? { url: proCheckoutUrl({ plan: 'free', user: session.user }) } : null}"), '구매 경로는 A+와 같은 판정(iOS·회사 서버 null)');
-  assert.ok(line.includes('onRecheck={() => { v2rt?.retry(); orgsLoader.retry(); }}'));
+  assert.ok(line.includes('onRecheck={() => { setOlPro(false); v2rt?.retry(); orgsLoader.retry(); bumpOl(); }}'), '다시 확인 = 기계 retry + 조직 목록 + 한 목록 다시 읽기');
   assert.ok(line.includes('onSignOut={signOut}'));
   assert.match(app, /import APlusApp, \{ FreeGate \} from '\.\/aplus\/APlusApp\.jsx';/);
   assert.match(aplus, /export function FreeGate\(\{ t, purchase, onRecheck, onSignOut \}\)/);

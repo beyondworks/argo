@@ -1476,6 +1476,8 @@ export const DICT = {
   'onelist.new.channel.in': ['{org}에 새 채널', 'New channel in {org}'],
   'onelist.new.channel.pick': ['어느 조직에 만들까요?', 'Which organization?'],
   'onelist.new.channel.none': ['채널을 만들 수 있는 조직이 없습니다', 'No organization where you can create channels'],
+  'onelist.gated': ['조직 대화 {n}개는 AI 이용 동의 뒤에 보입니다.', '{n} organization conversations appear after you consent to AI use.'],
+  'onelist.gated.go': ['동의 보기', 'Review consent'],
   'onelist.more': ['최근 대화 {n}개까지 보입니다. 더 오래된 대화는 검색으로 찾으세요.', 'Showing your {n} most recent conversations. Use search for older ones.'],
   'memory.personal.soon': ['개인 기억은 Pro에서 PC와 동기화됩니다 — 준비 중', 'Personal memory will sync with your PC on Pro — coming soon'],
   'phone.tab.channels': ['채널', 'Channels'],

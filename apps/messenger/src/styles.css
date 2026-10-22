@@ -2487,7 +2487,7 @@ html { -webkit-tap-highlight-color: transparent; }
 /* 한 목록(메신저 단순화 2단계 2026-10-22): 조직 거르개 단추·메뉴 — 레일 구역 머리의 다른 아이콘 단추와 같은 낮은 무게 */
 .msgr-inboxorgbtn { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 6px; border: 0; border-radius: 8px; background: none; color: var(--fg-3); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
 .msgr-inboxorgbtn.active { color: var(--fg); font-weight: 600; background: var(--secondary); }
-@media (hover: hover) { .msgr-inboxorgbtn:hover { background: var(--card-2); } }
+@media (hover: hover) { .msgr-inboxorgbtn:hover { background: var(--card-2); } } .msgr-inboxorgbtn:active { background: var(--card-2); }
 .msgr-olorgmenu { z-index: 73; min-width: 220px; max-width: 280px; }
 .msgr-olorgmenu .sep { height: 1px; background: var(--border-soft); margin: 4px 6px; }
 .msgr-olorgmenu .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
