@@ -23,9 +23,9 @@
 |---|---|
 | `v` | 약속 버전(정수). 받는 쪽 범위 밖이면 `link_version_unsupported` |
 | `id` | 봉투 id. 같은 봉투를 다시 보낼 때도 같은 값 |
-| `work` | 일 id. `agent.sync`만 `null` |
+| `work` | 일 id. `agent.sync`·`agent.scope`만 `null` |
 | `seq` | (work, 보낸 쪽)마다 늘어나는 정수. 빈 번호는 괜찮다(저장하지 않는 progress도 번호를 쓴다). 같은 (work, 보낸 쪽, seq)로 같은 봉투를 다시 보내면 성공으로 답하고, 다른 봉투면 `seq_conflict`. `work`가 null인 봉투는 `id`로만 중복을 본다 |
-| `agent` | 일을 맡은 에이전트(`msgr2_agents.id`). `agent.sync`는 `null`일 수 있다 |
+| `agent` | 일을 맡은 에이전트(`msgr2_agents.id`). `agent.sync`·`agent.scope`는 `null`일 수 있다 |
 | `device` | 본체가 보낼 때는 보낸 기기, 서버가 보낼 때는 받을 기기. 리스가 없는 offer는 `null`(주인의 runner 기기 아무나) |
 | `at` | 보낸 시각, ISO 8601(`Z` 또는 `+09:00`) |
 | `data` | type별 내용(아래) |
@@ -50,6 +50,7 @@ id 형식: 봉투·일·에이전트·기기·방·토픽·승인·업로드 슬
 | `work.result` | 본체→서버 | `text`(≤20,000자), `files[]`(업로드 슬롯 id, ≤20), `handoffs[]{agent, text}`(≤8) | `usage{input_tokens, output_tokens, cost_usd, runner, model}` |
 | `work.error` | 본체→서버 | `code`(아래 9종, 열린 값), `runner`(또는 null) | `retry_at` |
 | `agent.sync` | 본체→서버(등록) | `agents[]{ws, slug, name, role, face_hash}`(≤500) | |
+| `agent.scope` | 서버→본체(`v2:w:<uid>` 방송, 2026-10-22) | 없음(`{}`) — 내 에이전트가 방·공간에서 빠졌다. 본체는 `msgr2_agent_rooms`로 다시 확인한다. `work`·`agent`·`device`는 `null` | 이 type을 모르는 옛 본체는 기록만 하고 답하지 않는다(일 없는 봉투) |
 
 `work.error` 코드: `limit`·`no_runner`·`login`·`timeout`·`cancelled`·`unsupported`·`tier_denied`·`budget`·`internal`. 열린 값이라 받는 쪽은 모르는 코드를 `internal`로 읽는다(`normalizeWorkErrorCode`). 방에는 코드만 남기고 원문을 싣지 않는다(D15).
 

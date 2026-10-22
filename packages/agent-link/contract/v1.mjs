@@ -66,6 +66,9 @@ export const DIRECTION = Object.freeze({
   'work.result': 'runner',
   'work.error': 'runner',
   'agent.sync': 'runner',
+  // 서버 → 본체 알림(20261022180000): 내 에이전트가 방·공간에서 빠졌다 — 일 없는 봉투, 데이터 없음. 본체는 msgr2_agent_rooms로 다시 확인한다.
+  // 이 type을 모르는 옛 본체는 unknownType으로 기록만 하고 답하지 않는다(일 없는 봉투 — unsupportedReply null).
+  'agent.scope': 'server',
 });
 export const TYPES = Object.freeze(Object.keys(DIRECTION));
 
@@ -284,6 +287,7 @@ export const DATA = Object.freeze({
     // v1.1 — 이 본체가 처리할 수 있는 기능(FEATURES). 없으면 v1.0 본체로 본다(회의·봇 offer를 받지 않음)
     features: ['arr', { optional: true, max: LIMITS.features, items: 'code' }],
   },
+  'agent.scope': {},
 });
 
 const fail = (code, errors = []) => ({ ok: false, code, retry: REJECT_CODES[code]?.retry ?? false, errors });
@@ -303,10 +307,10 @@ export function validateEnvelope(env, { from, supported = SUPPORTED } = {}) {
   if (from && DIRECTION[env.type] !== from) return fail('wrong_direction', [`type: ${env.type} is ${DIRECTION[env.type]}-sent`]);
 
   const errors = [];
-  const sync = env.type === 'agent.sync';
+  const sync = env.type === 'agent.sync' || env.type === 'agent.scope'; // 일 없는 봉투(work·agent null)
   check(errors, 'id', env.id, 'uuid');
   check(errors, 'work', env.work, sync ? ['uuid', { nullable: true }] : 'uuid');
-  if (sync && env.work !== null && env.work !== undefined) errors.push('work: must be null for agent.sync');
+  if (sync && env.work !== null && env.work !== undefined) errors.push(`work: must be null for ${env.type}`);
   check(errors, 'seq', env.seq, 'int');
   check(errors, 'agent', env.agent, sync ? ['uuid', { nullable: true }] : 'uuid');
   // device: 본체가 보낼 때는 보낸 기기, 서버가 보낼 때는 받을 기기(리스가 없으면 null = 주인의 runner 기기 아무나)
