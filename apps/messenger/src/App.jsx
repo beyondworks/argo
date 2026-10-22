@@ -1811,7 +1811,7 @@ function Shell({ session }) {
   useEffect(() => { let live = true; loadMyInvitesIf({ enabled: V2, uid, ready: () => currentV2()?.ready(), rpc: (fn) => rawSupabase.rpc(fn) }).then((l) => { if (live && l) setMyInvites(l); }, () => {}); return () => { live = false; }; }, [uid, syncEpoch, myInvitesTick]); // eslint-disable-line react-hooks/exhaustive-deps -- 플래그 끔(옛 서버)·로그인 전은 호출 0(loadMyInvitesIf)
   // 한 목록(v2, 메신저 단순화 2단계) — msgr2_inbox 한 번 + 방송으로 행 고치기. 다시 읽는 때: 시작·복귀(syncEpoch)·방 사건·모르는 방의 첫 글(방마다 한 번). 주기 조회 없음
   const [ol, setOl] = useState(null); const [olMore, setOlMore] = useState(false); const [olPro, setOlPro] = useState(false); const [olTick, bumpOl] = useReducer((x) => x + 1, 0);
-  const [olErr, setOlErr] = useState(false); const [olFilter, setOlFilter] = useState('all'); const [olOrg, setOlOrg] = useState(null); const [olOrgMenu, setOlOrgMenu] = useState(false); const [olNew, setOlNew] = useState(false); // olNew = 새 대화 시트
+  const [olAgentPos, setOlAgentPos] = useState(() => { try { return JSON.parse(localStorage.getItem('argo-msgr-v2-agent-order') || '[]'); } catch { return []; } }); /* v2 데스크톱 레일 '직접 배치' 순서 — v2는 msgr_target_prefs가 서버에 없어(source.mjs) 조직별 순서가 방을 바꿀 때 흔들렸다. 이 기기에 하나로 */ const [olErr, setOlErr] = useState(false); const [olFilter, setOlFilter] = useState('all'); const [olOrg, setOlOrg] = useState(null); const [olOrgMenu, setOlOrgMenu] = useState(false); const [olNew, setOlNew] = useState(false); // olNew = 새 대화 시트
   const olRef = useRef(ol); olRef.current = ol; const olMiss = useRef(new Set()); // 다시 읽어도 목록에 없던 방(들어가지 않은 open 방 방송) — 글마다 다시 읽지 않게
   useEffect(() => { if (!V2 || !uid) return undefined; let live = true; loadOneList(supabase).then((r) => { if (!live) return; if (r.error) { if (r.error.pro) setOlPro(true); else setOlErr(true); return; } setOlPro(false); setOlErr(false); setOl(r.rows); setOlMore(r.more); }, () => { if (live) setOlErr(true); }); return () => { live = false; }; }, [uid, syncEpoch, olTick]); // eslint-disable-line react-hooks/exhaustive-deps
   const olMsgRef = useRef(null);
@@ -2542,7 +2542,7 @@ function Shell({ session }) {
   // 버튼 이름(개인 1:1 대화) 판정 재료 — 폰 에이전트 탭을 아직 안 열었거나 데스크톱(myAgents를 읽지 않는다)이면, 조직 화면에 내 에이전트가 보일 때 세션에 한 번만 읽는다
   // (요청 2건, 주기 호출 없음 — 실패해도 다시 묻지 않고 지금 문구). 그 뒤 폰은 종전대로 에이전트 탭에서 새로 읽는다.
   const myAgentsAsked = useRef(false);
-  useEffect(() => { if (myAgentsAsked.current || myAgents !== null || !uid || !orgId || orgId === PERSONAL || !crews.some((c) => c.owner_user_id === uid)) return; myAgentsAsked.current = true; loadMyAgents({ reuse: true }).catch(() => {}); }, [uid, orgId, crews, myAgents]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (myAgentsAsked.current || myAgents !== null || !uid) return; if (!(V2 && !isPhone) && (!orgId || orgId === PERSONAL || !crews.some((c) => c.owner_user_id === uid))) return; myAgentsAsked.current = true; loadMyAgents({ reuse: true }).catch(() => {}); }, [uid, orgId, crews, myAgents]); // v2 데스크톱은 레일 에이전트 구역이 이 명단이라 시작 때 한 번(개인 공간에서 시작하면 0명이었다 — 클릭 표 실측) // eslint-disable-line react-hooks/exhaustive-deps
   // 다른 공간의 에이전트·대화를 열 때 — 공간을 바꾸고, 그 공간 목록이 도착하면 그때의 최신 함수로 연다(옛 렌더의 함수는 옛 공간 목록을 본다)
   const afterSpace = useRef(null); const latestOpen = useRef({});
   latestOpen.current = { dmWithCrew, openPersonalCrewDm, setSheet, crewOf, note: setNote, orgBlocked, moveNotice: showMoveNotice }; // orgBlocked: 동의 전 조직이면 카드 대신 이유(openAgentCard)
@@ -3122,16 +3122,29 @@ function Shell({ session }) {
     </div>); };
   // 데스크톱 v2 레일 '에이전트' 구역 = 내 에이전트 명단(유건 2026-10-22 20:1x "'#일반'에 있을 때랑 '#연구실'에 있을 때 왜 에이전트 목록이 변하는거야?").
   // 옛 구역은 지금 공간(orgId)의 crews·파견 대기(myAvailable)를 세서, 방을 열 때마다 숨은 공간이 바뀌면 개수·접속·'파견'이 따라 바뀌었다.
-  // 한 목록 레일은 열린 방과 무관하다: 폰 에이전트 탭(#1141 v2MyAgents → agentGroups)과 같은 명단, 접속 점은 에이전트 자체의 최근 접속. 파견은 채널 시트 '에이전트 추가'·카드 메뉴로
-  const olAgentRow = (g) => { const on = g.rows.some((r) => seenWithin(r, AWAY_MS, Date.now(), crewSeenAt(r))); const st = agentRowState(groupState(g), on); const lpId = `agent:${g.key}`; const def = agentOpenRow(g); return (
-    <div key={g.key} className={`msgr-railrow nomore${ctx?.trigger === lpId ? ' open' : ''}`} onContextMenu={(e) => openCtx(e, agentItems(g), lpId)}>
-      <button type="button" className="item" onClick={() => openAgentGroup(g)} title={`${g.display_name} · ${t(`phone.agent.${st}`)}${g.role_text ? ` · ${g.role_text}` : ''}`}><Av name={g.display_name} crew size="xs" crewId={def.id} /><span className="name">{g.display_name}</span><span className={`msgr-dot${on && st !== 'relink' ? ' mark' : ''}`} aria-label={t(`phone.agent.${st}`)} /></button>
+  // 한 목록 레일은 열린 방과 무관하다: 폰 에이전트 탭(#1141 v2MyAgents)과 같은 내 에이전트 행. 옛 구역의 묶음 접이·정렬(이름·추가순·직접 배치)·줄 메뉴는 그대로 둔다(#1143 재검수 Important 1).
+  // 회사 묶음(조직의 남의 회사 에이전트)은 그 조직에 묶인 목록이라 여기서는 없다 — v2 에이전트는 모두 개인 소유. 파견은 줄 메뉴 '○○에 파견'(그 조직으로 맞춘 뒤 파견)과 채널 시트 '에이전트 추가'
+  const olMine = (myAgents ?? []).filter((c) => c.owner_user_id === uid);
+  const olSorted = railSort === 'custom' ? sortByCustomOrder(olMine, Object.fromEntries(olAgentPos.map((id, i) => [id, i])), (c) => c.display_name) : [...olMine].sort((a, b) => (railSort === 'added' ? Date.parse(a.created_at ?? 0) - Date.parse(b.created_at ?? 0) : 0) || String(a.display_name ?? '').localeCompare(String(b.display_name ?? ''), 'ko'));
+  const olArgo = olSorted.filter((c) => sourceOf(c) === 'argo'); const olExt = olSorted.filter((c) => sourceOf(c) !== 'argo');
+  const olReorderAgents = (dragId, beforeId = null, visible = null) => { const ids = olSorted.map((c) => c.id); const next = reorderVisibleInFull(ids, visible ?? ids, dragId, beforeId); if (sameOrder(next, ids) && railSort === 'custom') return; setOlAgentPos(next); try { localStorage.setItem('argo-msgr-v2-agent-order', JSON.stringify(next)); } catch { /* 저장 못 해도 이번 화면은 그 순서 */ } if (railSort !== 'custom') pickSort('custom'); };
+  latestOpen.current.dispatchMine = (agentId, name) => { const c = myAvailable.find((x) => x.id === agentId); if (!c) { setNote(t('onelist.agent.already', { name })); return; } dispatchCrew(c, null).then((r) => { if (r !== 'picking') setNote(t(r === 'requested' ? 'ch.crew.join.requested' : 'rail.mine.dispatched', { name })); }).catch((e) => setErr(friendlyErr(e.message, t))); };
+  const olAgentItems = (c) => { const g = agentGroups.find((x) => x.rows.some((r) => r.id === c.id)); return [
+    { icon: 'gear', label: t('ctx.crew.card'), run: () => openAgentCard(c) },
+    { icon: 'at', label: t('ui.dm.personal'), run: () => (g ? openAgentGroup(g) : openPersonalCrewDm(c.id)) },
+    g && { icon: 'star', label: t(agentFavOf(g) ? 'phone.agents.fav.remove' : 'phone.agents.fav.add'), run: () => { toggleAgentFav(g).catch(() => {}); } },
+    ...((aiConsent === undefined ? !aiConsentFailOpen : !aiConsented) ? [] : (orgs ?? []).map((o) => ({ icon: 'plus', label: t('onelist.agent.dispatch', { org: o.name }), run: () => runInSpace(o.id, (fn) => fn.dispatchMine?.(c.id, c.display_name)) }))),
+  ].filter(Boolean); };
+  const olAgentRow = (c) => { const items = olAgentItems(c); const g = agentGroups.find((x) => x.rows.some((r) => r.id === c.id)); return (
+    <div key={c.id} data-drag-id={c.id} className={`msgr-railrow nomore${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}${twinPaused(c) ? ' paused' : ''}`} onContextMenu={(e) => openCtx(e, items, c.id)}
+      draggable={railSort === 'custom'} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const id = drag; setDrag(null); if (id && id !== c.id && olMine.some((x) => x.id === id)) olReorderAgents(id, c.id); }}>
+      <button type="button" className="item" onClick={() => (g ? openAgentGroup(g) : openPersonalCrewDm(c.id))} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}${twinRelink(c) ? ` · ${t('rail.relink.title')}` : ''}`}><Av name={c.display_name} crew size="xs" crewId={c.id} /><span className="name">{c.display_name}</span>{twinRelink(c) && <span className="msgr-relink">{t('rail.relink')}</span>}<span className={`msgr-dot${seenWithin(c, AWAY_MS, Date.now(), crewSeenAt(c)) ? ' mark' : ''}`} /></button>
     </div>); };
-  const olAgentsSection = V2 && !isPhone && (<RailSection id="mine" label={`${t('rail.agents')} · ${agentGroups.length}`}>
+  const olAgentsSection = V2 && !isPhone && (<RailSection id="mine" label={`${t('rail.agents')} · ${olMine.length}`} right={<span className="right">{olMine.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}</span>}>
     <div className="msgr-list mine">
       {pauseNote && pauseNoteEl}
-      {agentGroups.map(olAgentRow)}
-      {myAgents !== null && !agentGroups.length && <p className="msgr-rail-empty">{t('onelist.new.agent.none')} <RunnerButton /></p>}
+      {[['mine.argo', 'rail.agents.mine', olArgo], ['mine.ext', 'rail.src.custom', olExt]].map(([id, k, list]) => list.length > 0 && <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(olAgentRow)}</RailFold>)}
+      {myAgents !== null && !olMine.length && <p className="msgr-rail-empty">{t('onelist.new.agent.none')} <RunnerButton /></p>}
     </div>
   </RailSection>);
   const levelOf = (it) => approvalGrade(it.kind === 'join' ? it : { ...it, kind: it.apKind }); // 결재 표의 종류는 apKind(loadApprovals)

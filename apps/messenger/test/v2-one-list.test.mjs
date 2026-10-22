@@ -154,13 +154,19 @@ test('배선(#1143 재검수 Nit 2): 범위 메뉴·새 대화 팝오버는 본�
   assert.match(app, /useDismiss\(V2 && !isPhone && olNew, \(\) => setOlNew\(false\), '\.msgr-newtalkpop, \.msgr-newbtn'/);
 });
 
-test('배선(유건 2026-10-22 20:1x): 데스크톱 v2 레일은 열린 방과 무관 — 에이전트 구역은 내 에이전트 명단(agentGroups), 기억 단추는 늘', () => {
-  const sec = app.slice(app.indexOf('const olAgentsSection = '), app.indexOf('const levelOf = '));
-  assert.match(sec, /label=\{`\$\{t\('rail\.agents'\)\} · \$\{agentGroups\.length\}`\}/, '머리 숫자 = 내 에이전트 수(지금 공간의 crews 수가 아니다)');
-  assert.match(sec, /\{agentGroups\.map\(olAgentRow\)\}/);
-  for (const bad of ['myAvailable', 'railVisible', 'crews.filter', 'railSort', 'dispatch']) assert.ok(!sec.includes(bad), `공간에 묶인 값을 쓰지 않는다: ${bad}`);
+test('배선(유건 2026-10-22 20:1x + 재검수 Important 1): 데스크톱 v2 레일 에이전트 구역 = 열린 방과 무관한 내 에이전트 명단, 묶음·정렬·직접 배치·줄 메뉴·파견 유지', () => {
+  const sec = app.slice(app.indexOf('const olMine = '), app.indexOf('const levelOf = '));
+  assert.match(sec, /const olMine = \(myAgents \?\? \[\]\)\.filter\(\(c\) => c\.owner_user_id === uid\);/, '명단 = 내 에이전트 행(v2MyAgents, 모든 공간)');
+  assert.match(sec, /label=\{`\$\{t\('rail\.agents'\)\} · \$\{olMine\.length\}`\}/, '머리 숫자 = 내 에이전트 수');
+  for (const bad of ['myAvailable.length', 'railVisible', 'crews.filter', 'railSortPos']) assert.ok(!sec.includes(bad), `공간에 묶인 값을 그리기에 쓰지 않는다: ${bad}`);
+  assert.match(sec, /\[\['mine\.argo', 'rail\.agents\.mine', olArgo\], \['mine\.ext', 'rail\.src\.custom', olExt\]\]\.map\(\(\[id, k, list\]\) => list\.length > 0 && <RailFold/, '묶음 접이(내 에이전트·외부)');
+  assert.match(sec, /\['name', 'added', 'custom'\]\.map\(\(v\) => <button key=\{v\} type="button" role="menuitemradio" aria-checked=\{railSort === v\}/, '정렬 메뉴');
+  assert.match(sec, /localStorage\.setItem\('argo-msgr-v2-agent-order'/, '직접 배치 순서는 이 기기에 하나(v2는 msgr_target_prefs가 서버에 없다)');
+  for (const k of ["label: t('ctx.crew.card'), run: () => openAgentCard(c)", "label: t('ui.dm.personal')", "phone.agents.fav.add", "label: t('onelist.agent.dispatch', { org: o.name }), run: () => runInSpace(o.id, (fn) => fn.dispatchMine?.(c.id, c.display_name))"]) assert.ok(sec.includes(k), `줄 메뉴: ${k}`);
+  assert.match(sec, /latestOpen\.current\.dispatchMine = \(agentId, name\) => \{ const c = myAvailable\.find/, '파견은 그 조직으로 맞춘 뒤 그 조직의 파견 대기에서');
   assert.match(app, /\{V2 && !isPhone && olAgentsSection\}\n\s*\{!\(V2 && !isPhone\) && railView\.section && \(<RailSection id="mine"/, '옛 구역은 옛 셸·폰에서만');
-  assert.match(app, /\{V2 && !isPhone \? \(\(orgs \?\? \[\]\)\.length > 0 && !olOrgGated && <button[^\n]*runInSpace\(olOrg \?\? orgs\[0\]\.id, go\)/, '기억 단추는 열린 방과 무관하게 늘(개인 방이면 범위 조직의 기억으로)');
+  assert.match(app, /if \(!\(V2 && !isPhone\) && \(!orgId \|\| orgId === PERSONAL \|\| !crews\.some/, 'v2 데스크톱은 시작 때 명단을 한 번 읽는다(개인 공간 시작이면 0명이었다)');
+  assert.match(app, /\{V2 && !isPhone \? \(\(orgs \?\? \[\]\)\.length > 0 && !olOrgGated && <button[^\n]*runInSpace\(olOrg \?\? orgs\[0\]\.id, go\)/, '기억 단추는 열린 방과 무관하게 늘');
 });
 
 test('배선(유건 \'모바일 화면은 어때?\' 검토): 폰 한 목록 줄은 옛 폰 줄과 같은 안 읽음 배지, 글자 칸은 채널 칸과 같은 면, 결재 카드는 얇은 경계', () => {
