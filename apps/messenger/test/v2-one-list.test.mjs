@@ -162,3 +162,13 @@ test('배선(유건 2026-10-22 20:1x): 데스크톱 v2 레일은 열린 방과 �
   assert.match(app, /\{V2 && !isPhone && olAgentsSection\}\n\s*\{!\(V2 && !isPhone\) && railView\.section && \(<RailSection id="mine"/, '옛 구역은 옛 셸·폰에서만');
   assert.match(app, /\{V2 && !isPhone \? \(\(orgs \?\? \[\]\)\.length > 0 && !olOrgGated && <button[^\n]*runInSpace\(olOrg \?\? orgs\[0\]\.id, go\)/, '기억 단추는 열린 방과 무관하게 늘(개인 방이면 범위 조직의 기억으로)');
 });
+
+test('배선(유건 \'모바일 화면은 어때?\' 검토): 폰 한 목록 줄은 옛 폰 줄과 같은 안 읽음 배지, 글자 칸은 채널 칸과 같은 면, 결재 카드는 얇은 경계', () => {
+  const row = app.slice(app.indexOf('const olPhoneRow = '), app.indexOf('const olDeskRow = '));
+  assert.match(row, /<span className=\{`msgr-badge\$\{row\.muted \? ' dim' : ''\}`\}>\{badgeText\(row\.unread\)\}<\/span>/, '맨 숫자(msgr-tabn ph-kn)가 아니라 배지');
+  assert.ok(!row.includes('ph-kn'));
+  assert.match(app, /<div className="msgr-list ph-rooms ph-ol">\{olShown\.map\(olPhoneRow\)\}<\/div>/);
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.msgr-phone \.ph-ol \.ph-krow \.msgr-av\.kk:not\(\.crew\):not\(\.face\) \{ border-radius: 16px; background: var\(--card-2\); border: 1px solid var\(--border-soft\);/, '채널 칸(.ph-chav)과 같은 면·경계·반경');
+  assert.match(css, /\.msgr-phone \.ph-root\.ph-v2 \.ph-apcard\.on \{ border-color: var\(--border\); \}/);
+});

@@ -2516,3 +2516,9 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-onelist > .msgr-list { padding: 0; } /* 줄 바탕의 왼쪽·오른쪽 끝도 같은 시작선 */
 .msgr-newtalkpop .head > button.msgr-titlebtn { width: 32px; height: 32px; flex: none; padding: 0; justify-content: center; border-radius: 10px; } /* 팝오버 공용 규칙(.msgr-menu-pop button 폭 100%)이 머리 단추까지 늘렸다 */
 .msgr-newtalkpop .head > button.msgr-titlebtn:last-child { margin-left: auto; } /* 닫기는 머리 오른쪽 끝 */
+/* v2 폰 한 목록(유건 2026-10-22 "모바일 화면은 어때?" 검토, 색 토큰은 그대로 — 모양만 기존 부품에 맞춤) */
+@media (max-width: 760px) {
+  .msgr-phone .ph-ol .ph-krow .msgr-av.kk:not(.crew):not(.face) { border-radius: 16px; background: var(--card-2); border: 1px solid var(--border-soft); color: var(--fg-2); } /* 사진 없는 사람·그룹 글자 칸 = 채널 칸(.ph-chav)과 같은 면·경계·반경 — 줄마다 모양이 달랐다 */
+  .msgr-phone .ph-ol .ph-kl2 { align-items: center; } .msgr-phone .ph-ol .ph-kbadges { align-self: center; padding-top: 0; } /* 배지와 미리보기 글자의 세로 중앙을 맞춘다(실측 1.6px 아래였다) */
+  .msgr-phone .ph-root.ph-v2 .ph-apcard.on { border-color: var(--border); } /* 결재 있음 카드도 다른 카드와 같은 얇은 경계 — 라이트 진한·다크 흰 테두리(규칙집 2-1·1-6). 결재 있음은 아이콘 칸이 말한다 */
+}

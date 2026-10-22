@@ -3261,7 +3261,7 @@ function Shell({ session }) {
         {olAvatar(row, true)}
         <span className="ph-kbody">
           <span className="ph-kl1"><span className="name">{row._title}</span>{row.room_kind !== 'direct' && row.users > 2 && <span className="ph-kcount" aria-label={t('phone.row.members', { n: row.users })}>{row.users}</span>}{row.space_name && <span className="msgr-orglabel ph-korg">{row.space_name}</span>}{row.pinned && <I name="pin" size={13} className="ph-kic" />}{row.muted && <I name="belloff" size={13} className="ph-kic" />}<span className="when">{row.last_at ? fmtWhen(row.last_at, lang) : ''}</span></span>
-          <span className="ph-kl2"><span className="snip">{olSnip(row)}</span><span className="ph-kbadges">{row.unread > 0 && <span className={`msgr-tabn ph-kn${row.muted ? ' dim' : ''}`}>{badgeText(row.unread)}</span>}</span></span>
+          <span className="ph-kl2"><span className="snip">{olSnip(row)}</span><span className="ph-kbadges">{row.unread > 0 && <span className={`msgr-badge${row.muted ? ' dim' : ''}`}>{badgeText(row.unread)}</span>}{/* 옛 폰 채팅 줄(kRow)과 같은 안 읽음 배지 — 맨 숫자만 떠 있었다(유건 '모바일 화면은 어때?' 검토) */}</span></span>
         </span>
       </button>
     </div>
@@ -3303,7 +3303,7 @@ function Shell({ session }) {
     </form>
   );
   const phoneRoot = (
-    <div className="ph-root" data-tab={rootTab}>
+    <div className={`ph-root${V2 ? ' ph-v2' : ''}`} data-tab={rootTab}>
       {rootTab === 'friends' && (<PhoneHead title={t('phone.tab.friends')} actions={[searchAct, { key: 'add', icon: 'personplus', label: t('friends.add'), run: () => { setTabQ(null); setFriendAdd(true); } }, gearAct]} />)}
       {rootTab === 'chats' && !V2 && (<PhoneHead title={t('phone.tab.chats')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('dm.new'), run: () => { if (!isPersonal) return; setTabQ(null); setDmGroup(true); } }]} />)}{/* 채팅 탭은 검색·새 대화만(UX 정리 P1) — 설정은 친구·에이전트 탭 머리에. 새 대화는 폰에서 그룹 대화를 만드는 유일한 입구라 남긴다 */}
       {rootTab === 'chats' && V2 && (<PhoneHead title={t('phone.tab.talk')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('onelist.new'), run: () => { setTabQ(null); setOlNew(true); } }]} />)}{/* 새 대화 단추 하나 — 사람·에이전트 1:1, 여러 명 방, 조직 채널(NewTalkSheet) */}
@@ -3339,7 +3339,7 @@ function Shell({ session }) {
           {!tabQText.trim() && approvalItems.length > 0 && apCard}
           <div className="ph-chiprow"><div className="ph-chips" role="radiogroup" aria-label={t('onelist.filter')}>{ONE_LIST_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={!olOrg && olFilter === k} className={!olOrg && olFilter === k ? 'active' : ''} onClick={() => { setOlFilter(k); setOlOrg(null); }}>{k === 'unread' && olUnreadN ? t('phone.chip.unread', { n: olUnreadN }) : t(`onelist.chip.${k}`)}</button>)}{olOrgPick}</div></div>{olOrgMenuEl}
           {olNewChForm}{olBrowse}
-          <div className="msgr-list ph-rooms">{olShown.map(olPhoneRow)}</div>
+          <div className="msgr-list ph-rooms ph-ol">{olShown.map(olPhoneRow)}</div>
           {ol === null && olLoadNote}{olEmpty}{olGateNote}{olMoreNote}
         </>)}
         {rootTab === 'chats' && !V2 && (<>
