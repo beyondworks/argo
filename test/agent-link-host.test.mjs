@@ -636,19 +636,19 @@ test('회수 일정: (재)접속 5초 뒤 1번, 빠짐 알림은 30초로 묶어
   server.rooms.set(R2, { space: TEAM, kind: 'team', agents: [agentId] });
   const left = join(vault, 'files', 'msgr2-turn', 'old-work'); await mkdirp(left, { recursive: true }); await writeF(join(left, 'x.csv'), 'x');
   assert.equal(runs.length, 0, '접속 직후에는 아직');
-  await clock.advance(5_000); await flush();
+  await clock.advance(5_000); await until(() => runs.length >= 1); // 회수는 비동기(서버 조회) — 느린 러너에서는 flush로 모자라다
   assert.equal(runs.length, 1);
   assert.deepEqual([runs[0].ws, runs[0].slugs, [...runs[0].ans]], ['co-1', ['pm'], [[`*:${R1}`, false], [`pm:${R1}`, false], [`*:${R2}`, true], [`pm:${R2}`, true]]]); // slug:방 = 그 에이전트 소속, *:방 = 내 에이전트가 하나라도(전해 받은 기록)
   assert.equal(existsSync(left), false, '본체가 턴 중에 꺼져 남은 첨부 임시 칸을 지운다');
   server.scopeChanged(); server.scopeChanged(); server.scopeChanged(); await flush();
   await clock.advance(29_000); await flush();
   assert.equal(runs.length, 1, '30초 묶음 전');
-  await clock.advance(1_000); await flush();
+  await clock.advance(1_000); await until(() => runs.length >= 2);
   assert.equal(runs.length, 2, '알림 세 번 = 확인 한 번');
   const before = server.rpcCount('msgr2_agent_rooms');
   await clock.advance(3_600_000); await flush();
   assert.equal(runs.length, 2, '주기 확인은 없다'); assert.equal(server.rpcCount('msgr2_agent_rooms'), before);
-  server.opts.noAgentRooms = true; server.scopeChanged(); await flush(); await clock.advance(30_000); await flush();
+  server.opts.noAgentRooms = true; server.scopeChanged(); await flush(); await clock.advance(30_000); await until(() => runs.length >= 3);
   assert.equal(runs.at(-1).ans, null, '함수 없는 옛 서버 = null(지우지 않는다)');
 });
 
