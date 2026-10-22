@@ -159,7 +159,8 @@ test('배선(유건 2026-10-22 20:1x + 재검수 Important 1): 데스크톱 v2 �
   assert.match(sec, /const olMine = \(myAgents \?\? \[\]\)\.filter\(\(c\) => c\.owner_user_id === uid\);/, '명단 = 내 에이전트 행(v2MyAgents, 모든 공간)');
   assert.match(sec, /label=\{`\$\{t\('rail\.agents'\)\} · \$\{olMine\.length\}`\}/, '머리 숫자 = 내 에이전트 수');
   for (const bad of ['myAvailable.length', 'railVisible', 'crews.filter', 'railSortPos']) assert.ok(!sec.includes(bad), `공간에 묶인 값을 그리기에 쓰지 않는다: ${bad}`);
-  assert.match(sec, /\[\['mine\.argo', 'rail\.agents\.mine', olArgo\], \['mine\.ext', 'rail\.src\.custom', olExt\]\]\.map\(\(\[id, k, list\]\) => list\.length > 0 && <RailFold/, '묶음 접이(내 에이전트·외부)');
+  assert.match(sec, /\[\['mine\.argo', 'rail\.agents\.mine', olArgo\], \['mine\.ext', 'rail\.src\.custom', olExt\], \['mine\.company', 'rail\.agents\.company', olCompany\]\]\.map\(\(\[id, k, list\]\) => list\.length > 0 && <RailFold/, '3단 접이(내 에이전트·외부·회사, 유건 결정 유지)');
+  assert.match(sec, /const olCompany = olOrg && loadedOrg\.current === olOrg \? railCompany : \[\];/, '회사 묶음은 열린 방이 아니라 범위 카드의 조직을 따른다');
   assert.match(sec, /\['name', 'added', 'custom'\]\.map\(\(v\) => <button key=\{v\} type="button" role="menuitemradio" aria-checked=\{railSort === v\}/, '정렬 메뉴');
   assert.match(sec, /localStorage\.setItem\('argo-msgr-v2-agent-order'/, '직접 배치 순서는 이 기기에 하나(v2는 msgr_target_prefs가 서버에 없다)');
   for (const k of ["label: t('ctx.crew.card'), run: () => openAgentCard(c)", "label: t('ui.dm.personal')", "phone.agents.fav.add", "label: t('onelist.agent.dispatch', { org: o.name }), run: () => runInSpace(o.id, (fn) => fn.dispatchMine?.(c.id, c.display_name))"]) assert.ok(sec.includes(k), `줄 메뉴: ${k}`);
