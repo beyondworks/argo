@@ -490,6 +490,7 @@
 .msgr-crewsheet .pick > span:first-of-type + span { flex: 1; }
 .msgr-crewsheet .me { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; padding-top: 6px; border-top: 1px solid var(--border-soft); }
 .msgr-crewsheet .me .btn { margin-left: auto; }
+.msgr-crewsheet .me.me-top { padding: 0 0 10px; border-top: 0; border-bottom: 1px solid var(--border-soft); } /* 머리 바로 아래 대화·허용 요청 줄(UX 정리 P1) */
 .msgr-main { position: relative; }
 
 /* 채널 시트 부품 — 크루 시트와 같은 카드, 입력 필드·스위치 행 */

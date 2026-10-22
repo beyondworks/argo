@@ -108,6 +108,7 @@ import { appBackStack, rootBackAction } from './back-stack.mjs'; import { useBac
 import { watchOnline } from './connection.mjs';
 import { selfMember, personalSelfName } from './self-member.mjs';
 import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu.mjs';
+import { crewAddNoteKey } from './crew-add-note.mjs';
 import { initialOpen, foldToggle, railForceOpen } from './rail-fold.mjs';
 import { adminRemovedNotice, readAdminRemoved } from './dispatch-notice.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
@@ -3622,6 +3623,11 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
           <div style={{ minWidth: 0 }}><div className="name">{crew.display_name}</div><div className="msgr-klabel">{crew.role_text}</div>{crew.bio && <p className="bio">{crew.bio}</p>}</div>
           <button type="button" className="btn ghost" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={15} /></button>
         </div>
+        <div className="me me-top">{/* 대화·허용 요청을 머리 바로 아래로(UX 정리 P1 2026-10-22 — 카드를 여는 가장 흔한 이유인데 맨 아래에 있었다) */}
+          <span className={`msgr-dot${canMe ? ' ok' : ''}`} /><span>{canMe ? t('crew.allow.me.yes') : t('crew.allow.me.no')}</span>
+          {canMe && <button type="button" className="btn btn-primary sm" onClick={onDm} title={t('dm.crewNote')}><I name="at" size={13} />{t(dmPersonal ? 'ui.dm.personal' : 'ui.dm')}</button>}
+          {!owner && !canMe && <button type="button" className="btn btn-primary sm" onClick={request} disabled={!channelId}><I name="at" size={13} />{t('crew.request')}</button>}
+        </div>
         <div className="facts">
           <div><span className="msgr-klabel">{t('crew.tier')}</span><span className={`msgr-tier ${tier}`}>{tier === 'company' ? t('crew.tier.company') : t('crew.tier.personal')}</span></div>
           <div><span className="msgr-klabel">{t('crew.owner')}</span><span><Av name={nameOfUser(crew.owner_user_id)} size="sm" userId={crew.owner_user_id} /> {tier === 'company' && crew.hosting !== 'bot' ? t('crew.tier.company.owner', { org: org?.name ?? '' }) : nameOfUser(crew.owner_user_id)}</span></div>
@@ -3658,11 +3664,6 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
             </div>
           )}
           {locked ? <p className="note">{t('crew.allow.locked')}</p> : !owner && <p className="note">{t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) })}</p>}
-          <div className="me">
-            <span className={`msgr-dot${canMe ? ' ok' : ''}`} /><span>{canMe ? t('crew.allow.me.yes') : t('crew.allow.me.no')}</span>
-            {canMe && <button type="button" className="btn btn-primary sm" onClick={onDm} title={t('dm.crewNote')}><I name="at" size={13} />{t(dmPersonal ? 'ui.dm.personal' : 'ui.dm')}</button>}
-            {!owner && !canMe && <button type="button" className="btn btn-primary sm" onClick={request} disabled={!channelId}><I name="at" size={13} />{t('crew.request')}</button>}
-          </div>
         </section>
       </aside>
     </div>
@@ -3927,15 +3928,6 @@ function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dm
               </div>
             ); })}
             {(() => { const k = crewListEmptyKey({ crewCount: chCrews.length, pendingCount: joinReqs.length, isPersonal, canAddCrew, scoped }); return k && <p className="empty">{t(k)}{k === 'ch.crews.none.personal' && <> <RunnerButton /></>}</p>; })()}{/* 넣을 내 에이전트가 없는데 "아래 추가"를 가리키던 문구(유건 제보 2026-09-30) */}
-            {kickExcludes(channel) && canEdit && (excludedUsers.length > 0 || (channel.kind === 'public' && excludedCrews.length > 0)) && (<>
-              <div className="msgr-klabel">{t('ch.excluded')}</div>
-              {excludedUsers.map((id) => { const m = members.find((x) => x.user_id === id); return (
-                <div key={`xu:${id}`} className="row"><Av name={m?.display_name || id} size="sm" userId={id} /><span className="name">{m?.display_name || id.slice(0, 8)}</span><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => restoreMember('user', id)}>{t('ch.restore')}</button></div>
-              ); })}
-              {excludedCrews.map((id) => { const c = crews.find((x) => x.id === id); return (
-                <div key={`xc:${id}`} className="row"><Av name={c?.display_name || id} crew size="sm" crewId={id} /><span className="name">{c?.display_name || id.slice(0, 8)}</span><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => restoreMember('crew', id)}>{t('ch.restore')}</button></div>
-              ); })}
-            </>)}
           </div>
           {pendingReqs.map((r) => (
             <div key={r.id} className="row req"><span className="name">{r.name}</span><span className={`sub ${r.status}`}>{r.status === 'pending' ? (nodeOn ? t('ch.crew.new.pending') : t('ch.crew.new.pendingOff')) : r.status === 'failed' ? t('ch.crew.new.failed', { why: r.error ?? '' }) : t('ch.crew.new.done')}</span></div>
@@ -3966,13 +3958,12 @@ function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dm
                     <Av name={c.display_name} crew size="xs" crewId={c.id} company={crewTier(c, org) === 'company'} /><span className="name">{c.display_name}</span>
                     <span className="msgr-klabel">{dispatch ? t('ch.add.mine.short') : needsApproval(c) ? t('ch.crew.join.ask') : c.role_text ?? ''}</span></label>
                 ))}</div>}
-                {rows.length > 0 && <p className="note">{t('ch.add.crew.shared')}</p>}
-                {addableCrews.some(needsApproval) && <p className="note">{isDmRoom
-                  ? (dmApprover ? t(dmApprover === channel.created_by ? 'dm.crew.join.note.opener' : 'dm.crew.join.note', { name: nameOfUser(dmApprover) }) : t('dm.crew.join.note.unknown'))
-                  : t('ch.crew.join.note')}</p>}
-                {!rows.length && <p className="note">{t('ch.add.crew.none')} <RunnerButton /></p>}
-                {rows.some((r) => r.dispatch) && <p className="note">{t('ch.add.mine.note')}</p>}
-                {channel.kind === 'private' && <p className="note">{t('ch.add.crew.note')}</p>}
+                {rows.length > 0 && <p className="note">{t('ch.add.crew.shared')}</p>}{/* 방 규칙(동의가 일어나는 화면, 2026-09-18) — 늘 둔다 */}
+                {(() => { const k = crewAddNoteKey({ rows: rows.length, picked: picked.length, pickedApproval: picked.some((r) => !r.dispatch && needsApproval(r.c)), anyApproval: addableCrews.some(needsApproval), pickedCompany: picked.some((r) => crewTier(r.c, org) === 'company'), anyCompany: rows.some((r) => crewTier(r.c, org) === 'company'), pickedDispatch: picked.some((r) => r.dispatch), anyDispatch: rows.some((r) => r.dispatch), privateRoom: channel.kind === 'private' }); /* 상황 안내는 한 번에 하나(UX 정리 P1 2026-10-22 — 최대 5개가 쌓였다). 고른 것이 먼저, 안 골랐으면 목록에 있는 것 */
+                  if (!k) return null;
+                  if (k === 'none') return <p className="note">{t('ch.add.crew.none')} <RunnerButton /></p>;
+                  if (k === 'approval') return <p className="note">{isDmRoom ? (dmApprover ? t(dmApprover === channel.created_by ? 'dm.crew.join.note.opener' : 'dm.crew.join.note', { name: nameOfUser(dmApprover) }) : t('dm.crew.join.note.unknown')) : t('ch.crew.join.note')}</p>;
+                  return <p className="note">{t(k === 'dispatch' ? 'ch.add.mine.note' : 'ch.add.crew.note')}</p>; })()}{/* company = 비공개 방에 회사 에이전트를 넣으면 서비스 계정도 들어온다 */}
                 <div className="acts"><button type="button" className="btn btn-primary sm" disabled={busy || !picked.length} onClick={() => addCrews(rows)}><I name="plus" size={13} />{picked.length ? t('ch.add.crew.submit', { n: picked.length }) : t('ch.add.crew')}</button><button type="button" className="btn sm" disabled={busy} onClick={() => { setAdd(null); setCrewPicks(new Set()); }}>{t('ui.cancel')}</button></div>
               </>); })()}
               {add === 'newcrew' && newCrew && (
@@ -3993,6 +3984,17 @@ function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dm
         <section className="msgr-fold">
           <button type="button" className="fold-head" onClick={() => setMore((v) => !v)} aria-expanded={more}><h3>{t(isPersonal ? 'personal.sheet.settings' : 'ch.settings')}</h3><I name="caret" size={14} className={more ? 'open' : ''} /></button>
           {more && (<>
+            <div className="msgr-rows">
+            {kickExcludes(channel) && canEdit && (excludedUsers.length > 0 || (channel.kind === 'public' && excludedCrews.length > 0)) && (<>
+              <div className="msgr-klabel">{t('ch.excluded')}</div>{/* 내보낸 사람·에이전트 되돌리기는 설정 접힘 안으로(UX 정리 P1 2026-10-22 — 구성원 목록 사이에 섞여 길어졌다) */}
+              {excludedUsers.map((id) => { const m = members.find((x) => x.user_id === id); return (
+                <div key={`xu:${id}`} className="row"><Av name={m?.display_name || id} size="sm" userId={id} /><span className="name">{m?.display_name || id.slice(0, 8)}</span><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => restoreMember('user', id)}>{t('ch.restore')}</button></div>
+              ); })}
+              {excludedCrews.map((id) => { const c = crews.find((x) => x.id === id); return (
+                <div key={`xc:${id}`} className="row"><Av name={c?.display_name || id} crew size="sm" crewId={id} /><span className="name">{c?.display_name || id.slice(0, 8)}</span><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => restoreMember('crew', id)}>{t('ch.restore')}</button></div>
+              ); })}
+            </>)}
+            </div>
             {channel.kind !== 'dm' && (<>
               <label className="field"><span className="msgr-klabel">{t('ch.name')}</span><input value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit || busy} /></label>
               <label className="field"><span className="msgr-klabel">{t('ch.topic')}</span><input value={topic} placeholder={t('ch.topic.ph')} onChange={(e) => setTopic(e.target.value)} disabled={!canEdit || busy} /></label>
