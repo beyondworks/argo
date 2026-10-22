@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from '../src/rail-state.mjs';
 import { stampFetched } from '../src/presence-clock.mjs'; import { readWithSeen } from '../src/crew-seen.mjs'; // loadOrg의 접속 시각 읽기(기기 단위 심박)
 import { crewOrder, withoutCopies } from '../src/mention-candidates.mjs'; // loadOrg의 크루 목록 순서·충돌 사본 제외
-import { ownRowsReader } from '../src/agent-groups.mjs'; // 내 크루 행 읽기 하나로(분리 검수 2026-10-05 #4)
+import { ownRowsReader, v2MyAgents } from '../src/agent-groups.mjs'; // 내 크루 행 읽기 하나로(분리 검수 2026-10-05 #4)
 
 test('old organization response and old same-org refresh cannot apply', () => {
   let org = 'a'; const gate = createRequestGate(() => org);
@@ -176,7 +176,7 @@ test('loadMyAgents: 조직 행·개인 행 모두 충돌 사본은 빠지고, �
     rpc(name) { return Promise.resolve(name === 'msgr_personal_room_crews' ? personal : []); },
   };
   let mine = null; let reads = 0; let ownState = null;
-  const deps = { uid: 'me', faceCol: { missingAt: Date.now() }, q: async (x) => await x, supabase, stampFetched, withoutCopies, setAgentPins: () => {}, setMyAgents: (v) => { mine = v; },
+  const deps = { V2: false, v2MyAgents, uid: 'me', faceCol: { missingAt: Date.now() }, q: async (x) => await x, supabase, stampFetched, withoutCopies, setAgentPins: () => {}, setMyAgents: (v) => { mine = v; }, // V2 끔 = 옛 모델(v2 갈래는 v2-phone-agents.test.mjs)
     readOwnCrews: ownRowsReader(async () => { reads += 1; return own; }), syncEpochRef: { current: 0 }, // 내 크루 행 읽기는 얼굴 지도와 같이 쓴다(유건 2026-10-05) — 실제 읽기 함수
     newerOwn: (o) => (cur) => (cur && cur.at >= o.at ? cur : o), setOwnCrews: (f) => { ownState = typeof f === 'function' ? f(ownState) : f; } };
   const loadMyAgents = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
