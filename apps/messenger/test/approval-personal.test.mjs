@@ -153,7 +153,7 @@ const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const between = (a, b) => app.slice(app.indexOf(a), app.indexOf(b, app.indexOf(a)));
 
 test('연결 — 폰 결재 목록은 조회 범위 함수로 한 번만 읽고(조직이 없어도 개인 결재를 읽는다), 정책은 조직 high만', () => {
-  const load = between('const loadApprovals = useCallback(async () => {\n    if (!uid || !isPhoneRef.current) return;', '}, [uid, orgIdsKey]);');
+  const load = between('const loadApprovals = useCallback(async () => {\n    if (!uid || (!isPhoneRef.current && !V2)) return;', '}, [uid, orgIdsKey]);') // v2 갈래(v2/my-approvals.mjs)는 v2-my-approvals.test.mjs — 옛 갈래는 그대로;
   assert.match(load, /scopePendingApprovals\(supabase\.from\('msgr_crew_approvals'\)\.select\('id, org_id, channel_id, crew_id, action, reason, payload, risk, kind, created_at, msgr_crews\(owner_user_id\)'\), ids\)\.eq\('status', 'pending'\)/);
   assert.doesNotMatch(load, /\.in\('org_id', ids\)/, '조직만 읽던 필터가 남아 있다');
   assert.equal((load.match(/from\('msgr_crew_approvals'\)/g) ?? []).length, 1, '결재 표 조회는 한 번');

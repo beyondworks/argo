@@ -27,7 +27,8 @@ import { createDecliner, afterDecline, declineErrorTarget, withDeclining, withou
 import { InvitesCard as V2InvitesCard } from './v2/InvitesCard.jsx';
 import { v2SearchFound } from './v2/search.mjs';
 import { systemLine as v2SystemLine } from './v2/system-text.mjs';
-import { loadSpaces as v2LoadSpaces } from './v2/data.mjs';
+import { loadSpaces as v2LoadSpaces, decideApproval as v2DecideApproval } from './v2/data.mjs';
+import { loadMyApprovals as v2LoadMyApprovals, myApprovalItems as v2ApprovalItems, approvalsNeedReload as v2ApprovalsNeedReload } from './v2/my-approvals.mjs';
 import { spaceList as v2SpaceList, liveSpaceIds as v2LiveSpaceIds } from './v2/spaces.mjs';
 // 메신저 v2(U6c-1b, 옵트인): 플래그가 켜지면 같은 셸이 v2 표를 읽도록 조회 어댑터(v2/source.mjs)를 끼운다. 꺼지면 원래 클라이언트 그대로(아래 코드는 바뀌지 않는다).
 const V2 = v2Enabled(import.meta.env.VITE_MSGR_V2, (() => { try { return globalThis.localStorage; } catch { return null; } })());
@@ -1610,7 +1611,7 @@ function Shell({ session }) {
   // ── 폰 에이전트 탭: 결재 대기(모든 조직) — 아래 탭 뱃지와 맨 위 카드. 폰에서만 읽는다(데스크톱은 알림함이 그대로).
   // 부르는 때: 시작(조직 목록 뒤) 한 번, 결재 방송(어느 조직이든 — 이미 붙은 구독에 처리기만 더함, 600ms에 한 번), 앱 복귀, 에이전트 탭에 들어갈 때.
   // 주기 호출 없음 — 유휴 0. 한 번에 2건(결재 표·에이전트 참여 요청 표, 둘 다 RLS가 볼 수 있는 대기 행만).
-  const [approvals, setApprovals] = useState([]);
+  const [approvals, setApprovals] = useState([]); const approvalsRef = useRef(approvals); approvalsRef.current = approvals;
   const [myAgents, setMyAgents] = useState(null); // 폰 에이전트 탭 — 내 에이전트(모든 공간). 아래 loadMyAgents가 채운다(선언은 얼굴 문맥(avatarCtx)보다 앞)
   // 에이전트 = 한 사람(유건 2026-10-05) — 내 크루 행 전부(개인 공간 + 모든 조직)로 얼굴 지도(crew-face.mjs agentLooks)를 만든다. 같은 에이전트는 공간·화면과 상관없이 같은 얼굴·사진.
   // 읽기: 로그인 때 1건 + 복귀·재연결(syncEpoch) 때 1건. 내 에이전트 목록(loadMyAgents)도 같은 읽기를 쓴다(agent-groups.mjs ownRowsReader — 읽는 중이면 같은 약속,
@@ -1664,7 +1665,9 @@ function Shell({ session }) {
     return { crew, room };
   };
   const loadApprovals = useCallback(async () => {
-    if (!uid || !isPhoneRef.current) return;
+    if (!uid || (!isPhoneRef.current && !V2)) return;
+    // v2: 옛 결재 표는 v2 연결기가 빈 결과로 돌린다(v2/source.mjs 'none') — 내가 주인인 결재 대기만 v2 표에서 읽는다(읽기만, v2/my-approvals.mjs). 데스크톱 결재 단추도 같은 목록
+    if (V2) { const d = await v2LoadMyApprovals(supabase, uid).catch(() => null); if (d) setApprovals(v2ApprovalItems({ ...d, uid })); return; } // 실패하면 지난 값을 둔다
     const ids = orgIdsKey ? orgIdsKey.split(',') : [];
     const [aps, joins] = await Promise.all([
       q(scopePendingApprovals(supabase.from('msgr_crew_approvals').select('id, org_id, channel_id, crew_id, action, reason, payload, risk, kind, created_at, msgr_crews(owner_user_id)'), ids).eq('status', 'pending').order('created_at', { ascending: false }).limit(40)).catch(() => null), // 조직 결재 + 개인 결재(org_id NULL, 주인과 자기 에이전트 1:1 방 — 2026-10-08)를 한 번에. 조직이 없으면 개인 결재만
@@ -1680,8 +1683,8 @@ function Shell({ session }) {
     setApprovals([...(aps ?? []).map(({ msgr_crews: crewRow, ...a }) => ({ ...a, apKind: a.kind, key: `approval:${a.id}`, kind: 'approval', at: a.created_at, crewOwnerId: crewRow ? crewRow.owner_user_id : undefined, policy: polOf[a.org_id] ?? null })), /* 결재 표의 종류(action·org_doc·connector…)는 apKind — 등급·요약 문구가 쓴다 */ ...(joins ?? []).map((r) => ({ ...r, key: `crewjoin:${r.id}`, kind: 'join', at: r.created_at, crewName: meta.crew[r.crew_id] ?? null, roomName: meta.room[r.channel_id] ?? null }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
   }, [uid, orgIdsKey]);
   const approvalsSoon = useRef(() => {});
-  approvalsSoon.current = () => { if (!isPhoneRef.current) return; clearTimeout(approvalsTimer.current); approvalsTimer.current = setTimeout(() => { loadApprovals().catch(() => {}); }, 600); };
-  useEffect(() => { if (isPhone && orgs) loadApprovals().catch(() => {}); }, [isPhone, !!orgs, loadApprovals, resumeEpoch, syncEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
+  approvalsSoon.current = () => { if (!isPhoneRef.current && !V2) return; clearTimeout(approvalsTimer.current); approvalsTimer.current = setTimeout(() => { loadApprovals().catch(() => {}); }, 600); };
+  useEffect(() => { if ((isPhone || V2) && orgs) loadApprovals().catch(() => {}); }, [isPhone, !!orgs, loadApprovals, resumeEpoch, syncEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => clearTimeout(approvalsTimer.current), []);
   useEffect(() => { loadTotals().catch(() => {}); }, [loadTotals, orgId, syncEpoch]); // 다른 공간의 새 글은 crossRef가 다시 센다(주기 없음)
   const crossRef = useRef(() => {});
@@ -1788,7 +1791,7 @@ function Shell({ session }) {
         }
       }),
       m.on('attachments', ({ roomId, messageId }) => setEvent(broadcastEvent('attach', { channel_id: roomId, message_id: messageId }))),
-      m.on('works', ({ roomId, works }) => setEvent(broadcastEvent('v2work', { channel_id: roomId, works }))), // 일 표지(U6c-1a) — 채널 화면이 카드를 만든다
+      m.on('works', ({ roomId, works }) => { setEvent(broadcastEvent('v2work', { channel_id: roomId, works })); if (v2ApprovalsNeedReload(works, approvalsRef.current, uid)) approvalsSoon.current(); }), // 일 표지(U6c-1a) — 채널 화면이 카드를 만든다. 결재 대기가 생기거나 목록의 일이 바뀌면 결재 목록을 한 번 다시 읽는다
       m.on('progress', (p) => setEvent(broadcastEvent('v2progress', p))),
       m.on('state', (st) => { setV2state(st); const ready = st.state === 'ready'; if (wasReady !== null && ready !== wasReady) setEvent(broadcastEvent(ready ? 'rt_up' : 'rt_down', {})); wasReady = ready; }),
       m.on('event', (ev) => v2RoomEventRef.current?.(ev)), // 공간·방이 생기거나 빠짐(U6d 방송) — 목록을 한 번 다시 읽는다(v2/room-events.mjs)
@@ -2967,6 +2970,7 @@ function Shell({ session }) {
   const friendReqs = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
   const friendList = withoutHidden(friends.filter((f) => f.status === 'accepted'), hiddenUserIds).sort((a, b) => String(a.display_name || a.handle || '').localeCompare(String(b.display_name || b.handle || ''), 'ko'));
   const approvalItems = decidableApprovals(approvals, { uid, orgs }); // 결재 대기(모든 조직 — loadApprovals) 중 내가 결정할 수 있는 것만(분리 검수 M-2 — 숫자·뱃지·페이지 모두). 내 역할은 조직 목록(orgs[].role)
+  const deskAp = V2 && !isPhone && approvalItems.length > 0; // 데스크톱 레일 아래 줄의 결재 단추(v2) — 있을 때만 칸이 하나 늘어난다(.msgr-foot.has-ap)
   const tabBadgeN = tabBadges({ hereKey, here: hereCount, hereReady: unreadSpace === orgId, totals: spaceTotals, orgIds: orgIdList, approvals: approvalItems.length, friendRequests: friendReqs.length + liveInvites(myInvites).length });
   const tabQText = tabQ ?? '';
   const decideFriend = async (f, accept) => { try { await q(supabase.rpc('msgr_friend_decide', { other: f.user_id, accept })); setNote(t(accept ? 'friends.accepted' : 'friends.declined')); await onFriendsChanged(); } catch (e) { setErr(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : e.message); } };
@@ -3096,6 +3100,20 @@ function Shell({ session }) {
     if (it.kind === 'approval') q(supabase.from('msgr_messages').select('id').eq('channel_id', it.channel_id).eq('kind', 'approval_card').contains('mentions', JSON.stringify([{ kind: 'approval', id: it.id }])).limit(1))
       .then((r) => { if (r?.[0]) setJump({ ch: it.channel_id, mid: r[0].id, start: true }); }).catch(() => {});
   }; // 다른 조직이면 알림 탭과 같은 길(decideNav)이 공간을 바꿔 연다. 참여 요청은 그 방 설정창까지
+  // 결재 대기 카드 — 에이전트 탭(0건이면 '없음'으로 꺼 둠)과 채팅 탭 맨 위(있을 때만, UX 정리 P1 2026-10-22)가 같은 목록(approvalItems)·같은 모양을 쓴다
+  const apCard = (
+    <div className="ph-apcard-wrap">{/* 결재 대기 카드 — 누르면 쌓인 결재만 모은 페이지(유건 2026-10-02) */}
+      <button type="button" className={`ph-apcard${approvalItems.length ? ' on' : ''}`} onClick={() => { setTabQ(null); setPage('approvals'); }} disabled={!approvalItems.length}>
+        <span className="ph-aphead"><span className="ph-apic"><I name="stamp" size={18} /></span><span className="ph-kbody"><span className="name">{t('phone.agents.approvals', { n: approvalItems.length })}</span><span className="snip">{approvalItems.length ? t('phone.agents.approvals.tap') : t('phone.agents.approvals.none')}</span></span>{approvalItems.length > 0 && <I name="next" size={20} className="ph-apgo" />}</span>
+        {approvalItems.slice(0, 3).map((it) => (
+          <span key={it.key} className="ph-aprow">
+            <Av name={myAgents?.find((c) => c.id === it.crew_id)?.display_name ?? crewShown(it.crew_id)?.display_name ?? it.crewName ?? '?'} crew size="sm" crewId={it.crew_id} />
+            <span className="ph-kbody"><span className="snip">{approvalSum(it)}</span><span className="ph-apmeta">{[levelOf(it) && t(`ap.level.${levelOf(it)}`), it.org_id ? spaceName(it.org_id) : null, fmtDmWhen(t('time.yesterday'), Date.parse(it.at), lang)].filter(Boolean).join(' · ')}</span></span>
+          </span>))}
+        {approvalItems.length > 3 && <span className="ph-apmore">{t('phone.agents.approvals.more', { n: approvalItems.length - 3 })}</span>}
+      </button>
+    </div>
+  );
   const phoneRoot = (
     <div className="ph-root" data-tab={rootTab}>
       {rootTab === 'friends' && (<PhoneHead title={t('phone.tab.friends')} actions={[searchAct, { key: 'add', icon: 'personplus', label: t('friends.add'), run: () => { setTabQ(null); setFriendAdd(true); } }, gearAct]} />)}
@@ -3129,6 +3147,7 @@ function Shell({ session }) {
           </>); })()}
         </>)}
         {rootTab === 'chats' && (<>
+          {!tabQText.trim() && approvalItems.length > 0 && apCard}{/* 결재가 있을 때만 채팅 탭 맨 위에도 — 결재를 찾으러 에이전트 탭까지 가지 않게 */}
           <div className="ph-chiprow">
             <div className="ph-chips" role="radiogroup" aria-label={t('dm.filter')}>{CHAT_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{k === 'unread' ? (chatUnreadTotal(chatsAll, unread, muted) ? t('phone.chip.unread', { n: chatUnreadTotal(chatsAll, unread, muted) }) : t('phone.chip.unread0')) : t(`phone.chip.${k}`)}</button>)}</div>
             <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={16} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu">{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>
@@ -3187,17 +3206,7 @@ function Shell({ session }) {
           : aiConsentLoading ? <OrgGateLoading t={t} bare />
           : <PhoneMemory key={orgRow.id} org={orgRow} channels={channels} previewChannels={previewChannels} dmName={dmName} nameOfUser={nameOfUser} query={tabQText} sort={memSort} onSort={pickMemSort} onError={setErr} searchFoot={searchFoot} onOpen={(doc, label) => { setMemDoc({ doc, label }); setPage('memdoc'); }} />)}
         {rootTab === 'agents' && (<>
-          {!tabQText.trim() && <div className="ph-apcard-wrap">{/* 결재 대기 카드 — 누르면 쌓인 결재만 모은 페이지(유건 2026-10-02) */}
-            <button type="button" className={`ph-apcard${approvalItems.length ? ' on' : ''}`} onClick={() => { setTabQ(null); setPage('approvals'); }} disabled={!approvalItems.length}>
-              <span className="ph-aphead"><span className="ph-apic"><I name="stamp" size={18} /></span><span className="ph-kbody"><span className="name">{t('phone.agents.approvals', { n: approvalItems.length })}</span><span className="snip">{approvalItems.length ? t('phone.agents.approvals.tap') : t('phone.agents.approvals.none')}</span></span>{approvalItems.length > 0 && <I name="next" size={20} className="ph-apgo" />}</span>
-              {approvalItems.slice(0, 3).map((it) => (
-                <span key={it.key} className="ph-aprow">
-                  <Av name={myAgents?.find((c) => c.id === it.crew_id)?.display_name ?? crewShown(it.crew_id)?.display_name ?? it.crewName ?? '?'} crew size="sm" crewId={it.crew_id} />
-                  <span className="ph-kbody"><span className="snip">{approvalSum(it)}</span><span className="ph-apmeta">{[levelOf(it) && t(`ap.level.${levelOf(it)}`), it.org_id ? spaceName(it.org_id) : null, fmtDmWhen(t('time.yesterday'), Date.parse(it.at), lang)].filter(Boolean).join(' · ')}</span></span>
-                </span>))}
-              {approvalItems.length > 3 && <span className="ph-apmore">{t('phone.agents.approvals.more', { n: approvalItems.length - 3 })}</span>}
-            </button>
-          </div>}
+          {!tabQText.trim() && apCard}
           {pauseNote && !tabQText.trim() && <div className="msgr-hint ph-pausenote" role="status">{t(pauseNote.key, pauseNote.vars)}{pauseNote.key !== 'agents.pause.limit' && <div className="ph-emptyacts"><RunnerButton /></div>}</div>}{/* 무료 계정 — 목록이 비거나 줄어든 이유(2026-10-11) */}
           {agentGroups.length > 0 && <div className="ph-chiprow">
             <div className="ph-chips" role="radiogroup" aria-label={t('phone.agents.filter')}>{AGENT_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={agentFilter === k} className={agentFilter === k ? 'active' : ''} onClick={() => setAgentFilter(k)}>{k === 'all' ? t('phone.chip.all') : t(`phone.agents.chip.${k}`)}</button>)}</div>
@@ -3337,7 +3346,7 @@ function Shell({ session }) {
             ? <DangerModal title={t(railActionKey)} description={<>{t(railActionKey === 'ch.leave' && railAction.channel.kind === 'public' ? 'ch.leave.confirm.note.public' : `${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} requireText={railAction.channel.kind === 'dm' ? dmName(railAction.channel) : railAction.channel.name} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />
             : <ConfirmModal title={t(railActionKey)} description={<>{t(railActionKey === 'ch.leave' && railAction.channel.kind === 'public' ? 'ch.leave.confirm.note.public' : `${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />}
         </div>, document.body)}
-        {!isPhone && <div className="msgr-foot">
+        {!isPhone && <div className={`msgr-foot${deskAp ? ' has-ap' : ''}`}>
           {isPhone && !orgBlocked && nodeInd && <button type="button" className={`ph-node${nodeInd.state === 'on' ? ' on' : nodeInd.state === 'down' ? ' down' : ''}`} onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={nodeLabel} aria-label={nodeLabel}><I name={nodeInd.state === 'on' ? 'node' : 'nodeoff'} size={18} /></button>}{/* 서버를 연결하는 사람(관리자)에게만, 없음은 중립색·끊김만 경고색(점검 A·B #11) */}
           <button type="button" className="me" onClick={() => { if (isPhone) { setSettingsTab('me'); setPage('settings'); setRail(false); } else setMeMenu((v) => !v); }} aria-haspopup={isPhone ? undefined : 'menu'} aria-expanded={isPhone ? undefined : meMenu} title={t(isPhone ? 'ui.settings' : 'ui.me.menu')}>
             <Av name={me?.display_name || session.user.email} size="sm" userId={uid} /><span className="name">{me?.display_name || session.user.email}</span>
@@ -3347,6 +3356,7 @@ function Shell({ session }) {
             <button type="button" role="menuitem" className="danger" disabled={signingOut} onClick={() => { setMeMenu(false); signOut(); }}><I name="out" size={13} />{t('auth.signOut')}</button>
           </div>)}
           {org && !orgBlocked && <button type="button" className={`btn ghost bell${page === 'inbox' ? ' on' : ''}`} onClick={() => page === 'inbox' ? setPage('chat') : openInbox()} title={t('inbox.title')} aria-label={t('inbox.title')}><I name="bell" size={15} />{inboxUnread > 0 && <span className="n">{inboxUnread > 99 ? '99+' : inboxUnread}</span>}</button>}
+          {deskAp && <button type="button" className="btn ghost bell" onClick={() => openApproval(approvalItems[0])} title={t('desk.ap.open')} aria-label={t('phone.agents.approvals', { n: approvalItems.length })}><I name="stamp" size={15} /><span className="n">{approvalItems.length > 99 ? '99+' : approvalItems.length}</span></button>}{/* v2 데스크톱 결재 입구(UX 정리 P1) — 결재가 있을 때만, 폰 결재 카드와 같은 목록. 누르면 가장 최근 결재의 방(그 방 일 카드에 승인·거절) */}
           {org && isPersonal && !orgBlocked && !isPhone && <span className="btn ghost msgr-foot-slot" aria-hidden="true" />}{/* 개인 공간엔 기억이 없다 — 자리는 비워 둬 알림·설정 아이콘이 조직 공간과 같은 x에 있게(공간을 오갈 때 45px씩 움직이지 않는다, LA-22). 폰은 이 줄이 머리 오른쪽 원이라 해당 없음 */}
           {org && !isPersonal && !orgBlocked && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="folder" size={15} /></button>}{/* 기억 = 폴더(폰 아래 탭과 같은 뜻 — 반짝이는 에이전트, UXM-10) */}
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
@@ -5219,7 +5229,10 @@ function PhoneApprovals({ items, uid, orgs, crewName, spaceName, onBack, onMenu,
     if (busy) return; setBusy(it.key);
     try {
       if (it.kind === 'join') await q(supabase.rpc('msgr_crew_join_decide', { req: it.id, approve: ok }));
-      else {
+      else if (it.v2) { // v2 결재 — 방 안 일 카드와 같은 쓰기(msgr2_approval_decide: 앱 기기 + 에이전트 주인). 이미 정했거나 기한이 지났으면 서버가 지금 상태를 돌려준다
+        const st = await v2DecideApproval(supabase, it.id, ok ? 'approve' : 'reject');
+        if (st !== (ok ? 'approved' : 'rejected')) { setDone((d) => new Set(d).add(it.key)); onNote(t(['approved', 'rejected', 'expired'].includes(st) ? `v2.ap.${st}` : 'v2.ap.failed')); onDecided?.(); return; }
+      } else {
         const res = await supabase.from('msgr_crew_approvals').update({ status: ok ? 'approved' : 'rejected', decided_by: uid, decided_at: new Date().toISOString() }).eq('id', it.id).select('id');
         // 결재권 없음 — USING이면 0행, WITH CHECK(예: '꼭 확인'의 크루 소유자)면 RLS 오류. 둘 다 '권한이 없습니다' 대신 누가 결정하는지 안내한다(분리 검수 M-2)
         if (approvalDenied(res.error, res.data)) { setDenied((d) => new Set(d).add(it.key)); onError(t(approvalOnlyKey(phoneApprovalDecider(it, { uid, orgs })))); onDecided?.(); return; }
