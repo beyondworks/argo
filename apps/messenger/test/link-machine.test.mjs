@@ -77,6 +77,7 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
         || !/^\d+(\.\d+)*/.test(String(args.p_app_version ?? '')) || (args.p_kind === 'app' && runners.length)) return err('22023', 'msgr2_device_invalid');
       if (args.p_kind === 'app' && (args.p_link_min != null || args.p_link_max != null)) return err('22023', 'msgr2_device_invalid');
       if (s.db.minVersion && args.p_app_version < s.db.minVersion) return err('P0001', 'app_version_unsupported');
+      if (s.db.free) return err('42501', 'msgr2_pro_required'); // 무료 계정 — 새 기기 등록은 Pro만(20261020201700)
       let d = s.db.bySession.get(s.session.id);
       if (!d) {
         if (args.p_kind === 'app' && s.session.ageMin > 10) return err('42501', 'device_login_required');
@@ -1022,4 +1023,21 @@ test('R3 최종 검수: 로그아웃(dropPushToken) 뒤 늦게 온 토큰(권한
   assert.equal(fake.log.filter((l) => l.name === 'msgr2_device_register').at(-1).args.p_push_token, null);
   m.resumePush(); m.setPushToken('apns-token-1'); await flush();
   assert.equal(fake.log.at(-1).args.p_push_token, 'apns-token-1', '로그아웃이 실패하면 다시 싣는다');
+});
+
+test('#1133 검수: 무료 계정 등록 거부(msgr2_pro_required) → 재시도 없이 gave_up:pro_required, 등록 1번·소켓 0·이벤트로 다시 묻지 않음, 다시 확인은 1번씩, Pro가 되면 붙는다', async () => {
+  const fake = fakeSupabase(); fake.db.free = true;
+  const { m, clock } = setup({ fake });
+  await m.start(); await flush();
+  assert.equal(m.getState(), 'disconnected'); assert.equal(m.getSnapshot().reason, 'gave_up:pro_required');
+  assert.equal(fake.count('msgr2_device_register'), 1, '등록 호출 1번');
+  await clock.advance(30 * MIN); m.nudge(); m.nudge(); await flush();
+  assert.equal(fake.count('msgr2_device_register'), 1, '간격 재시도·online nudge로 다시 묻지 않는다');
+  assert.deepEqual(fake.joins, [], '소켓 0'); assert.equal(clock.pending(), 0, '타이머 0');
+  assert.equal(m.retry(), true); await flush();
+  assert.equal(fake.count('msgr2_device_register'), 2, '사람이 누른 다시 확인 = 1번');
+  assert.equal(m.getSnapshot().reason, 'gave_up:pro_required');
+  fake.db.free = false; // Pro가 됨
+  assert.equal(m.retry(), true); await flush();
+  assert.equal(m.getState(), 'ready', 'Pro가 되면 다시 확인으로 바로 붙는다');
 });

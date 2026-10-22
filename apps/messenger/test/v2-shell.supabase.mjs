@@ -99,7 +99,7 @@ function query(table) {
 
 const rpcs = {
   argo_min_app_version: () => null, msgr2_service_pause: () => null,
-  msgr2_device_register: () => { if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
+  msgr2_device_register: () => { if (state.free) throw Object.assign(new Error('msgr2_pro_required'), { code: '42501' }); /* ?free=1 — 무료 계정(새 기기 등록은 Pro만, #1133 검수) */ if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
   msgr2_catch_up: () => ({ rooms: [], next_since: 202 }),
   msgr2_my_personal_space: () => P,
   msgr2_work_status: ({ p_work }) => ({ work: p_work, effects: [] }),
@@ -180,6 +180,7 @@ state.devices = [
   { id: 'd0000000-0000-4000-8000-000000000004', kind: 'app', app: 'messenger', app_version: '0.1.5', registered_at: at(60000), created_at: at(90000), state: 'expired', is_current: false },
 ];
 state.failRegister = Number(new URLSearchParams(globalThis.location?.search ?? '').get('failreg') || 0);
+state.free = new URLSearchParams(globalThis.location?.search ?? '').get('free') === '1';
 // 두 번째 계정(민지)이 나에게 새 1:1을 연다 — 서버처럼 방을 민지의 개인 공간(PM)에 두고, 나에게 rooms 사건과 글 방송을 보낸다(#1088 검수 1: 받는 쪽에 보여야 한다)
 state.friendOpens = (body = '안녕하세요, 민지예요') => {
   const T_ = state.tables; const id = '7f300000-0000-4000-8000-000000000001';

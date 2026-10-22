@@ -128,7 +128,7 @@ import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush, getPushToken } from './push.js';
 import { bindV2Push } from './v2/push-bind.mjs';
 import { aplusEnabled } from './aplus/flag.mjs';
-import APlusApp from './aplus/APlusApp.jsx';
+import APlusApp, { FreeGate } from './aplus/APlusApp.jsx';
 import { createAPlusSource } from './aplus/source.mjs';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 setIosCopy(isIos); // iOS 빌드는 무료 한도 오류에서 결제 권유를 뺀다(App Store 3.1.1 — error-toast.mjs)
@@ -2672,6 +2672,8 @@ function Shell({ session }) {
     return () => { off = true; clearTimeout(timer); };
   }, [tabBodyQ, uid, orgId, blockedIds, mutedCrewIds]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (orgs !== null || orgsLoad.phase === 'error' || orgsLoad.slow) markAppReady(); }, [orgs, orgsLoad.phase, orgsLoad.slow]); // 스플래시 준비 신호 — 조직을 불러온 뒤, 또는 첫 조회가 늦거나 실패해 안내를 보여야 할 때(D8 — 스플래시 뒤에 갇히지 않게)(조기 반환 앞, 훅 순서)
+  // 무료 계정(v2): 새 기기 등록은 Pro만이라 서버 자료를 하나도 못 읽는다 — '연결할 수 없음' 대신 A+와 같은 Pro 안내(다시 확인 = 등록 1번, iOS·회사 서버는 결제 권유 없음). #1133 검수
+  if (V2 && v2StateBar(v2state, v2stuck) === 'v2.state.proRequired') return <FreeGate t={t} purchase={purchaseChannel({ ios: isIos, customServer }) === 'web' ? { url: proCheckoutUrl({ plan: 'free', user: session.user }) } : null} onRecheck={() => { v2rt?.retry(); orgsLoader.retry(); }} /* 대기 화면 [다시 시도]와 같은 동작 — Pro가 됐으면 조직 목록도 다시 읽는다 */ onSignOut={signOut} />;
   if (orgs === null) return <OrgsLoading state={orgsLoad} online={online} onRetry={() => { v2rt?.retry(); orgsLoader.retry(); }} /* v2: 멈춘 연결 상태 기계도 사람이 누를 때만 다시 붙인다 */ onSignOut={signOut} signingOut={signingOut} />; // 첫 조직 목록 전(D8)
   const joinedChannel = loadedOrg.current === orgId ? channels.find((c) => c.id === chId) : undefined;
   const previewing = !joinedChannel && loadedOrg.current === orgId && !isPersonal ? previewChannels.find((c) => c.id === chId) : undefined;
