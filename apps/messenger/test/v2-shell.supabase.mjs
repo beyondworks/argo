@@ -122,7 +122,8 @@ const rpcs = {
       const msgs = T_.msgr2_messages.filter((x) => x.room_id === r.id && !x.deleted_at).sort((a, b) => a.id - b.id); const last = msgs[msgs.length - 1] ?? null;
       const read = T_.msgr2_reads.find((x) => x.room_id === r.id)?.last_read_id ?? 0; const pref = T_.msgr2_prefs.find((x) => x.room_id === r.id) ?? {};
       const mem = T_.msgr2_room_members.filter((x) => x.room_id === r.id && !x.removed_at);
-      const peer = r.kind === 'direct' ? (mem.find((x) => x.member_kind === 'user' && x.member_id !== uid) ?? mem.find((x) => x.member_kind === 'agent')) : null;
+      const others = mem.filter((x) => !(x.member_kind === 'user' && x.member_id === uid)); // 서버와 같은 상대 규칙(819fce07): direct, 또는 나 말고 활동 멤버가 하나인 private
+      const peer = r.kind === 'direct' || (r.kind === 'private' && others.length === 1) ? (others.find((x) => x.member_kind === 'user') ?? others.find((x) => x.member_kind === 'agent')) ?? null : null;
       return { room_id: r.id, room_kind: r.kind, room_name: r.name ?? '', space_id: sp.id, space_kind: sp.kind, space_name: sp.kind === 'team' ? sp.name : null,
         peer_kind: peer ? peer.member_kind : null, peer_id: peer ? peer.member_id : null, users: mem.filter((x) => x.member_kind === 'user').length, agents: mem.filter((x) => x.member_kind === 'agent').length,
         last_id: last ? last.id : null, last_at: last ? last.created_at : r.created_at, last_kind: last ? last.kind : null, last_author_kind: last ? last.author_kind : null,

@@ -28,7 +28,7 @@ import { InvitesCard as V2InvitesCard } from './v2/InvitesCard.jsx';
 import { v2SearchFound } from './v2/search.mjs';
 import { systemLine as v2SystemLine } from './v2/system-text.mjs';
 import { loadSpaces as v2LoadSpaces, decideApproval as v2DecideApproval } from './v2/data.mjs';
-import { loadOneList, oneListView, oneListOrgs, oneListSpace, oneListBump, oneListSeen, oneListUnread, oneListTitle, ONE_LIST_FILTERS, ONE_LIST_LIMIT } from './v2/one-list.mjs'; // 한 목록(메신저 단순화 2단계)
+import { loadOneList, oneListView, oneListOrgs, oneListSpace, oneListBump, oneListSeen, oneListUnread, oneListTitle, oneListPair, ONE_LIST_FILTERS, ONE_LIST_LIMIT } from './v2/one-list.mjs'; // 한 목록(메신저 단순화 2단계)
 import { loadMyApprovals as v2LoadMyApprovals, myApprovalItems as v2ApprovalItems, approvalsNeedReload as v2ApprovalsNeedReload } from './v2/my-approvals.mjs';
 import { spaceList as v2SpaceList, liveSpaceIds as v2LiveSpaceIds } from './v2/spaces.mjs';
 // 메신저 v2(U6c-1b, 옵트인): 플래그가 켜지면 같은 셸이 v2 표를 읽도록 조회 어댑터(v2/source.mjs)를 끼운다. 꺼지면 원래 클라이언트 그대로(아래 코드는 바뀌지 않는다).
@@ -3163,8 +3163,9 @@ function Shell({ session }) {
   const olOrgPick = isPhone ? olOrgBtn : <span className="msgr-sortwrap msgr-inboxorg">{olOrgBtn}{olOrgMenuEl}</span>; // 조직 거르개 — 조직이 없어도 둔다: 공간 메뉴가 없어진 자리의 '초대 코드로 참여·조직 만들기·도메인 참여·복구' 입구(설계 2절). 폰은 메뉴를 칩 줄 밖에(가로 스크롤 상자가 잘랐다)
   const olAvatar = (row, phone) => {
     const sz = phone ? 'kk' : 'xs';
-    if (row.room_kind !== 'direct' && row.space_kind === 'team') return phone ? <span className={`ph-chav${row.room_kind === 'private' ? ' lock' : ''}`} aria-hidden="true"><I name={row.room_kind === 'private' ? 'lock' : 'hash'} size={20} /></span> : <I name={row.room_kind === 'private' ? 'lock' : 'hash'} size={14} />;
-    if (row.room_kind !== 'direct') return <Av name={row._title} size={sz} />;
+    const pair = oneListPair(row); // 1:1(에이전트 1:1은 이름 없는 private 방)은 상대 얼굴
+    if (!pair && row.space_kind === 'team') return phone ? <span className={`ph-chav${row.room_kind === 'private' ? ' lock' : ''}`} aria-hidden="true"><I name={row.room_kind === 'private' ? 'lock' : 'hash'} size={20} /></span> : <I name={row.room_kind === 'private' ? 'lock' : 'hash'} size={14} />;
+    if (!pair) return <Av name={row._title} size={sz} />;
     return row.peer_kind === 'agent' ? <Av name={row._title} crew size={sz} crewId={row.peer_id} /> : <Av name={row._title} size={sz} userId={row.peer_id} />;
   };
   const olSnip = (row) => (row.last_kind === 'system' || row.last_preview == null ? '' : row.last_preview);

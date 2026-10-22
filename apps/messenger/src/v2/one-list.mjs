@@ -62,9 +62,12 @@ export function oneListSort(rows) {
   return [...(rows ?? [])].sort((a, b) => (Number(!!b.pinned) - Number(!!a.pinned)) || ((Date.parse(b.last_at) || 0) - (Date.parse(a.last_at) || 0)) || String(b.room_id).localeCompare(String(a.room_id)));
 }
 
+const roomLabel = (row) => String(row?.room_name ?? '').replace(/^dm:/, '').trim();
+/** 1:1로 보일 줄인가 — direct 방, 또는 이름 없는 방에 상대가 하나(서버 peer: 에이전트 1:1은 이름 없는 private 방, 20261020200600).
+    이름 붙은 방(팀 비공개 채널 등)은 나 말고 한 명뿐이어도 방 이름으로 보인다 */
+export const oneListPair = (row) => !!row?.peer_id && (row.room_kind === 'direct' || !roomLabel(row));
 /** 줄에 보일 이름 — 1:1은 상대 이름(names(kind, id)), 여러 명 방·채널은 방 이름(dm: 머리말 뺌), 없으면 null(부르는 쪽 기본 문구) */
 export function oneListTitle(row, names) {
-  if (row?.room_kind === 'direct' && row.peer_id) return names(row.peer_kind, row.peer_id) || null;
-  const n = String(row?.room_name ?? '').replace(/^dm:/, '').trim();
-  return n || null;
+  if (oneListPair(row)) return names(row.peer_kind, row.peer_id) || null;
+  return roomLabel(row) || null;
 }

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { loadOneList, oneListOrgs, oneListView, oneListBump, oneListSeen, oneListSort, oneListTitle, oneListUnread, oneListSpace, ONE_LIST_LIMIT } from '../src/v2/one-list.mjs';
+import { loadOneList, oneListOrgs, oneListView, oneListBump, oneListSeen, oneListSort, oneListTitle, oneListPair, oneListUnread, oneListSpace, ONE_LIST_LIMIT } from '../src/v2/one-list.mjs';
 
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const T1 = 't1', T2 = 't2', ME = 'me';
@@ -63,7 +63,13 @@ test('열면 안 읽음 0, 순서는 서버와 같이(고정 → 최근 활동 �
   assert.deepEqual(s.map((r) => r.room_id), ['c', 'd', 'b', 'a']);
   const names = (k, id) => ({ 'agent:a1': '리서치', 'user:u2': '민지' }[`${k}:${id}`] ?? null);
   assert.equal(oneListTitle(rows[2], names), '리서치'); assert.equal(oneListTitle(rows[3], names), '민지');
-  assert.equal(oneListTitle(rows[4], names), '주말 모임'); assert.equal(oneListTitle(row({ id: 'x', room_name: '' }), names), null, '이름이 없으면 부르는 쪽 기본 문구');
+  assert.equal(oneListTitle(rows[4], names), '주말 모임');
+  // 서버 모양(msgr2_agent_dm_open = 이름 없는 private 방, msgr2_inbox 819fce07 = 그런 방에도 peer): 1:1로 보인다. 이름 붙은 방은 상대가 하나여도 방 이름
+  const agentDm = row({ id: 'adm', room_kind: 'private', room_name: '', peer_kind: 'agent', peer_id: 'a1', users: 1, agents: 1 });
+  assert.equal(oneListPair(agentDm), true); assert.equal(oneListTitle(agentDm, names), '리서치');
+  const namedPriv = row({ id: 'plan', room_kind: 'private', room_name: '기획', peer_kind: 'user', peer_id: 'u2', space_kind: 'team', space_id: T1 });
+  assert.equal(oneListPair(namedPriv), false); assert.equal(oneListTitle(namedPriv, names), '기획');
+  assert.equal(oneListPair(row({ id: 'g', room_kind: 'private', room_name: '' })), false, '상대가 없는 이름 없는 방은 1:1이 아니다(기본 문구)'); assert.equal(oneListTitle(row({ id: 'x', room_name: '' }), names), null, '이름이 없으면 부르는 쪽 기본 문구');
 });
 
 test('배선: 읽기는 시작·복귀·방 사건·모르는 방 첫 글 때만(주기 조회 0), 무료·Pro 끝남은 FreeGate', () => {
