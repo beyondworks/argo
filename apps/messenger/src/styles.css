@@ -994,6 +994,7 @@
 .msgr-sec > summary .lbl, .msgr-fold > summary .lbl { display: inline-flex; align-items: center; gap: 7px; }
 .msgr-sec > summary .lbl::before, .msgr-fold > summary .lbl::before { content: ''; width: 5px; height: 5px; margin-left: 1px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg) translate(-1px, -1px); transition: transform 0.15s ease; }
 .msgr-sec:not([open]) > summary .lbl::before, .msgr-fold:not([open]) > summary .lbl::before { transform: rotate(-45deg) translate(-1px, 1px); }
+.msgr-sec.locked > summary { cursor: default; } .msgr-sec.locked > summary .lbl::before { display: none; } /* 늘 펼침 구역(폰 친구 홈·폰 DM 탭·고정 DM) — 접히지 않는 곳에 화살표를 보이지 않는다(유건 제보 2026-10-22) */
 @media (hover: hover) { .msgr-sec > summary:hover, .msgr-fold > summary:hover { color: var(--fg); } } .msgr-sec > summary:active, .msgr-fold > summary:active { color: var(--fg); }
 .msgr-sec > summary .right { display: inline-flex; align-items: center; }
 /* 에이전트 묶음 접기(유건 2026-09-16: "'내 에이전트', '외부' 등 그룹별로 드롭다운") — 머리는 기존 .msgr-folderhead 문법 그대로 */
