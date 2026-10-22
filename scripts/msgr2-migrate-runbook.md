@@ -20,7 +20,7 @@
 | 0-7 | 실행 전 옛 표 행 수를 남겼다 | `bash scripts/msgr2-migrate.sh verify` 출력의 `old_counts`를 파일로(아직 비어 있으면 ok=false가 정상) |
 | 0-8 | 옛 앱 사용자 안내를 올릴 준비가 됐다 | 아래 "안내 문구 초안"(창을 열 때 랜딩·공지, 스위치 뒤 옛 방 공지) |
 | 0-9 | 작업 창 길이를 잡았다 | 0-7의 운영 `old_counts`로 추정한다: **운영 `msgr_messages` 행 수 ÷ 200,000 × 약 1분(백필) + 약 15초(검증·첨부 확인·4b 다시 실행)**, 여기에 여유를 더한다. 근거: 2026-10-20 맥 two 로컬 Supabase 연습(합성 글 200,196·첨부 1,000) — 백필 53.1초, verify 1.1초, 첨부 20개 1.7초, 4b 9.9초, 스위치·창 닫기 0.7초(`artifacts/s2-rehearsal-2026-10-20`, 추적 안 함). 창 동안 계정 삭제·보관 조직 영구 삭제가 거부된다 |
-| 0-10 | A+ lite가 꺼져 있다(옛 대화를 옮기기로 다시 정한 경우에만 이 문서를 쓴다) | `select coalesce((select value from msgr_settings where key = 'msgr2_lite'), 'on')` = `off`. 켜져 있으면(A+ 기본, 2026-10-19 유건 "옛 대화는 옮기지 않음") 백필 함수가 `msgr2_backfill_lite`로 거부한다(20261020201400) |
+| 0-10 | lite 판정이 꺼져 있다(`_msgr2_lite()` = 거짓) | `select public._msgr2_lite()` = `false`. lite는 `msgr2_lite`가 `off`이거나 사람 채팅 스위치 `msgr2_people`이 `on`이면 풀린다(20261020201500). 이관은 사람 채팅을 켠 뒤 하므로 `msgr2_people` = `on`을 먼저 넣고 확인한다(2026-10-20 S8 운영 이관이 이 순서였다 — verify ok, missing 0). `msgr2_lite`는 건드리지 않는다. 거짓이 아니면 백필 함수가 `msgr2_backfill_lite`로 거부한다(`_msgr2_bf_begin`, 20261020201400) |
 
 ## 1. 작업 창 열기 (설계 6절 0단계)
 
