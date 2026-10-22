@@ -99,7 +99,7 @@ function query(table) {
 
 const rpcs = {
   argo_min_app_version: () => null, msgr2_service_pause: () => null,
-  msgr2_device_register: () => { if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
+  msgr2_device_register: () => { if (state.free) throw Object.assign(new Error('msgr2_pro_required'), { code: '42501' }); /* ?free=1 — 무료 계정(새 기기 등록은 Pro만, #1133 검수) */ if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
   msgr2_catch_up: () => ({ rooms: [], next_since: 202 }),
   msgr2_my_personal_space: () => P,
   msgr2_work_status: ({ p_work }) => ({ work: p_work, effects: [] }),
@@ -119,7 +119,18 @@ const rpcs = {
   msgr2_room_leave: ({ p_room }) => { const m = state.tables.msgr2_room_members.find((x) => x.room_id === p_room && x.member_id === uid && !x.removed_at); if (!m) return false; m.removed_at = new Date().toISOString(); fire(`v2:u:${uid}`, 'rooms', { room_id: p_room, removed: true }); return true; },
   msgr2_room_create: ({ p_space, p_kind, p_name, p_users = [], p_agents = [] }) => { if (p_space && !String(p_name ?? '').trim()) throw new Error('msgr2_bad_name'); const id = `7f100000-0000-4000-8000-${String(Date.now()).slice(-12)}`; state.tables.msgr2_rooms.push({ id, space_id: p_space ?? P, kind: p_kind, name: p_name, memory: true, agent_policy: 'allowed', created_at: new Date().toISOString(), archived_at: null }); for (const u of [uid, ...p_users]) state.tables.msgr2_room_members.push({ room_id: id, member_kind: 'user', member_id: u, removed_at: null }); for (const a of p_agents) state.tables.msgr2_room_members.push({ room_id: id, member_kind: 'agent', member_id: a, removed_at: null }); roomEvent(id); return id; },
   msgr2_dm_open: ({ p_user, p_space }) => { if (p_user === 'blocked') throw new Error('msgr2_dm_unavailable'); const sp = p_space ?? P; let r = state.tables.msgr2_rooms.find((x) => x.kind === 'direct' && x.space_id === sp && state.tables.msgr2_room_members.some((m) => m.room_id === x.id && m.member_id === p_user)); if (!r) { const id = `7f200000-0000-4000-8000-${String(Date.now()).slice(-12)}`; r = { id, space_id: sp, kind: 'direct', pair_key: `${uid}:${p_user}`, name: '', memory: true, agent_policy: 'allowed', created_at: new Date().toISOString(), archived_at: null }; state.tables.msgr2_rooms.push(r); for (const u of [uid, p_user]) state.tables.msgr2_room_members.push({ room_id: id, member_kind: 'user', member_id: u, removed_at: null }); roomEvent(id); } return { room_id: r.id, space_id: sp, existing: false }; },
-  msgr2_agent_dm_open: ({ p_agent }) => { const r = state.tables.msgr2_rooms.find((x) => x.space_id === P && state.tables.msgr2_room_members.some((m) => m.room_id === x.id && m.member_id === p_agent)); return { room_id: r?.id ?? DM, space_id: P, existing: true }; },
+  // 서버(msgr2_agent_dm_open)와 같은 동작: 내 에이전트의 개인 공간 direct 방이 있으면 그 방, 없으면 개인 공간에 새 direct 방(나 + 에이전트)을 만든다. 남의 에이전트는 거절
+  msgr2_agent_dm_open: ({ p_agent }) => {
+    const T_ = state.tables; const ag = T_.msgr2_agents.find((x) => x.id === p_agent);
+    if (!ag || ag.owner_user_id !== uid) throw Object.assign(new Error('msgr2_agent_not_found'), { code: '42501' });
+    const r = T_.msgr2_rooms.find((x) => x.space_id === P && x.kind === 'direct' && !x.archived_at && T_.msgr2_room_members.some((m) => m.room_id === x.id && m.member_kind === 'agent' && m.member_id === p_agent && !m.removed_at));
+    if (r) return { room_id: r.id, space_id: P, existing: true };
+    const id = `7f40${String(T_.msgr2_rooms.length).padStart(4, '0')}-0000-4000-8000-${p_agent.slice(-12)}`;
+    T_.msgr2_rooms.push({ id, space_id: P, kind: 'direct', pair_key: `me-${ag.slug}`, name: null, memory: true, agent_policy: 'allowed', created_at: new Date().toISOString(), archived_at: null });
+    T_.msgr2_room_members.push({ room_id: id, member_kind: 'user', member_id: uid, removed_at: null }, { room_id: id, member_kind: 'agent', member_id: p_agent, removed_at: null });
+    state.createdDm = (state.createdDm ?? 0) + 1; fire(`v2:u:${uid}`, 'rooms', { space_id: P, room_id: id });
+    return { room_id: id, space_id: P, existing: false };
+  },
   msgr2_room_members_add: ({ p_room, p_users = [], p_agents = [] }) => { let n = 0; for (const [k, ids] of [['user', p_users], ['agent', p_agents]]) for (const id of ids) if (!state.tables.msgr2_room_members.some((m) => m.room_id === p_room && m.member_id === id && !m.removed_at)) { state.tables.msgr2_room_members.push({ room_id: p_room, member_kind: k, member_id: id, removed_at: null }); n++; } return n; },
   msgr2_room_member_remove: ({ p_room, p_member }) => { const m = state.tables.msgr2_room_members.find((x) => x.room_id === p_room && x.member_id === p_member && !x.removed_at); if (!m) return false; m.removed_at = new Date().toISOString(); return true; },
   msgr2_search: ({ p_q }) => { const q = String(p_q ?? '').trim(); if (q.length < 2) return { rooms: [], messages: [], people: [], agents: [] }; return { rooms: state.tables.msgr2_rooms.filter((r) => (r.name ?? '').includes(q)).map((r) => ({ id: r.id, space_id: r.space_id, kind: r.kind, name: r.name })), messages: state.tables.msgr2_messages.filter((m) => m.kind !== 'system' && (m.body ?? '').includes(q)).sort((a, b) => b.id - a.id).map((m) => ({ id: m.id, room_id: m.room_id, author_kind: m.author_kind, author_user_id: m.author_user_id ?? null, author_agent_id: m.author_agent_id ?? null, created_at: m.created_at, snippet: m.body.slice(0, 200) })), people: [], agents: [] }; },
@@ -180,6 +191,8 @@ state.devices = [
   { id: 'd0000000-0000-4000-8000-000000000004', kind: 'app', app: 'messenger', app_version: '0.1.5', registered_at: at(60000), created_at: at(90000), state: 'expired', is_current: false },
 ];
 state.failRegister = Number(new URLSearchParams(globalThis.location?.search ?? '').get('failreg') || 0);
+state.free = new URLSearchParams(globalThis.location?.search ?? '').get('free') === '1';
+if (new URLSearchParams(globalThis.location?.search ?? '').get('noagents') === '1') { state.tables.msgr2_agents = state.tables.msgr2_agents.filter((a) => a.owner_user_id !== uid); state.tables.msgr2_room_members = state.tables.msgr2_room_members.filter((m) => !(m.member_kind === 'agent' && [A, C].includes(m.member_id))); state.tables.msgr2_agent_seats = state.tables.msgr2_agent_seats.filter((x) => x.agent_id !== A); } // ?noagents=1 — 내 에이전트 0명 계정(빈 안내)
 // 두 번째 계정(민지)이 나에게 새 1:1을 연다 — 서버처럼 방을 민지의 개인 공간(PM)에 두고, 나에게 rooms 사건과 글 방송을 보낸다(#1088 검수 1: 받는 쪽에 보여야 한다)
 state.friendOpens = (body = '안녕하세요, 민지예요') => {
   const T_ = state.tables; const id = '7f300000-0000-4000-8000-000000000001';

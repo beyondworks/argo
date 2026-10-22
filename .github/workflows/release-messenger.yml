@@ -94,9 +94,9 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-          # 메신저 v2·A+ 화면(0.1.64부터 공개, vite.config.js RELEASE_UI_DEFAULTS와 같은 값 — 모바일 빌드는 그쪽 기본값으로 같은 화면이 실린다)
+          # 메신저 v2 화면(0.1.64부터 공개, vite.config.js RELEASE_UI_DEFAULTS와 같은 값 — 모바일 빌드는 그쪽 기본값으로 같은 화면이 실린다)
+          # A+ 화면은 0.1.65부터 다시 옵트인(이 기기 localStorage 'argo-msgr-aplus' = '1') — 결재·계정 삭제·신고·차단 등이 아직 빠져 있다(2026-10-22 유건 결정)
           VITE_MSGR_V2: "1"
-          VITE_MSGR_APLUS: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: |

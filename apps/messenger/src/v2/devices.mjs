@@ -15,6 +15,7 @@ export function deviceRows(rows = [], { lang = 'ko', now = Date.now() } = {}) {
 
 /** 연결 상태 기계 상태 → 화면 위 안내 줄 키(없으면 null). 로그아웃(signed_out)은 안내 줄이 아니라 로그인 화면으로 간다. */
 export function v2StateBar(st, stuck = null) {
+  if (st?.state === 'disconnected' && st.reason === 'gave_up:pro_required') return 'v2.state.proRequired'; // 무료 계정 — 셸은 이 키를 보고 Pro 안내 화면(aplus FreeGate)을 그린다
   if (st?.state === 'disconnected' && String(st.reason ?? '').startsWith('gave_up:')) return 'v2.state.unreachable'; // 다시 붙기를 그만둠 — 다시 시도 단추(#1086 검수 1-②)
   if (stuck && st?.state !== 'paused' && st?.state !== 'update_required' && st?.state !== 'signed_out') return 'v2.state.unreachable'; // 등록 대기 상한(1-①)
   if (!st) return null;

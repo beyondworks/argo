@@ -86,6 +86,9 @@ export function useWorkCards({ enabled, client, machine, chId, uid, event, nameO
     before: (m, sourceIds) => (enabled ? cards.filter((c) => !placed.current.has(c.w.id) && !sourceIds.has(Number(c.w.source_message_id)) && Date.parse(c.w.created_at) < Date.parse(m.created_at)).map((c) => (placed.current.add(c.w.id), render(c))) : []),
     /** 이 글이 시킨 일의 카드(바로 아래) */
     after: (m) => (enabled ? cards.filter((c) => !placed.current.has(c.w.id) && Number(c.w.source_message_id) === Number(m.id)).map((c) => (placed.current.add(c.w.id), render(c))) : []),
+    /** 결재 대기 카드 수와 카드(방 '결재' 탭 — 옛 결재 행은 v2에서 비어 있다, UX 정리 P1 2026-10-22). 읽기 추가 없음 */
+    pendingCount: enabled ? cards.filter((c) => c.card.phase === 'approval').length : 0,
+    approvalRows: () => (enabled ? cards.filter((c) => c.card.phase === 'approval').map(render) : []),
     /** 아직 놓지 않은 카드(목록 끝) */
     rest: () => (enabled ? cards.filter((c) => !placed.current.has(c.w.id)).map((c) => (placed.current.add(c.w.id), render(c))) : []),
     modal: enabled && cancelAsk ? <ConfirmModal key="v2-cancel" title={t('v2.work.cancel.title')} description={t('v2.work.cancel.desc')} confirmLabel={t('v2.work.cancel.confirm')} busy={busy === `${cancelAsk.workId}:cancel`} onConfirm={doCancel} onClose={() => setCancelAsk(null)} /> : null,

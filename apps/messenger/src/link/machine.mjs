@@ -153,6 +153,8 @@ export function createLinkMachine(opts) {
       return true;
     }
     if (code === 'service_paused') { enterPaused('server'); return true; }
+    // 무료 계정(20261020201700 — 새 기기 등록은 Pro만): 다시 보내지 않는다(약속 retry:false). 간격 재시도 8회 뒤 '연결할 수 없음'에 갇히던 것(#1133 검수)
+    if (code === 'pro_required') { giveUp('pro_required'); return true; }
     return false;
   }
 
@@ -285,6 +287,7 @@ export function createLinkMachine(opts) {
     }
     if (!booted) return false;
     if (state !== STATES.disconnected) return false;
+    if (reason === 'gave_up:pro_required') return false; // 무료 계정은 이벤트로 다시 묻지 않는다 — 사람이 누른 다시 확인(retry)·앱으로 돌아옴(setForeground)만
     if (timer != null) return false;
     if (clock.now() - lastAttemptAt < reconnect.maxMs) return false;
     void connect();
