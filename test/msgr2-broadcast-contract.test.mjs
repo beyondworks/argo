@@ -77,7 +77,7 @@ test('v2:s: — 서버가 공간 토픽으로 보내는 event는 앱이 거르�
 
 test('v2:w: — 서버는 봉투 type을 event로 보내고 본체는 모든 event를 받아 봉투를 푼다', () => {
   const { w, other } = serverSends();
-  assert.deepEqual([...w].sort(), ['work.approval_decision', 'work.cancel', 'work.offer'].sort());
+  assert.deepEqual([...w].sort(), ['agent.scope', 'work.approval_decision', 'work.cancel', 'work.offer'].sort()); // agent.scope = 빠짐 알림(20261022180000, 일 없는 봉투)
   assert.match(host, /ch\.on\('broadcast', \{ event: '\*' \}, \(msg\) => \{ const env = unwrapEnvelope\(msg\?\.payload\)/);
   assert.doesNotMatch(host, /ch\.on\('broadcast', \{ event: 'envelope' \}/, '종전 결함 모양(event envelope만 받기)');
   assert.deepEqual(other, [], '토픽을 가르지 못한 realtime.send 직접 호출');

@@ -45,7 +45,8 @@
         "work.effect",
         "work.result",
         "work.error",
-        "agent.sync"
+        "agent.sync",
+        "agent.scope"
       ]
     }
   },
@@ -1083,6 +1084,48 @@
             "required": [
               "agents"
             ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "agent.scope"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "work": {
+            "type": "null"
+          },
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "data": {
+            "type": "object",
+            "properties": {}
           }
         }
       }

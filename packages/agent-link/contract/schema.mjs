@@ -46,7 +46,7 @@ export function buildSchema() {
     id: rule('uuid'), seq: rule('int'), at: rule('ts'), type: { enum: [...TYPES] },
   };
   const branches = TYPES.map((t) => {
-    const sync = t === 'agent.sync';
+    const sync = t === 'agent.sync' || t === 'agent.scope'; // 일 없는 봉투(v1.mjs validateEnvelope와 같은 규칙)
     return {
       if: { properties: { type: { const: t } } },
       then: {

@@ -97,7 +97,7 @@ test('등급 — guest는 승인 요청·효과·파일 결과를 못 보낸다(
 test('봉투 검사 v1.1 — v1.0 예제·변형 전부에서 새 SQL 검사 = 옛 SQL 검사(설치된 본체 봉투는 그대로 통과·거부)', { skip }, () => {
   const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261020201300_msgr2_link_v1_1_check.down.sql', import.meta.url)), 'utf8');
   const oldFn = down.slice(down.indexOf('create or replace function public._msgr2_env_check'), down.lastIndexOf('commit;')).replace('public._msgr2_env_check(', 'pg_temp.env_check_v10(');
-  const v11 = (f) => /meeting|bot|posts/.test(f);
+  const v11 = (f) => /meeting|bot|posts|agent_scope/.test(f); // agent_scope = 빠짐 알림(20261022180000) — v1.0 뒤에 더한 type
   const v10 = [...load('valid'), ...load('invalid')].filter((x) => !v11(x.f)).map((x) => x.env);
   assert.ok(v10.length >= 20, `v1.0 예제 ${v10.length}개`);
   const r = JSON.parse(db.psql(['-A', '-t', '-c', `${oldFn}

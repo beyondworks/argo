@@ -27,9 +27,9 @@ const JS_ONLY = new Set(['too_large--result-over-128kb.json', 'invalid_envelope-
   // v1.1 교차 검사(JSON Schema로 적지 않음)
   'invalid_envelope--meeting-without-kind.json', 'invalid_envelope--posts-with-handoffs.json', 'invalid_envelope--posts-long-summary.json']);
 
-test('type은 10종이고 방향은 서버 3·본체 7(등록 포함), progress만 wk 방송', () => {
-  assert.equal(TYPES.length, 10);
-  assert.deepEqual(TYPES.filter((t) => DIRECTION[t] === 'server').sort(), ['work.approval_decision', 'work.cancel', 'work.offer']);
+test('type은 11종이고 방향은 서버 4(빠짐 알림 agent.scope 포함)·본체 7(등록 포함), progress만 wk 방송', () => {
+  assert.equal(TYPES.length, 11);
+  assert.deepEqual(TYPES.filter((t) => DIRECTION[t] === 'server').sort(), ['agent.scope', 'work.approval_decision', 'work.cancel', 'work.offer']);
   assert.equal(TYPES.filter((t) => DIRECTION[t] === 'runner').length, 7);
   assert.equal(CHANNEL['work.progress'], 'broadcast:wk');
   assert.equal(CHANNEL['work.offer'], 'broadcast:w');
