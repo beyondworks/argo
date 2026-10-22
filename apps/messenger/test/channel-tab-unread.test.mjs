@@ -7,5 +7,5 @@ import { readFileSync } from 'node:fs';
 test('멘션·에이전트 탭은 열 때의 읽음 커서 뒤(내 글 제외), 결재는 대기 중인 것', () => {
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(src, /const unreadHere = \(m\) => m\.id > divider && !\(m\.author_kind === 'user' && m\.author_user_id === uid\);/);
-  assert.match(src, /const counts = \{ mention: all\.filter\(\(m\) => isMention\(m\) && unreadHere\(m\)\)\.length, approval: all\.filter\(isPending\)\.length, crew: all\.filter\(\(m\) => m\.author_kind === 'crew' && unreadHere\(m\)\)\.length \};/);
+  assert.match(src, /const counts = \{ mention: all\.filter\(\(m\) => isMention\(m\) && unreadHere\(m\)\)\.length, approval: all\.filter\(isPending\)\.length \+ v2cards\.pendingCount, crew: all\.filter\(\(m\) => m\.author_kind === 'crew' && unreadHere\(m\)\)\.length \}; \/\/ v2: 결재는 일 카드/, 'v2는 결재 대기 일 카드도 센다(UX 정리 P1 2026-10-22)');
 });
