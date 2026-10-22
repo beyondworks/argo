@@ -108,6 +108,7 @@ import { appBackStack, rootBackAction } from './back-stack.mjs'; import { useBac
 import { watchOnline } from './connection.mjs';
 import { selfMember, personalSelfName } from './self-member.mjs';
 import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu.mjs';
+import { initialOpen, foldToggle, railForceOpen } from './rail-fold.mjs';
 import { adminRemovedNotice, readAdminRemoved } from './dispatch-notice.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
@@ -584,14 +585,13 @@ function PullIndicator({ phase, pulse = 0, t }) {
 
 /* ─── 레일 섹션(채널·1:1·내 크루) — 네이티브 details로 접고 펼친다(유건 지시 2026-09-08). 접힘 상태는 이 브라우저에만(localStorage argo-msgr-rail-fold).
    summary 안의 버튼(새 채널 +)은 클릭 기본 동작을 막아 접힘을 건드리지 않는다. ─── */
-const FOLD_KEY = 'argo-msgr-rail-fold';
-const readFold = () => { try { const v = JSON.parse(localStorage.getItem(FOLD_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
+const foldStore = () => { try { return globalThis.localStorage; } catch { return null; } }; // 접힘 판정·저장은 rail-fold.mjs(행동 시험)
 function RailSection({ id, label, right = null, forceOpen = false, children }) { // forceOpen: 폰 DM 탭 — 홈에서 접어 둔 상태를 따르지 않는다(유건 제보 2026-09-15: 홈에서 접으면 DM 화면이 비었다)
   const phone = useIsPhone(); // 폰 구역 헤더 아이콘(슬랙 18px) — 데스크톱은 그리지 않는다
-  const [open, setOpen] = useState(() => readFold()[id] !== true ? true : false); // 기본 펼침 — 저장된 값이 '접힘'일 때만 접는다
-  const onToggle = (e) => { if (forceOpen) { if (!e.currentTarget.open) e.currentTarget.open = true; return; } const next = e.currentTarget.open; setOpen(next); try { localStorage.setItem(FOLD_KEY, JSON.stringify({ ...readFold(), [id]: !next })); } catch { /* 저장 못 해도 동작 */ } };
+  const [open, setOpen] = useState(() => initialOpen(id, foldStore())); // 기본 펼침 — 저장된 값이 '접힘'일 때만 접는다
+  const onToggle = (e) => { const r = foldToggle({ id, forceOpen, nextOpen: e.currentTarget.open, storage: foldStore() }); if (r.revert) { e.currentTarget.open = true; return; } setOpen(r.open); };
   return (
-    <details className="msgr-sec" data-sec={id} open={forceOpen || open} onToggle={onToggle}>
+    <details className={`msgr-sec${forceOpen ? ' locked' : ''}`} data-sec={id} open={forceOpen || open} onToggle={onToggle}>{/* locked = 늘 펼침 — 접기 화살표를 그리지 않는다(rail-fold.mjs railForceOpen) */}
       <summary className="msgr-group">{phone && <I name={{ fav: 'star', channels: 'hash', dms: 'at', dmpin: 'at', mine: 'star', people: 'at', agents: 'node', friends: 'person', start: 'home' }[id] ?? 'hash'} size={18} className="sec-ic" />}<span className="lbl">{label}</span>{right && <span className="right" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>{right}</span>}</summary>
       {children}
     </details>
@@ -600,8 +600,8 @@ function RailSection({ id, label, right = null, forceOpen = false, children }) {
 
 /* 구역 안의 작은 묶음 — 에이전트를 '내 에이전트 / 외부 / 회사'로 접었다 편다(유건 2026-09-16). 접힘은 구역과 같은 저장소에 남는다. */
 function RailFold({ id, label, count, children }) {
-  const [open, setOpen] = useState(() => readFold()[id] !== true);
-  const onToggle = (e) => { const next = e.currentTarget.open; setOpen(next); try { localStorage.setItem(FOLD_KEY, JSON.stringify({ ...readFold(), [id]: !next })); } catch { /* 저장 못 해도 동작 */ } };
+  const [open, setOpen] = useState(() => initialOpen(id, foldStore()));
+  const onToggle = (e) => { setOpen(foldToggle({ id, nextOpen: e.currentTarget.open, storage: foldStore() }).open); };
   return (
     <details className="msgr-fold" open={open} onToggle={onToggle}>
       <summary className="msgr-folderhead"><span className="lbl">{label}</span><span className="msgr-klabel">{count}</span></summary>
@@ -3296,14 +3296,14 @@ function Shell({ session }) {
                   {isPhone && org && previewChannels.length > 0 && <button type="button" className="item msgr-addrow msgr-chbrowse" onClick={() => browse ? setBrowse(null) : openBrowse()} aria-expanded={!!browse}><I name="hash" size={18} /><span className="name">{t('ch.browse.row')}</span></button>}{/* 폰은 구역 머리의 둘러보기 단추가 숨는다(.right display:none) — 참여할 수 있는 공개 채널이 있으면 새 채널 옆 행으로(점검 A·B #2) */}
 </RailSection>}
         {dmTab && <Seg className="msgr-dmfilter" label={t('dm.filter')} value={dmFilter} onPick={pickDmFilter} options={DM_FILTERS.map((k) => ({ v: k, label: t(`dm.filter.${k}`) }))} />}
-        {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
-        {railRoom.showDms && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
+        {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen={railForceOpen('dmpin', { phone: isPhone, dmTab })}><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
+        {railRoom.showDms && (<RailSection id="dms" label={t('ch.dms')} forceOpen={railForceOpen('dms', { phone: isPhone, dmTab })} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
           {<button type="button" className="btn" onClick={() => setDmGroup(true)} disabled={!orgId} title={t('dm.new')} aria-label={t('dm.new')}><I name="plus" size={14} /></button>}{/* 새 대화 — 종전에는 폰에만 있어서 PC에서는 멤버 목록을 거쳐야 했다(유건 2026-09-16) */}
         </span>}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
           <div className="msgr-list">{dmList.map(dmRow)}</div>
           {!dmList.length && dmEmptyKey({ filter: dmTab ? dmFilter : 'all', total: channels.filter((c) => c.kind === 'dm').length }) && <div className="msgr-hint">{t(dmEmptyKey({ filter: dmTab ? dmFilter : 'all', total: channels.filter((c) => c.kind === 'dm').length }))}</div>}{/* 필터 결과가 비었을 때 대화가 사라진 것처럼 "아직 채팅이 없습니다"라고 하지 않는다(점검 A·B #6) */}
         </RailSection>)}
-        {isPersonal && !dmTab && (<RailSection id="friends" label={`${t('rail.friends')} · ${withoutHidden(members, hiddenUserIds).length}`} forceOpen right={<button type="button" className="btn" onClick={() => setFriendAdd(true)} title={t('friends.add')} aria-label={t('friends.add')}><I name="plus" size={14} /></button>}>{/* 채팅 → 친구 순서(유건 2026-09-18 — 대화가 먼저, 조직의 채널/채팅 → 멤버와 같은 순서). 개인 공간 홈 = 친구 목록, 채팅 탭 = 채팅 목록(카톡식, 유건 2026-09-17). 개인 공간의 members는 수락된 친구다(loadPersonal) */}
+        {isPersonal && !dmTab && (<RailSection id="friends" label={`${t('rail.friends')} · ${withoutHidden(members, hiddenUserIds).length}`} forceOpen={railForceOpen('friends', { phone: isPhone, dmTab })} right={<button type="button" className="btn" onClick={() => setFriendAdd(true)} title={t('friends.add')} aria-label={t('friends.add')}><I name="plus" size={14} /></button>}>{/* 채팅 → 친구 순서(유건 2026-09-18 — 대화가 먼저, 조직의 채널/채팅 → 멤버와 같은 순서). 개인 공간 홈 = 친구 목록, 채팅 탭 = 채팅 목록(카톡식, 유건 2026-09-17). 개인 공간의 members는 수락된 친구다(loadPersonal) */}
           <div className="msgr-list dir">
             {[...withoutHidden(members, hiddenUserIds)].sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || ''))).map((m) => (
               <button key={m.user_id} type="button" className="item" onClick={() => { openPersonalDm(m.user_id); setRail(false); }} title={t('friends.dm')}>
