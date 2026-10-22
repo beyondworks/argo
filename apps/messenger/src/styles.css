@@ -2499,10 +2499,10 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-av.msgr-scopeall.sm { width: 22px; height: 22px; border-radius: 7px; }
 .msgr-scopepop button:not(.btn) { min-height: 36px; padding: 0 8px; }
 .msgr-scopepop .msgr-badge { margin-left: auto; }
-.msgr-searchrow { position: relative; display: flex; align-items: center; gap: 6px; margin: 8px 0 2px; } /* 왼쪽·오른쪽 끝 = 범위 카드 끝(한 시작선) */
-.msgr-searchrow .msgr-search { flex: 1; min-width: 0; margin: 0; }
-.msgr-newbtn { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 10px; background: var(--card-2); color: var(--fg-2); cursor: pointer; }
-@media (hover: hover) { .msgr-newbtn:hover { color: var(--fg); background: var(--secondary); } } .msgr-newbtn:active, .msgr-newbtn[aria-expanded='true'] { color: var(--fg); background: var(--secondary); }
+.msgr-searchrow { position: relative; display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; } /* 왼쪽·오른쪽 끝 = 범위 카드 끝(한 시작선) */
+.msgr-searchrow .msgr-search, .msgr-side .msgr-searchrow .msgr-search { flex: 1; min-width: 0; margin: 0; height: 36px; padding: 0 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-sizing: border-box; } /* 범위 카드(.msgr-org)와 같은 면·경계 — 레일 배경 위에 글자만 떠 보였다(규칙집 2-11) */
+.msgr-newbtn { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg-2); cursor: pointer; box-sizing: border-box; } /* 검색칸과 같은 높이·면·반경의 정사각 */
+@media (hover: hover) { .msgr-newbtn:hover { color: var(--fg); background: var(--card-2); } } .msgr-newbtn:active, .msgr-newbtn[aria-expanded='true'] { color: var(--fg); background: var(--card-2); } /* 범위 카드(.msgr-org:hover)와 같은 눌림 */
 .msgr-newtalkpop { top: calc(100% + 6px); padding: 0; gap: 0; overflow: hidden; }
 .msgr-newtalkpop .head { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--border-soft); }
 .msgr-newtalkpop .head strong { font-size: 13.5px; white-space: nowrap; }

@@ -256,3 +256,6 @@ state.pause = (on) => fire(`v2:u:${uid}`, 'pause', { paused: !!on }); // 서버 
 state.client = () => supabase; // 페이지 시험은 이 함수로 앱과 같은 대역을 쓴다(모듈을 다시 불러오면 다른 사본이 생긴다)
 state.ids = { uid, mate, T, P, PM, GEN, PLAN, DM, NEWS, A, B, C, W };
 export async function q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }
+
+// 화면 보기용: HMR로 어떤 파일이 바뀌든 화면 전체를 다시 불러온다 — 가짜 서버 상태(기기 등록·방)가 모듈 교체로 날아가 '대화 목록을 불러오지 못했습니다'가 뜨던 것(총괄 실측). 앱 코드에는 영향 없음
+if (import.meta.hot) { import.meta.hot.decline(); import.meta.hot.on('vite:afterUpdate', () => location.reload()); }

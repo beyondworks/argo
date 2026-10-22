@@ -84,9 +84,15 @@ test('배선: 읽기는 시작·복귀·방 사건·모르는 방 첫 글 때만
 
 test('배선: 데스크톱 v2는 공간 바꾸기 단추 없이 한 목록 구역, 조직 거르개에 코드 참여·조직 만들기, 새 대화 단추 하나', () => {
   assert.match(app, /\{!\(V2 && !isPhone\) && <button type="button" className=\{`msgr-org\$\{orgMenu/, '공간 바꾸기 단추는 v2 데스크톱에서 안 그린다');
-  assert.match(app, /\{V2 && !isPhone && \(<RailSection id="onelist"[^\n]*\{olOrgPick\}<button type="button" className="btn" onClick=\{\(\) => setOlNew\(true\)\}/);
-  const menu = app.slice(app.indexOf('const olOrgMenuEl = ('), app.indexOf('const olOrgPick = '));
-  for (const s of ['joinable.map(', 'deletedOrgs.map(', 'orgJoinForms(isPhone)']) assert.ok(menu.includes(s), `조직 메뉴: ${s}`);
+  // 레일 위쪽(유건 2026-10-22 19:0x — Slack·Telegram 배치): 범위 카드 → 검색 + 새 대화 → 칩 → 접기 머리 없는 목록
+  assert.match(app, /\{V2 && !isPhone && olScope\}/, '범위 카드(옛 조직 카드 모양)');
+  assert.match(app, /<div className="msgr-searchrow">\{f\}<button type="button" className="msgr-newbtn" onClick=\{\(\) => setOlNew\(\(v\) => !v\)\}[^\n]*\{!isPhone && olNewSheet\}<\/div>/, '검색칸 옆 새 대화, 팝오버는 그 줄 아래');
+  assert.match(app, /\{V2 && !isPhone && olChips\}/);
+  assert.match(app, /\{V2 && !isPhone && \(<div className="msgr-sec msgr-onelist" data-sec="onelist">/, '한 목록은 접기 머리(RailSection) 없이');
+  assert.ok(!/RailSection id="onelist"/.test(app));
+  assert.match(app, /<NewTalkSheet pop=\{!isPhone\}/, '데스크톱은 단추 아래 팝오버, 폰은 아래 시트');
+  const menu = app.slice(app.indexOf('const olScope = '), app.indexOf('const olChips = '));
+  for (const s of ['joinable.map(', 'deletedOrgs.map(', 'orgJoinForms()']) assert.ok(menu.includes(s), `조직 메뉴: ${s}`);
   const sheet = app.slice(app.indexOf('function NewTalkSheet('), app.indexOf('function DmGroupSheet('));
   for (const k of ['onelist.new.person', 'onelist.new.agent', 'onelist.new.group', 'onelist.new.channel']) assert.ok(sheet.includes(`t('${k}')`), k);
   assert.match(sheet, /orgs\.length === 1 \? goOrg\(orgs\[0\]\) : setStep\('org'\)/, '조직이 하나면 바로, 여럿이면 한 번 고른다');
@@ -134,8 +140,8 @@ test('배선(#1143 화면 검수 반영): 줄 메뉴는 옛 메뉴 그대로, �
   assert.match(app, /const olShown = oneListPinOrder\(oneListView\(/);
   assert.match(app, /import \{[^\n]*oneListSort[^\n]*\} from '\.\/v2\/one-list\.mjs';/, '고정 바꾸기가 쓰는 정렬을 가져온다(빠지면 앱 전체가 멈췄다 — 클릭 표 실측)');
   // Important 2 — 조직▾ 메뉴는 summary 밖
-  assert.match(app, /const olOrgPick = isPhone \? olOrgBtn : <span className="msgr-sortwrap msgr-inboxorg">\{olOrgBtn\}<\/span>;/, '머리 칸에는 단추만');
-  assert.match(app, /\{V2 && !isPhone && olOrgMenuEl\}[^\n]*\n\s*\{V2 && !isPhone && \(<RailSection id="onelist"/, '메뉴는 구역 밖(앞)에');
+  assert.ok(!/\{V2 && !isPhone && olOrgMenuEl\}/.test(app), '데스크톱 범위 메뉴는 카드 바로 아래(구역 머리 summary 밖 — 제출·스페이스 막힘 없음)');
+  assert.match(app, /const olScope = V2 && !isPhone && \(<div className="msgr-scopewrap">/);
   assert.match(app, /setNewOrg\(null\); setOrgMenu\(false\); setOlOrgMenu\(false\);/, '조직을 만들면 메뉴를 닫는다');
   // Important 3 — 시작 탭
   assert.match(app, /const v2PhonePage = \(p\) => \(V2 && \(p === 'channels' \|\| p === 'friends'\) \? 'chats' : p\);/);
