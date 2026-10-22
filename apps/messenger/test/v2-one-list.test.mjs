@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { loadOneList, oneListOrgs, oneListView, oneListBump, oneListSeen, oneListSort, oneListTitle, oneListPair, oneListPinOrder, oneListUnread, oneListSpace, ONE_LIST_LIMIT } from '../src/v2/one-list.mjs';
+import { loadOneList, oneListOrgs, oneListView, oneListBump, oneListSeen, oneListSort, oneListTitle, oneListPair, oneListPinOrder, oneListUnread, oneListSpace, oneListAgentFolds, ONE_LIST_LIMIT } from '../src/v2/one-list.mjs';
 
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const T1 = 't1', T2 = 't2', ME = 'me';
@@ -159,8 +159,9 @@ test('배선(유건 2026-10-22 20:1x + 재검수 Important 1): 데스크톱 v2 �
   assert.match(sec, /const olMine = \(myAgents \?\? \[\]\)\.filter\(\(c\) => c\.owner_user_id === uid\);/, '명단 = 내 에이전트 행(v2MyAgents, 모든 공간)');
   assert.match(sec, /label=\{`\$\{t\('rail\.agents'\)\} · \$\{olMine\.length\}`\}/, '머리 숫자 = 내 에이전트 수');
   for (const bad of ['myAvailable.length', 'railVisible', 'crews.filter', 'railSortPos']) assert.ok(!sec.includes(bad), `공간에 묶인 값을 그리기에 쓰지 않는다: ${bad}`);
-  assert.match(sec, /\[\['mine\.argo', 'rail\.agents\.mine', olArgo\], \['mine\.ext', 'rail\.src\.custom', olExt\], \['mine\.company', 'rail\.agents\.company', olCompany\]\]\.map\(\(\[id, k, list\]\) => list\.length > 0 && <RailFold/, '3단 접이(내 에이전트·외부·회사, 유건 결정 유지)');
-  assert.match(sec, /const olCompany = olOrg && loadedOrg\.current === olOrg \? railCompany : \[\];/, '회사 묶음은 열린 방이 아니라 범위 카드의 조직을 따른다');
+  assert.match(sec, /const olFolds = oneListAgentFolds\(olSorted, sourceOf\);/, '묶음은 oneListAgentFolds(내 에이전트·외부, 유건 결정 접이 구조 유지)');
+  assert.match(sec, /\{olFolds\.map\(\(\[id, k, list\]\) => <RailFold key=\{id\} id=\{id\} label=\{t\(k\)\} count=\{list\.length\}>\{list\.map\(olAgentRow\)\}<\/RailFold>\)\}/, '묶음마다 접이');
+  for (const bad of ['olCompany', 'railCompany', "'mine.company'"]) assert.ok(!sec.includes(bad), `v2 레일에 회사 묶음을 두지 않는다(v2 서버에 회사 에이전트 없음): ${bad}`);
   assert.match(sec, /\['name', 'added', 'custom'\]\.map\(\(v\) => <button key=\{v\} type="button" role="menuitemradio" aria-checked=\{railSort === v\}/, '정렬 메뉴');
   assert.match(sec, /localStorage\.setItem\('argo-msgr-v2-agent-order'/, '직접 배치 순서는 이 기기에 하나(v2는 msgr_target_prefs가 서버에 없다)');
   for (const k of ["label: t('ctx.crew.card'), run: () => openAgentCard(c)", "label: t('ui.dm.personal')", "phone.agents.fav.add", "label: t('onelist.agent.dispatch', { org: o.name }), run: () => runInSpace(o.id, (fn) => fn.dispatchMine?.(c.id, c.display_name))"]) assert.ok(sec.includes(k), `줄 메뉴: ${k}`);
@@ -178,4 +179,14 @@ test('배선(유건 \'모바일 화면은 어때?\' 검토): 폰 한 목록 줄�
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.msgr-phone \.ph-ol \.ph-krow \.msgr-av\.kk:not\(\.crew\):not\(\.face\) \{ border-radius: 16px; background: var\(--card-2\); border: 1px solid var\(--border-soft\);/, '채널 칸(.ph-chav)과 같은 면·경계·반경');
   assert.match(css, /\.msgr-phone \.ph-root\.ph-v2 \.ph-apcard\.on \{ border-color: var\(--border\); \}/);
+});
+
+test('레일 에이전트 묶음(총괄 2026-10-22 22시): 내 에이전트·외부 둘, 빈 묶음은 뺀다, 회사 묶음은 없다(v2 서버에 회사 에이전트 없음) — 어느 방·어느 범위에서도 같다', () => {
+  const src = (c) => (c.hosting === 'bot' ? 'custom' : 'argo');
+  const mine = [{ id: 'a', hosting: 'local' }, { id: 'b', hosting: 'bot' }, { id: 'c', hosting: 'local' }];
+  assert.deepEqual(oneListAgentFolds(mine, src).map(([id, k, list]) => [id, k, list.map((c) => c.id)]), [['mine.argo', 'rail.agents.mine', ['a', 'c']], ['mine.ext', 'rail.src.custom', ['b']]]);
+  assert.deepEqual(oneListAgentFolds([{ id: 'a', hosting: 'local' }], src).map(([id]) => id), ['mine.argo'], '외부가 없으면 외부 묶음 없음');
+  assert.deepEqual(oneListAgentFolds(null, src), [], '명단을 아직 못 읽었으면 묶음 없음');
+  assert.ok(!oneListAgentFolds(mine, src).some(([id]) => id === 'mine.company'), '회사 묶음 없음');
+  assert.equal(oneListAgentFolds.length, 2, '열린 방·범위 조직을 받지 않는다 — 묶음은 내 명단만으로 정해진다');
 });

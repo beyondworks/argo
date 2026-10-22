@@ -79,3 +79,11 @@ export function oneListTitle(row, names) {
   if (oneListPair(row)) return names(row.peer_kind, row.peer_id) || null;
   return roomLabel(row) || null;
 }
+
+/** 데스크톱 레일 '에이전트' 구역의 묶음 — [id, 이름 키, 목록], 빈 묶음은 뺀다. 내 에이전트(Argo)·외부 둘이다.
+ *  '회사' 묶음은 없다: v2 서버에 회사 에이전트가 없다(msgr2_spaces에 service_user_id 없음, msgr2_agents.hosting은 local·bot만). 서버에 생기면 범위 조직 기준 1회 읽기로 다시 붙인다(#1143 미룸) */
+export function oneListAgentFolds(mine, sourceOf) {
+  const argo = (mine ?? []).filter((c) => sourceOf(c) === 'argo');
+  const ext = (mine ?? []).filter((c) => sourceOf(c) !== 'argo');
+  return [['mine.argo', 'rail.agents.mine', argo], ['mine.ext', 'rail.src.custom', ext]].filter(([, , list]) => list.length > 0);
+}

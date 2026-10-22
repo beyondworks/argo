@@ -28,7 +28,7 @@ import { InvitesCard as V2InvitesCard } from './v2/InvitesCard.jsx';
 import { v2SearchFound } from './v2/search.mjs';
 import { systemLine as v2SystemLine } from './v2/system-text.mjs';
 import { loadSpaces as v2LoadSpaces, decideApproval as v2DecideApproval } from './v2/data.mjs';
-import { loadOneList, oneListView, oneListOrgs, oneListSpace, oneListBump, oneListSeen, oneListUnread, oneListTitle, oneListPair, oneListPinOrder, oneListSort, ONE_LIST_FILTERS, ONE_LIST_LIMIT } from './v2/one-list.mjs'; // 한 목록(메신저 단순화 2단계)
+import { loadOneList, oneListView, oneListOrgs, oneListSpace, oneListBump, oneListSeen, oneListUnread, oneListTitle, oneListPair, oneListPinOrder, oneListSort, oneListAgentFolds, ONE_LIST_FILTERS, ONE_LIST_LIMIT } from './v2/one-list.mjs'; // 한 목록(메신저 단순화 2단계)
 import { loadMyApprovals as v2LoadMyApprovals, myApprovalItems as v2ApprovalItems, approvalsNeedReload as v2ApprovalsNeedReload } from './v2/my-approvals.mjs';
 import { spaceList as v2SpaceList, liveSpaceIds as v2LiveSpaceIds } from './v2/spaces.mjs';
 // 메신저 v2(U6c-1b, 옵트인): 플래그가 켜지면 같은 셸이 v2 표를 읽도록 조회 어댑터(v2/source.mjs)를 끼운다. 꺼지면 원래 클라이언트 그대로(아래 코드는 바뀌지 않는다).
@@ -3123,11 +3123,10 @@ function Shell({ session }) {
   // 데스크톱 v2 레일 '에이전트' 구역 = 내 에이전트 명단(유건 2026-10-22 20:1x "'#일반'에 있을 때랑 '#연구실'에 있을 때 왜 에이전트 목록이 변하는거야?").
   // 옛 구역은 지금 공간(orgId)의 crews·파견 대기(myAvailable)를 세서, 방을 열 때마다 숨은 공간이 바뀌면 개수·접속·'파견'이 따라 바뀌었다.
   // 한 목록 레일은 열린 방과 무관하다: 폰 에이전트 탭(#1141 v2MyAgents)과 같은 내 에이전트 행. 옛 구역의 묶음 접이·정렬(이름·추가순·직접 배치)·줄 메뉴는 그대로 둔다(#1143 재검수 Important 1).
-  // 회사 묶음(조직의 남의 회사 에이전트)은 범위 카드의 조직을 따른다. 파견은 줄 메뉴 '○○에 파견'(그 조직으로 맞춘 뒤 파견)과 채널 시트 '에이전트 추가'
+  // 회사 묶음은 없다(v2 서버에 회사 에이전트가 없다, oneListAgentFolds). 파견은 줄 메뉴 '○○에 파견'(그 조직으로 맞춘 뒤 파견)과 채널 시트 '에이전트 추가'
   const olMine = (myAgents ?? []).filter((c) => c.owner_user_id === uid);
   const olSorted = railSort === 'custom' ? sortByCustomOrder(olMine, Object.fromEntries(olAgentPos.map((id, i) => [id, i])), (c) => c.display_name) : [...olMine].sort((a, b) => (railSort === 'added' ? Date.parse(a.created_at ?? 0) - Date.parse(b.created_at ?? 0) : 0) || String(a.display_name ?? '').localeCompare(String(b.display_name ?? ''), 'ko'));
-  const olArgo = olSorted.filter((c) => sourceOf(c) === 'argo'); const olExt = olSorted.filter((c) => sourceOf(c) !== 'argo');
-  const olCompany = olOrg && loadedOrg.current === olOrg ? railCompany : []; // 회사 묶음(3단 접이, 유건 결정 유지)은 조직에 묶인 목록 — 열린 방이 아니라 범위 카드에서 고른 조직을 따른다('모든 대화'면 없음)
+  const olFolds = oneListAgentFolds(olSorted, sourceOf); // 내 에이전트·외부 묶음. 회사 묶음은 v2 서버에 회사 에이전트가 없어 두지 않는다(one-list.mjs)
   const olReorderAgents = (dragId, beforeId = null, visible = null) => { const ids = olSorted.map((c) => c.id); const next = reorderVisibleInFull(ids, visible ?? ids, dragId, beforeId); if (sameOrder(next, ids) && railSort === 'custom') return; setOlAgentPos(next); try { localStorage.setItem('argo-msgr-v2-agent-order', JSON.stringify(next)); } catch { /* 저장 못 해도 이번 화면은 그 순서 */ } if (railSort !== 'custom') pickSort('custom'); };
   latestOpen.current.dispatchMine = (agentId, name) => { const c = myAvailable.find((x) => x.id === agentId); if (!c) { setNote(t('onelist.agent.already', { name })); return; } dispatchCrew(c, null).then((r) => { if (r !== 'picking') setNote(t(r === 'requested' ? 'ch.crew.join.requested' : 'rail.mine.dispatched', { name })); }).catch((e) => setErr(friendlyErr(e.message, t))); };
   const olAgentItems = (c) => { const g = agentGroups.find((x) => x.rows.some((r) => r.id === c.id)); return [
@@ -3144,7 +3143,7 @@ function Shell({ session }) {
   const olAgentsSection = V2 && !isPhone && (<RailSection id="mine" label={`${t('rail.agents')} · ${olMine.length}`} right={<span className="right">{olMine.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}</span>}>
     <div className="msgr-list mine">
       {pauseNote && pauseNoteEl}
-      {[['mine.argo', 'rail.agents.mine', olArgo], ['mine.ext', 'rail.src.custom', olExt], ['mine.company', 'rail.agents.company', olCompany]].map(([id, k, list]) => list.length > 0 && <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(id === 'mine.company' ? railRow : olAgentRow)}</RailFold>)}{/* 회사 크루 줄은 옛 줄(railRow — 그 조직의 카드·1:1 메뉴) */}
+      {olFolds.map(([id, k, list]) => <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(olAgentRow)}</RailFold>)}
       {myAgents !== null && !olMine.length && <p className="msgr-rail-empty">{t('onelist.new.agent.none')} <RunnerButton /></p>}
     </div>
   </RailSection>);
