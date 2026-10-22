@@ -1939,6 +1939,7 @@ export const DICT = {
   'v2.err.reportOwn': ['내 글은 신고할 수 없습니다.', 'You can’t report your own message.'],
   'v2.err.reportGone': ['신고할 수 없는 글입니다.', 'This message can’t be reported.'],
   'v2.state.unreachable': ['메신저 서버에 연결할 수 없습니다.', 'Can’t reach the messenger server.'],
+  'v2.state.proRequired': ['메신저는 Pro 계정에서 사용할 수 있습니다.', 'The messenger is available on Pro accounts.'],
   'v2.state.retry': ['다시 시도', 'Try again'],
   'v2.dev.selfFailed': ['이 기기는 서버에서 로그아웃하지 못했습니다. 다시 시도하세요.', 'This device couldn’t be signed out on the server. Try again.'],
   'v2.state.loginRequired': ['보안을 위해 다시 로그인해야 이어서 쓸 수 있습니다.', 'For security, sign in again to keep using the messenger.'],

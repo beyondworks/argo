@@ -32,7 +32,8 @@ export default function APlusApp({ source, onSignOut, onSignOutNotice = null, pu
   return <Workspace source={source} t={t} lang={lang} setLang={setLang} onSignOut={onSignOut} onSignOutNotice={onSignOutNotice} onStarted={onStarted} purchase={purchase} />;
 }
 
-function FreeGate({ t, purchase, onRecheck, onSignOut }) {
+/** 무료 계정 안내(Pro 전용) — v2 셸도 쓴다(App.jsx, 무료 등록 거부 gave_up:pro_required). purchase가 없으면(iOS·회사 서버) 결제 권유 없이 사실만(App Store 3.1.1). */
+export function FreeGate({ t, purchase, onRecheck, onSignOut }) {
   return (
     <div className="ap-center"><div className="ap-gate">
       <span className="ap-tag">Pro</span>
