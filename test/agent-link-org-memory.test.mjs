@@ -86,3 +86,43 @@ test('핀: 옛 조직 채널 턴(msgr 문맥 + 조직 태그)은 PC 일지에 �
   await turn(ws, 'LEGACY_CHANNEL 회의록', { mirrorCtx: { kind: 'msgr', orgId: SPACE, channelId: ROOM, channelKind: 'public', threadRoot: 1, crewId: null }, journal: msgrJournal(SPACE, ROOM) });
   assert.doesNotMatch(await vaultJournal(ws) + await orgJournal(ws), /LEGACY_CHANNEL/);
 });
+
+test('결함: 팀 공간 링크 턴은 볼트 밖 조직 칸(org-<공간>-ch-<방>)에 쓰고 개인 일지·색인에는 0, 조직 칸은 동기화 제외', async () => {
+  const ws = await company();
+  const r = await turn(ws, 'TEAM_ROOM 가격표 정리', { mirrorCtx: link({ space: SPACE, spaceKind: 'team' }) });
+  assert.doesNotMatch(await vaultJournal(ws), /TEAM_ROOM/, '개인 일지에 섞이지 않는다');
+  assert.doesNotMatch(await indexText(ws), /TEAM_ROOM|org-/, '볼트 색인에 오르지 않는다');
+  const names = await files(join(paths(ws).root, '.msgr-journal'));
+  assert.deepEqual(names.map((n) => n.replace(/^\d{4}-\d{2}-\d{2}-/, '')), [`seoyun.org-${SPACE}-ch-${ROOM}.md`]);
+  assert.match(await orgJournal(ws), /지시: TEAM_ROOM 가격표 정리/);
+  assert.equal(EXCLUDE(`.msgr-journal/${names[0]}`), true, '동기화 제외 자리');
+  assert.equal(r.handover ?? null, null, '화면 칩으로 열 볼트 일지가 없다');
+});
+
+test('결함: 공간을 모르는 링크 턴(옛 범위·조회 실패)은 일지를 쓰지 않는다(fail-closed)', async () => {
+  const ws = await company();
+  await turn(ws, 'UNKNOWN_ROOM 메모', { mirrorCtx: link() });
+  await turn(ws, 'BAD_SPACE 메모', { mirrorCtx: link({ space: 'not-a-uuid', spaceKind: 'team' }) });
+  assert.doesNotMatch(await vaultJournal(ws) + await orgJournal(ws), /UNKNOWN_ROOM|BAD_SPACE/);
+});
+
+test('이어지는 턴: 쪽지(sendCrewMail → 배달 문맥)·결재 범위(approvalScope)가 공간을 잃지 않고, 배달 턴도 조직 칸에 쓴다', async () => {
+  const ws = await company();
+  await writeFile(join(paths(ws).agents, 'mina.md'), '---\nname: 미나\nrole: 분석\n---\n# 미나\n');
+  const { sendCrewMail } = await import('../src/crewmail.mjs');
+  const { crewmailMirrorCtx } = await import('../src/scheduler.mjs');
+  const { approvalScope } = await import('../src/thread.mjs');
+  await sendCrewMail(ws, { from: 'seoyun', fromName: '서윤', to: 'mina', message: 'MAIL_TEAM 자료 확인', link: link({ space: SPACE, spaceKind: 'team' }).scope });
+  const dir = join(paths(ws).root, 'mail', 'mina');
+  const [name] = (await readdir(dir)).filter((n) => n.endsWith('.json'));
+  const msg = JSON.parse(await readFile(join(dir, name), 'utf8'));
+  assert.deepEqual([msg.link.space, msg.link.spaceKind], [SPACE, 'team'], '쪽지 기록이 공간을 싣는다');
+  const ctx = crewmailMirrorCtx(ws, 'mina', msg);
+  assert.deepEqual([ctx.scope.space, ctx.scope.spaceKind], [SPACE, 'team'], '배달 턴 문맥도');
+  assert.deepEqual(approvalScope(link({ space: SPACE, spaceKind: 'team' })).scope, link({ space: SPACE, spaceKind: 'team' }).scope, '결재 범위 각인은 범위를 통째로');
+  await chat(ws, 'mina', 'MAIL_TEAM 배달', null, { source: 'crewmail', mirrorCtx: ctx });
+  assert.doesNotMatch(await vaultJournal(ws), /MAIL_TEAM/);
+  assert.match(await orgJournal(ws), /MAIL_TEAM 배달/);
+  const personal = crewmailMirrorCtx(ws, 'mina', { link: { kind: 'link', work: WORK, room: ROOM, owner: true, space: PSPACE, spaceKind: 'personal' } });
+  assert.equal(personal.scope.spaceKind, 'personal', '개인 공간 쪽지도 공간을 잇는다(개인 일지 그대로)');
+});

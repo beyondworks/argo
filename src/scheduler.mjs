@@ -282,7 +282,7 @@ export async function crewmailTurn(cid, slug, msg, opts) {
     메신저 밖 쪽지는 null. (export: 회귀 테스트용 — 배달 콜백은 ensureScheduler 안의 익명 함수라 직접 돌릴 수 없다) */
 export function crewmailMirrorCtx(cid, slug, msg) {
   // 메신저 v2 일에서 보낸 쪽지: 같은 link 범위로 배달한다 — owner 표지가 없으면 손님(isGuestCtx, fail-closed). 결재도 그 일의 범위를 단다
-  if (msg.link?.kind === 'link') return { kind: 'scope', scope: { kind: 'link', work: msg.link.work ?? null, room: msg.link.room ?? null, owner: msg.link.owner === true, ...(msg.link.memoryOff === true ? { memoryOff: true } : {}) } };
+  if (msg.link?.kind === 'link') return { kind: 'scope', scope: { kind: 'link', work: msg.link.work ?? null, room: msg.link.room ?? null, owner: msg.link.owner === true, ...(msg.link.memoryOff === true ? { memoryOff: true } : {}), ...(msg.link.spaceKind ? { space: msg.link.space ?? null, spaceKind: msg.link.spaceKind } : {}) } }; // 공간 = 일지 칸(link-memory.mjs)
   return msg.msgr?.channelId ? { ...mirrorCtxFromOrigin(msg.msgr), kind: 'msgr', orgId: msg.msgr.orgId, channelId: msg.msgr.channelId, threadRoot: msg.msgr.threadRoot ?? null,
     crewId: msgrCrewIdBySlug(cid, slug, msg.msgr.orgId) ?? null, orgSlug: msg.msgr.orgSlug ?? null, channelName: msg.msgr.channelName ?? '' } : null;
 }

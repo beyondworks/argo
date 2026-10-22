@@ -53,6 +53,7 @@ import { buildThreadContext, contextSection, contextLimits, fitContextSection, i
 import { leaseRole } from './lease-role.mjs'; // 예비 실행 기기(argo run --standby)의 턴 — 주 컴퓨터 파일이 없다는 한 줄(commonDirectives)
 import { item } from './record-block.mjs'; import { msgrAuthorBody } from './inbound-marks.mjs'; // 메신저 줄은 글쓴이 본문만 항목에(5차 검수 MEDIUM-1) // 스레드 맥락 한 줄 = 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
 import { runOneShot } from './oneshot.mjs';
+import { linkJournal, linkScopeOf } from './link-memory.mjs'; // 메신저 v2 링크 범위 턴의 기억 칸(조직 방 = 조직 칸, 모르면 일지 0)
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
@@ -1443,6 +1444,10 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // journal = 팀 메신저 채널 턴의 일지 정책 {off, tag} — off면 saveHandover 생략(402 creditTurn과 같은 갈래), tag면 별도 파일.
   // 세 saveHandover 지점이 모두 이 한 함수를 거친다(한 지점만 빠지면 crew_memory=false 채널의 내용이 기억에 새는 무언 결함).
   const dmTurn = mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm';
+  // 메신저 v2 링크 범위 턴(일·쪽지 배달·결재 후속·위임)의 일지 칸 — 팀 공간은 조직 칸(org-<공간>-ch-<방>), 개인 공간은 종전 그대로, 모르면 끈다(link-memory.mjs, 2026-10-22).
+  // 범위가 이어지는 모든 턴이 여기를 지난다 — 부르는 곳마다 따로 정하면 한 곳이 빠질 때 조직 대화가 개인 일지에 섞인다(옛 결함).
+  journal = linkJournal(mirrorCtx, journal);
+  const linkOrg = !!linkScopeOf(mirrorCtx) && String(journal?.tag ?? '').startsWith('org-'); // 링크 조직 칸 — 옛 채널 턴과 달리 PC 조직 칸에 쓴다(v2 서버에는 채널 일지가 없다)
   // 손님 턴 — 크루 주인이 아닌 사람이 시킨 메신저 턴(isGuestCtx, fail-closed). 주인의 몸(파일·셸·웹·커넥터·브라우저·도구 설치·예약)에
   // 손대지 않고 방 대화로 답하며, 필요한 일은 주인에게 결재로 올린다(규칙 7·9). 아래 강제 지점이 전부 이 한 값을 본다.
   const guest = isGuestCtx(mirrorCtx);
@@ -1480,7 +1485,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 메신저 채널 턴(조직 태그)은 PC 일지에 쓰지 않는다 — 채널·조직 기억은 서버 일지(msgr_channel_journal)에만(유건 결정 2026-09-24).
   // 주인 혼자 1:1은 일지에 주인이 쓴 글만(journal.text — 방 머리말·지난 대화 줄은 싣지 않는다). 개인 공간 1:1은 데스크톱 일지(태그 없음), 조직 1:1은 그 방 태그 파일 —
   // 볼트 밖 .msgr-journal/에 바로 쓰여(saveHandover — 동기화·기억 정리·회상에 섞이지 않는다) 조직에서 빠지면 그 파일째 회수된다(msgr-recall). 조직 기록은 조직 단위로 거둔다는 원칙(2026-09-24·10-03)을 지킨다.
-  const journalWrite = (reply, label) => (!ownerSolo && (dmTurn || journal?.off || String(journal?.tag ?? '').startsWith('org-')) ? null
+  const journalWrite = (reply, label) => (!ownerSolo && !linkOrg && (dmTurn || journal?.off || String(journal?.tag ?? '').startsWith('org-')) ? null
     : saveHandover(wsId, agentSlug, ownerSolo && typeof journal?.text === 'string' ? journal.text : userMsg, reply, label, { tag: ownerSolo ? (mirrorCtx.orgId ? msgrJournal(mirrorCtx.orgId, mirrorCtx.channelId).tag : '') : journal?.tag ?? '' }));
   // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
   const turnSource = source ?? (from ? 'delegate' : 'chat');
