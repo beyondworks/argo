@@ -10,12 +10,15 @@
 //   승인 실행은 effect intent가 서버에 기록된 뒤에만 한다(D13). 승인 뒤 후속 턴의 답이 결과에 이어진다.
 // - 넘김: offer.peers를 동료 목록으로 보여 주고, 답의 넘김 줄을 result.handoffs로 보낸다(연속 상한은 서버, U2).
 // - 범위 턴이라 데스크톱 대화 기록을 문맥에 싣지 않는다(방 문맥은 서버가 offer.context로 준다). 세션도 남기지 않는다(scopeKey 없음).
+// - 조직 기억(2026-10-22 유건 지시): 처음 보는 방의 첫 일에서 서버 msgr2_agent_rooms로 방의 공간을 묻고(프로세스 메모리에 둔다) 범위에 space·spaceKind를 싣는다.
+//   일지 칸은 chat.mjs가 그 값으로 정한다(link-memory.mjs — 팀 = 볼트 밖 조직 칸, 개인 = 그대로, 모름 = 끔). 팀·모름 방의 첨부는 vault/files/msgr2-turn/<일>/에 두고
+//   턴이 끝나면 지운다(동기화 제외, 시작 때 남은 것도 청소). 회수: (재)접속·agent.scope 알림 때 한 번 msgr2_agent_rooms로 묻고 빠진 방의 조직 기억을 지운다(msgr-recall.mjs recallLinkRooms).
 import { createLink } from '../packages/agent-link/link.mjs';
 import { tierPolicy } from '../packages/agent-link/tiers.mjs';
 import { SUPPORTED, LIMITS, OFFER_KINDS } from '../packages/agent-link/contract/v1.mjs';
 import { msgrMeetingEnabled as msgrMeetingEnabledFlag } from './agent-link-flags.mjs';
 import { workErrorCodeFor as botWorkErrorCode } from './ext-bots-codes.mjs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, rm, readdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 
 export { agentLinkEnabled, legacyMsgrBridgeEnabled, msgrMeetingEnabled } from './agent-link-flags.mjs';
@@ -78,7 +81,7 @@ export async function runMeetingOffer(offer, ctx, { agents, deps }) {
     allByDefault: true, // 멘션 없는 글 = 서버가 보낸 참가자 전원(msgr2_on_user_message와 같은 규약). 이름 멘션이 있으면 그 사람만
   }, {
     chat: deps.chat, interruptTurn: deps.interruptTurn, callBot: deps.callBot,
-    mirrorCtxFor: () => ({ kind: 'scope', scope: { kind: 'link', work: offer.work, room: offer.data.room, owner: policy.ownerTools === true, ...(memoryOff ? { memoryOff: true } : {}) } }),
+    mirrorCtxFor: () => ({ kind: 'scope', scope: { kind: 'link', work: offer.work, room: offer.data.room, owner: policy.ownerTools === true, ...(memoryOff ? { memoryOff: true } : {}), ...(deps.scopeExtra ?? {}) } }), // scopeExtra = 방의 공간(일지 칸, link-memory.mjs)
     chatExtra: () => (memoryOff ? { journal: { off: true } } : {}),
   });
   if (ctx.signal?.aborted && res.stopped === 'cancelled') return null;
@@ -350,6 +353,12 @@ export function approvalRequestFrom(item, now = Date.now()) {
   };
 }
 
+/** 팀·모름 방 첨부 임시 칸(vault/files/<이것>/<일>/) — 동기화 제외(sync.mjs), 턴 끝·시작 청소 */
+export const TURN_FILES = 'msgr2-turn';
+/** 회수 확인 지연 — (재)접속 5초 뒤, 빠짐 알림 30초 묶음 */
+export const RECALL_CONNECT_MS = 5_000;
+export const RECALL_SCOPE_MS = 30_000;
+
 const safeName = (n) => basename(String(n || 'file')).replace(/[^\p{L}\p{N}._-]+/gu, '_').slice(0, 120) || 'file';
 
 /**
@@ -384,9 +393,11 @@ export function createAgentLinkHost(deps) {
     return 'blocked';
   }
 
-  async function attachments(offer, ws, transport) {
+  async function attachments(offer, ws, transport, personal) {
     const out = [];
-    const dir = join(deps.vaultDir(ws), 'files', 'msgr2');
+    // 개인 공간 = 종전 자리(볼트 files/msgr2 — 개인 기억). 팀·모름 = 이 일의 임시 칸(턴 끝에 지운다 — 원본은 서버 Storage에 있다)
+    const sub = personal ? 'msgr2' : `${TURN_FILES}/${String(offer.work).replace(/[^0-9a-f-]/gi, '')}`;
+    const dir = join(deps.vaultDir(ws), 'files', ...sub.split('/'));
     for (const a of offer.data.attachments) {
       if (a.bytes > ATTACH_IN_MAX) continue;
       try {
@@ -395,10 +406,61 @@ export function createAgentLinkHost(deps) {
         await mkdir(dir, { recursive: true });
         const name = `${offer.work.slice(0, 8)}-${safeName(a.name)}`;
         await writeFile(join(dir, name), buf);
-        out.push({ rel: `files/msgr2/${name}`, name: a.name, mime: a.mime, isImage: /^image\//.test(a.mime) });
+        out.push({ rel: `files/${sub}/${name}`, name: a.name, mime: a.mime, isImage: /^image\//.test(a.mime) });
       } catch { /* 한 첨부 실패는 턴을 막지 않는다 */ }
     }
     return out;
+  }
+
+  // 방 → { space, kind } — 처음 보는 방의 첫 일에서 1번 묻는다(공간 종류는 바뀌지 않는다). 실패·이 에이전트가 없다는 답은 두지 않는다(다음 일에 다시)
+  const roomCache = new Map();
+  async function roomInfo(room, agentId) {
+    if (roomCache.has(room)) return roomCache.get(room);
+    const r = await Promise.resolve(current?.rpc?.('msgr2_agent_rooms', { p_rooms: [room] })).catch(() => null);
+    const row = Array.isArray(r?.data) ? r.data.find((x) => x?.room_id === room) : null;
+    if (r?.error || !row || !Array.isArray(row.agents) || !row.agents.includes(agentId) || !['team', 'personal'].includes(row.space_kind)) return null;
+    const info = { space: row.space_id ?? null, kind: row.space_kind };
+    roomCache.set(room, info);
+    return info;
+  }
+  const scopeOf = (info) => (info ? { space: info.space, spaceKind: info.kind } : {});
+
+  // 회수 — (재)접속·agent.scope 알림 때 한 번(알림은 30초로 묶는다). 주기 확인은 없다. 대응표가 비어 있으면 목록을 받은 뒤로 미룬다
+  const activeTurnDirs = new Set(); // 지금 도는 일의 첨부 임시 칸(청소하지 않는다)
+  let recallTimer = null, recallPending = false, recallRunning = false;
+  function scheduleRecall(ms) {
+    if (!deps.recallLinkRooms || recallTimer) return;
+    recallTimer = clock.setTimeout(() => { recallTimer = null; runRecall().catch((e) => log('recall failed', e.code ?? e.message)); }, ms);
+  }
+  async function runRecall() {
+    if (stopped || proBlocked || recallRunning) return;
+    const byWs = new Map();
+    for (const [id, a] of agents) if (a.kind !== 'bot') { if (!byWs.has(a.ws)) byWs.set(a.ws, new Map()); byWs.get(a.ws).set(a.slug, id); }
+    if (!byWs.size) { recallPending = true; return; }
+    recallRunning = true; recallPending = false;
+    try {
+      for (const [ws, idOf] of byWs) {
+        await sweepTurnFiles(ws).catch(() => {});
+        const presence = async (pairs) => {
+          const rooms = [...new Set(pairs.map((x) => x.id))];
+          const r = await current.rpc('msgr2_agent_rooms', { p_rooms: rooms });
+          if (r?.error || !Array.isArray(r?.data)) return null; // 옛 서버(함수 없음)·오류 — 지우지 않는다
+          const byRoom = new Map(r.data.map((x) => [String(x.room_id).toLowerCase(), Array.isArray(x.agents) ? x.agents : null]));
+          const out = new Map();
+          for (const { slug, id } of pairs) { const ag = byRoom.get(id); const me = idOf.get(slug); if (ag && me) out.set(`${slug}:${id}`, ag.includes(me)); }
+          return out;
+        };
+        const sum = await deps.recallLinkRooms(ws, [...idOf.keys()], presence);
+        if (sum?.channels) log('recall', JSON.stringify({ ws, ...sum }));
+      }
+    } finally { recallRunning = false; }
+  }
+  /** 남은 첨부 임시 칸(본체가 턴 중에 꺼졌다) — 지금 도는 일의 칸은 남긴다 */
+  async function sweepTurnFiles(ws) {
+    const base = join(deps.vaultDir(ws), 'files', TURN_FILES);
+    let names = [];
+    try { names = await readdir(base); } catch { return; }
+    for (const n of names) { const d = join(base, n); if (!activeTurnDirs.has(d)) await rm(d, { recursive: true, force: true }); }
   }
 
   const host = {
@@ -409,7 +471,7 @@ export function createAgentLinkHost(deps) {
       const on = deps.meetingEnabled?.() === true;
       if (!OFFER_KINDS.includes(kind) || (kind !== 'chat' && !on)) throw Object.assign(new Error(`unsupported offer kind: ${kind}`), { code: 'unsupported' });
       const extra = { ...deps.meeting, planOf: deps.planOf, uid: currentUid, chat: deps.chat, interruptTurn: deps.interruptTurn };
-      if (kind === 'meeting') return runMeetingOffer(offer, ctx, { agents, deps: extra });
+      if (kind === 'meeting') return runMeetingOffer(offer, ctx, { agents, deps: { ...extra, scopeExtra: scopeOf(await roomInfo(offer.data.room, offer.agent)) } });
       if (kind === 'bot' || agents.get(offer.agent)?.kind === 'bot') {
         if (!on) throw Object.assign(new Error('external bot is off'), { code: 'unsupported' });
         return runBotOffer(offer, ctx, { agents, deps: extra });
@@ -423,6 +485,7 @@ export function createAgentLinkHost(deps) {
       // 결재 다리: 이 일의 범위를 단 결재·후속 답만 받는다(같은 에이전트의 다른 턴·다른 일과 섞이지 않게)
       const mine = (ev) => ev?.wsId === a.ws && ev.item?.scope?.kind === 'link' && ev.item.scope.work === offer.work;
       const later = []; const bridges = []; const replies = new Map(); const waiters = new Map();
+      let turnDir = null; // 팀·모름 방 첨부 임시 칸(finally에서 지운다)
       const waitFollowup = (id) => (replies.has(id) ? Promise.resolve(replies.get(id)) : new Promise((res) => {
         waiters.set(id, res);
         ctx.signal.addEventListener('abort', () => res(''), { once: true });
@@ -473,16 +536,19 @@ export function createAgentLinkHost(deps) {
         }
       });
       try {
-        const files = await attachments(offer, a.ws, current); // offer = accept 답의 첨부가 반영된 것(link.mjs)
+        const info = await roomInfo(offer.data.room, offer.agent); // 방의 공간 — 일지 칸·첨부 자리(모르면 null = 일지 끔·임시 칸)
+        if (info?.kind !== 'personal') { turnDir = join(deps.vaultDir(a.ws), 'files', TURN_FILES, String(offer.work).replace(/[^0-9a-f-]/gi, '')); activeTurnDirs.add(turnDir); }
+        const files = await attachments(offer, a.ws, current, info?.kind === 'personal'); // offer = accept 답의 첨부가 반영된 것(link.mjs)
         const peers = policy.handoffs ? offer.data.peers ?? [] : [];
         const text = contextSection(offer.data.context) + peersSection(peers) + offer.data.text;
         const turn = await deps.chat(a.ws, a.slug, text, null, {
           source: 'messenger', attachments: files, abortTag: offer.work,
           // memoryOff — 기억 안 남김 방: 이 턴에서 이어지는 쪽지 배달 턴·결재 후속 턴도 일지를 남기지 않게 범위에 싣는다
-          mirrorCtx: { kind: 'scope', scope: { kind: 'link', work: offer.work, room: offer.data.room, owner: policy.ownerTools === true, ...(offer.data.memory === false ? { memoryOff: true } : {}) } },
+          mirrorCtx: { kind: 'scope', scope: { kind: 'link', work: offer.work, room: offer.data.room, owner: policy.ownerTools === true, ...(offer.data.memory === false ? { memoryOff: true } : {}), ...scopeOf(info) } }, // space·spaceKind = 일지 칸(link-memory.mjs)
           // 일지: offer.memory가 거짓이면 남기지 않는다(기억 안 남김 방). 참이면 chat()의 기본 일지
           ...(offer.data.memory === false ? { journal: { off: true } } : {}),
         });
+        if (turn?.sessionId && deps.noteSession) await deps.noteSession(a.ws, a.slug, { kind: 'link', room: offer.data.room, ...scopeOf(info) }, turn.sessionId).catch(() => {}); // 회수 때 지울 모델 전사(팀·모름 방만 적힌다)
         const parts = [String(turn?.reply ?? '')];
         for (const t of await Promise.all(bridges)) if (t) parts.push(t);
         // 턴이 끝난 뒤의 결재(행동 결재 — 승인되면 후속 턴이 한다): 하나씩 결정을 기다린다. 기다리는 동안 리스는 link가 5분마다 연장한다
@@ -505,11 +571,14 @@ export function createAgentLinkHost(deps) {
       } finally {
         off();
         ctx.signal.removeEventListener('abort', onAbort);
+        if (turnDir) { activeTurnDirs.delete(turnDir); await rm(turnDir, { recursive: true, force: true }).catch(() => {}); } // 팀·모름 방 첨부 사본 — 턴이 끝나면 지운다
       }
     },
     onEvent(name, detail) {
       if (['update_required', 'device_invalid', 'paused', 'resumed', 'lease_lost', 'report_failed', 'accept_failed', 'pro_required'].includes(name)) log(name, JSON.stringify(detail));
       if (name === 'pro_required') proBlock(); // 무료 계정 — 링크는 이미 멈췄다(link.mjs fatal). 다음 플랜 확인 전까지 다시 열지 않는다
+      if (name === 'connected') scheduleRecall(RECALL_CONNECT_MS); // (재)접속마다 한 번 — 꺼져 있던 동안 빠진 방(손님 기한 지남 포함)을 반영한다
+      if (name === 'scope_changed') scheduleRecall(RECALL_SCOPE_MS); // 빠짐 알림 — 30초로 묶는다(조직 탈퇴 한 번에 여러 행이 닫혀도 1번)
     },
   };
 
@@ -566,11 +635,12 @@ export function createAgentLinkHost(deps) {
       else if (bt) { agents.set(m.id, { ws: m.ws, slug: m.slug, kind: 'bot', botId: bt.id, name: bt.name }); agentIds.add(m.id); }
     }
     if (catchUpAfterSync) { catchUpAfterSync = false; link.catchUp(); }
+    if (recallPending && agents.size) scheduleRecall(0); // 접속 때 대응표가 비어 미뤄 둔 회수
   }
 
   return {
     start() { stopped = false; boot().catch((e) => { log('boot failed', e.message); retryLater(); }); return this; },
-    stop() { stopped = true; if (timer) clock.clearTimeout(timer); timer = null; link?.stop(); link = null; },
+    stop() { stopped = true; if (timer) clock.clearTimeout(timer); timer = null; if (recallTimer) clock.clearTimeout(recallTimer); recallTimer = null; link?.stop(); link = null; },
     async resync() {
       const gate = await planGate();
       if (gate === 'blocked') return; // 무료 계정 쉼 — 요청 0(플랜 확인만 10분·실패 1분마다)
@@ -629,6 +699,9 @@ export async function startAgentLinkHost() {
       return out;
     },
     chat, interruptTurn, onNotify, resolveWithFollowUp, resolveApproval, planReplyFiles: rf.planReplyFiles, readReplyFile: rf.readReplyFile,
+    // 조직 기억 회수(2026-10-22) — 빠진 방의 대화 줄·모델 전사·조직 칸 일지. 세션 장부 = 회수 때 지울 링크 턴 전사 id
+    recallLinkRooms: async (...a) => (await import('./gateway/msgr-recall.mjs')).recallLinkRooms(...a),
+    noteSession: async (...a) => (await import('./thread.mjs')).noteChannelSession(...a),
     vaultDir: (ws) => paths(ws).vault, appVersion: APP_VERSION,
     // CLI 로그인 감지(detectRunners)만 보면 회사 설정에 API 키로 둔 러너(OpenRouter 등)만 쓰는 사용자는 빈 목록이 되어 일을 못 받는다.
     // 동기화의 리더 양보 판정(sync.mjs probeRunnerUsable)과 같이 주인 회사마다 resolveRunner도 본다(3초 상한은 detectRunnerIds).

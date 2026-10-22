@@ -22,7 +22,8 @@ export function createFakeServer({ now = () => Date.now(), uid = 'u' } = {}) {
   const downloads = []; // `${ws}/${slug}` → 서버 에이전트 id
   let gen = 0;
   let failNext = []; // 다음 rpc 호출에 넣을 일시 오류
-  const opts = { paused: false, revoked: false, maxV: 1 };
+  const opts = { paused: false, revoked: false, maxV: 1, noAgentRooms: false };
+  const rooms = new Map(); // 방 → { space, kind, agents: [id] } — msgr2_agent_rooms 흉내. 모르는 방은 개인 공간(이 계정의 모든 에이전트)
   const uuid = () => crypto.randomUUID();
 
   function reply(name, args, r) { log.push({ name, args, reply: r }); return r; }
@@ -93,6 +94,13 @@ export function createFakeServer({ now = () => Date.now(), uid = 'u' } = {}) {
         const slot = uuid(); slots.set(slot, { ...args, put: false });
         return reply(name, args, { data: { ok: true, slot, bucket: 'msgr', path: `s/${args.p_work}/${slot}/${args.p_name}` } }); // 서버 모양(msgr2_link_upload_slot)
       }
+      if (name === 'msgr2_agent_rooms' && !opts.noAgentRooms) { // 서버 20261022180000과 같은 모양: 넣은 방마다 1행, 내 에이전트가 없으면 빈 목록·공간 없음
+        const ids = [...new Set((args?.p_rooms ?? []).filter(Boolean))];
+        return reply(name, args, { data: ids.map((id) => {
+          const r = rooms.get(id) ?? { space: 'p0000000-0000-4000-8000-000000000000', kind: 'personal', agents: [...agentIds.values()] };
+          return r.agents.length ? { room_id: id, agents: r.agents, space_id: r.space, space_kind: r.kind } : { room_id: id, agents: [], space_id: null, space_kind: null };
+        }), error: null });
+      }
       return reply(name, args, { data: null, error: { code: 'PGRST202', message: 'unknown rpc', status: 404 } });
     },
     subscribe(topic, onEnvelope, onStatus) {
@@ -153,8 +161,10 @@ export function createFakeServer({ now = () => Date.now(), uid = 'u' } = {}) {
   function reconnect() { for (const set of subs.values()) for (const s of set) s.onStatus?.('connected'); }
 
   return {
-    transport, works, sent, log, agentIds, files, downloads, subs, effects, broadcasts, pending, slots, opts,
+    transport, works, sent, log, agentIds, files, downloads, subs, effects, broadcasts, pending, slots, opts, rooms,
     offer, push, cancel, decide, reconnect, serverEnvelope,
+    // 빠짐 알림(agent.scope, 일 없는 봉투)을 본체 토픽으로 — 서버 _msgr2_scope_notify와 같은 모양
+    scopeChanged: () => push({ v: LINK_V, id: uuid(), work: null, seq: 0, type: 'agent.scope', agent: null, device: null, at: new Date(now()).toISOString(), data: {} }, { store: false }),
     failNext: (...errs) => { failNext.push(...errs); },
     sentOf: (type, work) => sent.filter((e) => e.type === type && (!work || e.work === work)),
     rpcCount: (name) => log.filter((x) => x.name === name).length,

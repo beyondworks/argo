@@ -16,7 +16,7 @@ const flush = async (n = 30) => { for (let i = 0; i < n; i++) await new Promise(
 const until = async (cond, ms = 10_000) => { const end = Date.now() + ms; while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 10)); };
 const DEVICE = 'c4d5e6f7-8091-4a2b-9c3d-4e5f6a7b8c03';
 
-async function setup({ chatImpl, regFails = false, paused = false, plan, agents = [{ ws: 'co-1', slug: 'pm', name: 'PM', role: '기획' }] } = {}) {
+async function setup({ chatImpl, regFails = false, paused = false, plan, agents = [{ ws: 'co-1', slug: 'pm', name: 'PM', role: '기획' }], extra = {}, before = null } = {}) {
   let t = Date.parse('2026-10-17T06:00:00Z');
   // 가짜 시계: 타이머는 advance()가 시각 순으로 부른다(결재 만료·리스 연장)
   const timers = new Set();
@@ -33,6 +33,7 @@ async function setup({ chatImpl, regFails = false, paused = false, plan, agents 
     pending: () => timers.size };
   const server = createFakeServer({ now: clock.now, uid: 'u1' });
   server.opts.paused = paused; // v2 중단 스위치를 켠 채 부팅
+  before?.(server); // 부팅 전에 가짜 서버를 고친다(방의 공간·함수 없음 등)
   const rpc0 = server.transport.rpc;
   server.transport.rpc = async (name, args) => {
     if (name === 'msgr2_device_register') {
@@ -71,6 +72,7 @@ async function setup({ chatImpl, regFails = false, paused = false, plan, agents 
     clock,
     linkClock: clock, // 부품도 같은 가짜 시계(offer 만료 판정)
     log: (...a) => calls.logs.push(a.join(' ')),
+    ...extra,
   });
   host.start(); await flush();
   // 시작(등록 → 목록 보내기 → 구독·따라잡기)이 끝날 때까지 — 느린 CI(윈도우)에서는 정해진 flush 횟수로 모자라 대응표가 비어 있었다
@@ -158,7 +160,7 @@ test('등급별 실행: owner는 주인 도구(범위 owner 표지), team·guest
     await until(() => server.sentOf('work.result', o.work).length > 0);
     assert.equal(calls.chat.length, 1, tier);
     const mc = calls.chat[0].opts.mirrorCtx;
-    assert.deepEqual(mc, { kind: 'scope', scope: { kind: 'link', work: o.work, room: o.data.room, owner: tier === 'owner' } }, tier);
+    assert.deepEqual(mc, { kind: 'scope', scope: { kind: 'link', work: o.work, room: o.data.room, owner: tier === 'owner', space: 'p0000000-0000-4000-8000-000000000000', spaceKind: 'personal' } }, tier); // 방의 공간(가짜 서버 기본 = 개인) — 일지 칸(link-memory.mjs)
     assert.equal(isGuestCtx(mc), tier !== 'owner', `${tier}: 손님 판정`);
     assert.equal(server.sentOf('work.error', o.work).length, 0, tier);
     assert.equal(server.works.get(o.work).state, 'done', tier);
@@ -584,4 +586,68 @@ test('주인이 데스크톱·텔레그램에서 먼저 확정한 결재: v2 승
   await until(() => server.sentOf('work.result', o.work).length > 0);
   assert.equal(server.sentOf('work.result', o.work)[0].data.text, '올림\n\n후속: 데스크톱에서 승인되어 보냈음');
   assert.equal(calls.resolved.length, 1, 'v2 승인은 한 번 시도하고(이미 처리됨) 다시 실행하지 않는다');
+});
+
+// ── 조직 기억(2026-10-22 유건 지시 "본체가 조직 대화를 개인 기억에 섞어 쓰고 조직을 나가도 회수 안 되는 결함부터 고쳐 주세요") ──
+const TEAM = 'a7000000-0000-4000-8000-0000000000aa';
+const { existsSync } = await import('node:fs');
+const { mkdir: mkdirp, writeFile: writeF } = await import('node:fs/promises');
+
+test('팀 방 일: 범위에 팀 공간을 싣고(일지 칸), 첨부는 vault/files/msgr2-turn/<일>/에 두었다가 턴이 끝나면 지운다', async () => {
+  let room = null;
+  const { server, calls, agentId, vault } = await setup({ chatImpl: async (opts) => { room = opts.mirrorCtx.scope.room; calls.seenFile = existsSync(join(vault, opts.attachments[0].rel)); return { reply: '정리했습니다', sessionId: 'sess-team-1' }; },
+    extra: { noteSession: async (ws, slug, scope, sid) => { (calls.noted ??= []).push({ ws, slug, scope, sid }); } } });
+  const o = server.offer({ agent: agentId });
+  server.rooms.set(o.data.room, { space: TEAM, kind: 'team', agents: [agentId] });
+  server.files.set('msgr/t/r/1/0-a.csv', new TextEncoder().encode('a,b'));
+  o.data.attachments = [{ id: 1, name: '가격표.csv', mime: 'text/csv', bytes: 3, bucket: 'msgr', path: 't/r/1/0-a.csv' }];
+  server.push(o); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  const { scope } = calls.chat[0].opts.mirrorCtx;
+  assert.deepEqual([scope.space, scope.spaceKind, room], [TEAM, 'team', o.data.room]);
+  assert.match(calls.chat[0].opts.attachments[0].rel, new RegExp(`^files/msgr2-turn/${o.work}/[0-9a-f]{8}-가격표\\.csv$`));
+  assert.equal(calls.seenFile, true, '턴 동안은 러너가 읽을 수 있다');
+  assert.equal(existsSync(join(vault, 'files', 'msgr2-turn', o.work)), false, '턴이 끝나면 첨부 사본을 지운다(원본은 서버 Storage)');
+  assert.deepEqual(calls.noted, [{ ws: 'co-1', slug: 'pm', scope: { kind: 'link', room: o.data.room, space: TEAM, spaceKind: 'team' }, sid: 'sess-team-1' }], '회수 때 지울 모델 전사 id를 장부에');
+});
+
+test('방 공간 조회: 처음 보는 방만 1번(같은 방의 다음 일은 0), 함수 없는 옛 서버·이 에이전트가 없다는 답이면 공간 없이(일지는 chat이 끈다)', async () => {
+  const { server, calls, agentId } = await setup();
+  const a = server.offer({ agent: agentId }); const b = server.offer({ agent: agentId }); b.data.room = a.data.room;
+  server.rooms.set(a.data.room, { space: TEAM, kind: 'team', agents: [agentId] });
+  server.push(a); await until(() => server.sentOf('work.result', a.work).length > 0);
+  server.push(b); await until(() => server.sentOf('work.result', b.work).length > 0);
+  assert.equal(server.rpcCount('msgr2_agent_rooms'), 1, '같은 방은 다시 묻지 않는다');
+  const c = server.offer({ agent: agentId });
+  server.rooms.set(c.data.room, { space: TEAM, kind: 'team', agents: [] }); // 이 에이전트가 없다는 답(경합)
+  server.push(c); await until(() => server.sentOf('work.result', c.work).length > 0);
+  server.opts.noAgentRooms = true;
+  const d = server.offer({ agent: agentId });
+  server.push(d); await until(() => server.sentOf('work.result', d.work).length > 0);
+  for (const k of [2, 3]) { const s = calls.chat[k].opts.mirrorCtx.scope; assert.equal(s.spaceKind, undefined, `공간 모름 ${k}`); assert.equal(s.space, undefined); }
+  assert.equal(server.rpcCount('msgr2_agent_rooms'), 3, '모르는 답은 두지 않는다(다음 일에 다시)');
+});
+
+test('회수 일정: (재)접속 5초 뒤 1번, 빠짐 알림은 30초로 묶어 1번 — 서버 답으로 slug:방 → 소속 여부, 남은 첨부 임시 칸 청소, 주기 확인 0', async () => {
+  const runs = [];
+  const recall = async (ws, slugs, presence) => { runs.push({ ws, slugs, ans: await presence([{ slug: 'pm', id: R1 }, { slug: 'pm', id: R2 }]) }); return { channels: 0 }; };
+  const R1 = 'b7000000-0000-4000-8000-000000000001', R2 = 'b7000000-0000-4000-8000-000000000002';
+  const { server, clock, agentId, vault } = await setup({ extra: { recallLinkRooms: recall }, before: (s) => { s.rooms.set(R1, { space: TEAM, kind: 'team', agents: [] }); } });
+  server.rooms.set(R2, { space: TEAM, kind: 'team', agents: [agentId] });
+  const left = join(vault, 'files', 'msgr2-turn', 'old-work'); await mkdirp(left, { recursive: true }); await writeF(join(left, 'x.csv'), 'x');
+  assert.equal(runs.length, 0, '접속 직후에는 아직');
+  await clock.advance(5_000); await flush();
+  assert.equal(runs.length, 1);
+  assert.deepEqual([runs[0].ws, runs[0].slugs, [...runs[0].ans]], ['co-1', ['pm'], [[`pm:${R1}`, false], [`pm:${R2}`, true]]]);
+  assert.equal(existsSync(left), false, '본체가 턴 중에 꺼져 남은 첨부 임시 칸을 지운다');
+  server.scopeChanged(); server.scopeChanged(); server.scopeChanged(); await flush();
+  await clock.advance(29_000); await flush();
+  assert.equal(runs.length, 1, '30초 묶음 전');
+  await clock.advance(1_000); await flush();
+  assert.equal(runs.length, 2, '알림 세 번 = 확인 한 번');
+  const before = server.rpcCount('msgr2_agent_rooms');
+  await clock.advance(3_600_000); await flush();
+  assert.equal(runs.length, 2, '주기 확인은 없다'); assert.equal(server.rpcCount('msgr2_agent_rooms'), before);
+  server.opts.noAgentRooms = true; server.scopeChanged(); await flush(); await clock.advance(30_000); await flush();
+  assert.equal(runs.at(-1).ans, null, '함수 없는 옛 서버 = null(지우지 않는다)');
 });

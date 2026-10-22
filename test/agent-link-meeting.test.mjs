@@ -381,3 +381,17 @@ test('기기 등록의 서버 예외 msgr2_pro_required(42501, 20261020201700)�
   for (let i = 0; i < 5; i++) await host.resync();
   assert.equal(server.log.filter((x) => x.name === 'msgr2_device_register').length, n, '다시 등록하지 않는다');
 });
+
+test('조직 기억(2026-10-22): 팀 방 회의는 참가자마다 범위에 팀 공간(일지 칸 = 조직 칸), 공간을 모르면 공간 없이(일지 끔)', async () => {
+  const TEAM = 'a7000000-0000-4000-8000-0000000000ab';
+  const { server, calls, id } = await setup();
+  const o = meetingOffer(server, id);
+  server.rooms.set(o.data.room, { space: TEAM, kind: 'team', agents: [id('pm'), id('dev')] });
+  server.push(o); await until(() => server.sentOf('work.result', o.work).length > 0);
+  assert.ok(calls.chat.length >= 2);
+  for (const c of calls.chat) assert.deepEqual([c.opts.mirrorCtx.scope.space, c.opts.mirrorCtx.scope.spaceKind], [TEAM, 'team'], c.slug);
+  server.opts.noAgentRooms = true;
+  const o2 = meetingOffer(server, id); const n = calls.chat.length;
+  server.push(o2); await until(() => server.sentOf('work.result', o2.work).length > 0);
+  for (const c of calls.chat.slice(n)) assert.equal(c.opts.mirrorCtx.scope.spaceKind, undefined, '모르면 공간 없이 — chat이 일지를 끈다');
+});

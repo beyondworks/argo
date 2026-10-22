@@ -6,7 +6,8 @@ import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
-import { channelIdsOf, forgetChannels, applyDeparted, mergeDeparted, msgChannel, isOwnerSoloScope, foldedSolo, summaryRecalled } from './departed.mjs'; // 채널 기억 회수(유건 결정 2026-10-03)
+import { channelIdsOf, forgetChannels, applyDeparted, mergeDeparted, msgChannel, recallChannel, linkRoomIdsOf, isOwnerSoloScope, foldedSolo, summaryRecalled } from './departed.mjs';
+import { linkRecallRoom } from './link-memory.mjs'; // 채널 기억 회수(유건 결정 2026-10-03)
 import { isRelaxedStored, resetDelegationLimit } from './delegation-limits.mjs'; // 위임 제한 스위치 — 대화방(스레드)마다 저장
 import { sanitizeFileSlug } from './slug.mjs'; // 파일 이름 세척의 단일 원천 — 회의록 충돌 판정(sync 반입 문)과 같은 규칙
 
@@ -507,6 +508,16 @@ export async function purgeTrashed(wsId, id) {
 }
 
 /** 이 크루의 대화 파일(활성·보관·보관함)에 남은 메신저 채널 id 전부 — 기억 회수 판정에 물을 목록. */
+/** 이 크루의 대화(활성·보관·보관함)에 있는 링크 범위 회수 방 — v2 회수(msgr-recall.mjs recallLinkRooms)가 묻는다. */
+export async function threadLinkRoomIds(wsId, slug) {
+  const out = new Set();
+  for (const f of await threadFiles(wsId, slug)) {
+    const t = await readJson(f, null).catch(() => null);
+    for (const c of linkRoomIdsOf(t)) out.add(c);
+  }
+  return out;
+}
+
 export async function threadChannelIds(wsId, slug) {
   const out = new Set();
   for (const f of await threadFiles(wsId, slug)) {
@@ -531,10 +542,10 @@ export async function forgetThreadChannels(wsId, slug, ids) {
     // 각인 시각은 모든 파일(활성·보관·보관함)에 걸친 그 채널 줄의 가장 늦은 ts — 활성 파일에는 줄이 없어도 각인을 쓴다.
     // 채널 줄이 보관본에만 있을 때 활성에 각인이 없으면, 각인 없는 옛 보관본이 동기화로 돌아와도 거를 근거가 없다(재검수 L-a).
     const ts = {};
-    for (const [, t] of files) for (const m of t.messages) { const c = msgChannel(m); if (c && hit.has(c)) ts[c] = Math.max(ts[c] ?? 0, Number(m.ts) || 0); }
+    for (const [, t] of files) for (const m of t.messages) { const c = recallChannel(m); if (c && hit.has(c)) ts[c] = Math.max(ts[c] ?? 0, Number(m.ts) || 0); }
     const active = file(wsId, slug);
     for (const [f, t] of files) {
-      if (f !== active && ![...channelIdsOf(t)].some((c) => hit.has(c))) continue; // 그 채널 기록이 없는 보관본은 쓰지 않는다
+      if (f !== active && ![...channelIdsOf(t), ...linkRoomIdsOf(t)].some((c) => hit.has(c))) continue; // 그 채널(옛 채널·링크 방) 기록이 없는 보관본은 쓰지 않는다
       const r = forgetChannels(t, ids, ts);
       removed += r.removed; sessionIds.push(...r.sessionIds);
       await writeJsonAtomic(f, t);
@@ -556,8 +567,10 @@ async function threadFiles(wsId, slug) {
 // 채널·DM 턴이 이 기기에서 쓴 세션 id를 모두 남긴다 — 스레드에는 마지막 하나만 남아(기기 전환·새 세션 재시도) 회수 때 전사를 다 못 지운다(설계 검수 H3).
 const ledgerFile = (wsId) => join(paths(wsId).root, '.msgr-sessions.json');
 const LEDGER_MAX = 50; // ponytail: 채널당 최근 50개 — 더 오래된 전사는 SDK가 따로 정리한다
-async function noteChannelSession(wsId, slug, scope, sessionId) {
-  const c = msgChannel({ contextScope: scope });
+// 메신저 v2 링크 범위(팀·모름 공간의 방) 세션은 키 '<slug>:link:<방>'에 따로 둔다 — 옛 회수(channelSessionIds)는 uuid가 아닌 이 키를 묻지 않는다.
+export async function noteChannelSession(wsId, slug, scope, sessionId) {
+  const ch = msgChannel({ contextScope: scope }); const lr = ch ? null : linkRecallRoom(scope);
+  const c = ch ?? (lr ? `link:${lr}` : null);
   if (!c || !sessionId) return;
   await withLock(`msgr-sessions:${wsId}`, async () => {
     const l = await readJson(ledgerFile(wsId), {}).catch(() => null);
@@ -578,6 +591,12 @@ export async function takeChannelSessions(wsId, slug, ids) {
     if (out.length) await writeJsonAtomic(ledgerFile(wsId), l);
     return out;
   }, { file: ledgerFile(wsId) });
+}
+/** 장부에 남은 이 크루의 링크 방 id(키 '<slug>:link:<방>') — v2 회수가 묻는다. 꺼낼 때는 takeChannelSessions(…, ['link:<방>']). */
+export async function linkSessionRoomIds(wsId, slug) {
+  const l = await readJson(ledgerFile(wsId), {}).catch(() => ({}));
+  const pre = `${slug}:link:`;
+  return Object.keys(l).filter((k) => k.startsWith(pre)).map((k) => k.slice(pre.length));
 }
 /** 장부에 남은 이 크루의 채널 id — 스레드 줄이 이미 없어도 전사가 남은 채널까지 묻는다. */
 export async function channelSessionIds(wsId, slug) {

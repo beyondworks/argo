@@ -3,7 +3,8 @@
 // 이 범위는 쪽지 배달 턴(crewmail)·결재 후속 턴(approvalScope)·위임 턴(childCtx)으로 그대로 이어진다 — 그래서 일지 정책을 여기 한 곳에서 정한다.
 //   · 기억 안 남김(memoryOff) → 일지 0
 //   · 개인 공간(spaceKind 'personal') → 종전대로 개인 일지(볼트)
-//   · 팀 공간(spaceKind 'team' + space uuid) → 조직 칸: 태그 org-<공간>-ch-<방>. saveHandover가 볼트 밖 .msgr-journal/에 쓴다(색인·동기화·셸 접근 밖, 파일 단위 회수)
+//   · 팀 공간(spaceKind 'team' + space uuid) → 조직 칸: 태그 org-<공간>-rm-<방>. saveHandover가 볼트 밖 .msgr-journal/에 쓴다(색인·동기화·셸 접근 밖, 파일 단위 회수).
+//     옛 채널 일지(org-<조직>-ch-<채널>)와 이름을 가른다 — 옛 회수(옛 브리지)는 -ch-만 옛 서버에 묻는다. v2에서 새로 생긴 방을 옛 서버가 모른다고 답해 v2 조직 기억을 지우지 않게.
 //   · 모름(옛 범위·조회 실패·잘못된 값) → 일지 0(fail-closed — 그 턴 기억만 빠지고 조직 대화가 개인 기억에 섞이지 않는다)
 // 의존성 없는 파일이다(chat.mjs·departed.mjs·연결부가 함께 쓴다).
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -15,7 +16,7 @@ export const linkScopeOf = (ctx) => (ctx?.kind === 'scope' && ctx.scope?.kind ==
 export function linkOrgTag(scope) {
   if (scope?.kind !== 'link' || scope.spaceKind !== 'team') return null;
   const space = String(scope.space ?? ''), room = String(scope.room ?? '');
-  return UUID.test(space) && UUID.test(room) ? `org-${space.toLowerCase()}-ch-${room.toLowerCase()}` : null;
+  return UUID.test(space) && UUID.test(room) ? `org-${space.toLowerCase()}-rm-${room.toLowerCase()}` : null;
 }
 
 /** 링크 범위 턴의 일지 정책 — 링크 범위가 아니면 받은 journal 그대로. 부르는 쪽이 이미 끈 일지(off)는 그대로 끈다. */

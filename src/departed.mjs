@@ -4,6 +4,7 @@
 //   sids = 지운 채널 세션 id — 세션은 시각이 아니라 id로 지운다(다시 들어온 뒤 새 세션은 남는다).
 // 각인은 읽을 때(loadThread)와 동기화 병합(sync.mjs mergeThread)에서도 다시 적용된다 — 예전 버전·다른 기기가 든 옛 줄이 되살아나도 쓰이지 않게.
 // 다른 크루가 쪽지·위임·세션 메시지로 전해 준 줄과 그 답은 지우지 않는다 — 이 크루가 그 채널에 있었던 기록이 아니라 전해 받은 일이다(설계 검수 M2).
+import { linkRecallRoom } from './link-memory.mjs'; // 메신저 v2 링크 범위 줄의 회수 방(개인 공간 제외, 2026-10-22)
 export const CHANNEL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** 주인 혼자 1:1 기록인가(유건 결정 2026-10-08 ① — 에이전트는 한 사람) — 사람 구성원이 주인 하나·에이전트도 이 에이전트 하나인 메신저 1:1에서
@@ -17,17 +18,31 @@ export const msgChannel = (m) => {
   return (s?.kind === 'msgr' || s?.kind === 'msgr-dm') && CHANNEL_ID.test(String(s.channelId ?? '')) ? String(s.channelId).toLowerCase() : null;
 };
 
+/** 회수 각인을 적용할 줄의 방 — 옛 메신저 채널 줄(msgChannel) 또는 메신저 v2 링크 범위 줄(팀·모름 공간의 방). 각인 적용(applyDeparted)·회수(forgetChannels)가 쓴다.
+    옛 회수가 모으는 방 목록(channelIdsOf)에는 링크 줄을 넣지 않는다 — 옛 서버는 v2에서 새로 생긴 방을 모른다고 답해 지우면 안 되는 조직 기억을 지운다. 링크 방은 linkRoomIdsOf로 따로 모은다. */
+export const recallChannel = (m) => msgChannel(m) ?? linkRecallRoom(m?.contextScope);
+
 // 다른 크루가 보낸 일 — 쪽지·위임·세션 메시지. 메신저 턴(via:'msgr')·루틴·작업·회의실은 이 크루가 직접 받은 일이다(분리 검수 H-1: via 전체를 건너뛰면 실제 채널 줄이 하나도 안 지워졌다).
 const RELAYED = new Set(['crewmail', 'delegate', 'session']);
 /** 회수 대상 줄의 채널 — 전해 받은 일(RELAYED 지시와 그 바로 뒤 크루 답)은 null. */
-function ownChannels(messages) {
+// pick = 방을 고르는 규칙(옛 채널만 = msgChannel, 각인 적용 = recallChannel). 링크 범위 줄은 전해 받은 일이어도 회수한다 — 쪽지·위임 배달 턴도 같은 조직 방 범위에서 돌아
+// 그 글이 곧 조직 대화다(v2 쪽지는 link 범위를 그대로 잇는다, crewmail.mjs).
+function ownChannels(messages, pick = msgChannel) {
   const out = []; let relayed = null;
   for (const m of messages) {
-    const c = msgChannel(m);
+    const c = pick(m);
+    const link = !!c && !msgChannel(m);
     const r = RELAYED.has(m?.via);
     if (m?.who === 'user') relayed = r ? c : null;
-    out.push(c && !(r || (m.who === 'crew' && relayed === c)) ? c : null);
+    out.push(c && (link || !(r || (m.who === 'crew' && relayed === c))) ? c : null);
   }
+  return out;
+}
+
+/** 스레드 안의 링크 범위 회수 방(팀·모름 공간) — v2 회수(recallLinkRooms)가 서버에 물을 방. */
+export function linkRoomIdsOf(t) {
+  const out = new Set();
+  for (const m of t?.messages ?? []) { const c = msgChannel(m) ? null : linkRecallRoom(m?.contextScope); if (c) out.add(c); }
   return out;
 }
 
@@ -76,7 +91,7 @@ export function unscopedSummaryGone(departed, s) {
 export function applyDeparted(t) {
   const d = t?.departed;
   if (!d || typeof d !== 'object' || !Array.isArray(t.messages)) return 0;
-  const own = ownChannels(t.messages);
+  const own = ownChannels(t.messages, recallChannel);
   const before = t.messages.length;
   t.messages = t.messages.filter((m, i) => { const c = own[i]; return !(c && d[c] && (Number(m.ts) || 0) <= entry(d[c]).ts); });
   if (unscopedSummaryGone(d, t.summary)) delete t.summary; // 회수된 주인 혼자 1:1 줄을 접은 범위 없는 요약(위 summary.solo) — 줄이 이미 없어도(옛 버전 사본) 요약 자신의 표지로 거른다. 표지를 잃은 옛 버전 요약도
@@ -96,7 +111,7 @@ export function applyDeparted(t) {
 export function forgetChannels(t, ids, tsByChannel = {}) {
   const want = new Set((ids ?? []).map((x) => String(x).toLowerCase()).filter((c) => CHANNEL_ID.test(c)));
   if (!want.size) return { removed: 0, sessionIds: [] };
-  const own = ownChannels(t.messages ?? []);
+  const own = ownChannels(t.messages ?? [], recallChannel);
   t.departed = { ...(t.departed ?? {}) };
   const sessionIds = [];
   for (const c of want) {

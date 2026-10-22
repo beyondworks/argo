@@ -294,6 +294,8 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 조직 문서 미러(vault/org/) — 팀 메신저 서버가 정본이고 브리지가 기기마다 내려받는 파생물(G-2). 동기화를 타면
   // 두 기기의 미러가 서로를 덮고, 오프보딩 회수(미러 삭제)가 원격에서 되살아난다.
   if (rel.startsWith('vault/org/')) return true;
+  // 메신저 v2 팀·모름 방 첨부의 턴 임시 칸(agent-link-host.mjs TURN_FILES) — 조직 방 파일이 개인 클라우드로 올라가지 않게. 턴이 끝나면 지운다
+  if (rel.startsWith('vault/files/msgr2-turn/')) return true;
   // 네이티브 엔진 전사(.sessions/native/<slug>.json) — 기기 로컬 모델 문맥(도구 출력·대화 원문). 디렉터리 단위 제외(basename만 보면
   // 통과 — 분리 검수 MEDIUM-2 실측: isSecretRel 밖이라 기기 DEK 없으면 평문 업로드 + 도구 단계마다 저장돼 업로드 증폭).
   if (rel.split('/')[0] === '.sessions') return true;
