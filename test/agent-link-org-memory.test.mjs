@@ -124,6 +124,9 @@ test('이어지는 턴: 쪽지(sendCrewMail → 배달 문맥)·결재 범위(ap
   assert.doesNotMatch(await vaultJournal(ws) + await orgJournal(ws), /MAIL_TEAM/, '받은 에이전트는 그 방 멤버가 아닐 수 있어 소속으로 거둘 수 없다 — 일지 0');
   await chat(ws, 'seoyun', 'APPROVAL_FOLLOW 후속', null, { mirrorCtx: { kind: 'scope', scope: approvalScope(link({ space: SPACE, spaceKind: 'team' })).scope } });
   assert.match(await orgJournal(ws), /APPROVAL_FOLLOW 후속/, '결재 후속 턴(같은 에이전트)은 조직 칸에');
+  assert.equal(ctx.scope.relayed, true, '배달 문맥은 전해 받은 일 표지를 싣는다');
+  await chat(ws, 'mina', 'RELAYED_FOLLOW 후속', null, { mirrorCtx: { kind: 'scope', scope: approvalScope(ctx).scope } }); // 전해 받은 일에서 올린 결재의 후속 턴(from·via 없음 — 재검수 남은 구멍)
+  assert.doesNotMatch(await vaultJournal(ws) + await orgJournal(ws), /RELAYED_FOLLOW/, '전해 받은 일의 결재 후속 턴도 팀 방 일지 0');
   const personal = crewmailMirrorCtx(ws, 'mina', { link: { kind: 'link', work: WORK, room: ROOM, owner: true, space: PSPACE, spaceKind: 'personal' } });
   assert.equal(personal.scope.spaceKind, 'personal', '개인 공간 쪽지도 공간을 잇는다(개인 일지 그대로)');
 });
@@ -138,6 +141,7 @@ test('회수(recallLinkRooms): 서버가 "없음"이라 한 팀 방만 — 직�
   await appendTurn(ws, 'seoyun', { userMsg: 'GONE_LINE 지시', reply: 'GONE_REPLY', sessionId: null, contextScope: team(GONE) });
   await appendTurn(ws, 'seoyun', { userMsg: 'KEEP_LINE 지시', reply: 'KEEP_REPLY', sessionId: null, contextScope: team(KEEP) });
   await appendTurn(ws, 'seoyun', { userMsg: 'RELAYED_LINE 쪽지', reply: 'RELAYED_REPLY', sessionId: null, via: 'crewmail', contextScope: team(SHARED) }); // 이 에이전트는 SHARED 멤버가 아니다
+  await appendTurn(ws, 'seoyun', { userMsg: 'RELAYED_FOLLOWUP 승인 후속', reply: 'FOLLOWUP_REPLY', sessionId: null, contextScope: { ...team(SHARED), relayed: true } }); // 전해 받은 일의 결재 후속 턴 줄(via 없음, 범위 표지만)
   await appendTurn(ws, 'seoyun', { userMsg: 'PERSONAL_LINE 지시', reply: 'PERSONAL_REPLY', sessionId: null, contextScope: { kind: 'link', work: WORK, room: PROOM, owner: true, space: PSPACE, spaceKind: 'personal' } });
   await appendTurn(ws, 'seoyun', { userMsg: 'UNKNOWN_LINE 지시', reply: 'UNKNOWN_REPLY', sessionId: null, contextScope: { kind: 'link', work: WORK, room: PROOM, owner: true } }); // 공간 모름(옛 범위)
   await appendTurn(ws, 'seoyun', { userMsg: 'LEGACY_SAME_ID 지시', reply: 'LEGACY_REPLY', sessionId: null, contextScope: { kind: 'msgr-dm', channelId: GONE, ownerSolo: true } }); // 옛 채널 id = v2 방 id(백필)
@@ -159,13 +163,13 @@ test('회수(recallLinkRooms): 서버가 "없음"이라 한 팀 방만 — 직�
   assert.deepEqual([sum.channels, sum.journals, sum.transcripts], [1, 1, 1]);
   let t = JSON.stringify(await loadThread(ws, 'seoyun'));
   assert.doesNotMatch(t, /GONE_LINE|GONE_REPLY/, '빠진 방의 직접 받은 줄');
-  for (const k of ['KEEP_LINE', 'RELAYED_LINE', 'PERSONAL_LINE', 'UNKNOWN_LINE', 'LEGACY_SAME_ID']) assert.match(t, new RegExp(k), `남김: ${k}`);
+  for (const k of ['KEEP_LINE', 'RELAYED_LINE', 'RELAYED_FOLLOWUP', 'PERSONAL_LINE', 'UNKNOWN_LINE', 'LEGACY_SAME_ID']) assert.match(t, new RegExp(k), `남김: ${k}`);
   assert.doesNotMatch(await orgJournal(ws), /GONE_JOURNAL/); assert.match(await orgJournal(ws), /KEEP_JOURNAL/);
   assert.deepEqual((await readdir(proj)).sort(), [`${RSID}.jsonl`], '그 방의 직접 받은 링크 턴 전사만');
   // 2차: SHARED에 내 에이전트가 하나도 남지 않음 → 전해 받은 줄·그 전사도 거둔다
   await recallLinkRooms(ws, ['seoyun'], answer({ [KEEP]: [true, true], [SHARED]: [false, false] }), cfg);
   t = JSON.stringify(await loadThread(ws, 'seoyun'));
-  assert.doesNotMatch(t, /RELAYED_LINE|RELAYED_REPLY/); assert.equal((await readdir(proj)).length, 0);
+  assert.doesNotMatch(t, /RELAYED_LINE|RELAYED_REPLY|RELAYED_FOLLOWUP|FOLLOWUP_REPLY/); assert.equal((await readdir(proj)).length, 0);
   // 옛 회수(옛 브리지): 같은 id(GONE)의 옛 줄을 지워도 v2 링크 줄은 건드리지 않고, 링크 방은 묻지 않는다(I-1 반대 방향)
   await appendTurn(ws, 'seoyun', { userMsg: 'LINK_AFTER 지시', reply: 'R', sessionId: null, contextScope: team(GONE) });
   assert.ok(!(await threadChannelIds(ws, 'seoyun')).has(KEEP), '옛 회수가 모으는 방에 링크 방은 없다');

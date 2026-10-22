@@ -1,5 +1,5 @@
 // 메신저 v2 링크 범위 턴의 기억 칸(유건 2026-10-22 22:4x "본체가 조직 대화를 개인 기억에 섞어 쓰고 조직을 나가도 회수 안 되는 결함부터 고쳐 주세요").
-// 링크 범위 = { kind:'link', work, room, owner, memoryOff?, space?, spaceKind? } — 연결부(agent-link-host.mjs)가 서버 msgr2_agent_rooms로 방의 공간을 알아 싣는다.
+// 링크 범위 = { kind:'link', work, room, owner, memoryOff?, space?, spaceKind?, relayed? } — 연결부(agent-link-host.mjs)가 서버 msgr2_agent_rooms로 방의 공간을 알아 싣는다.
 // 이 범위는 쪽지 배달 턴(crewmail)·결재 후속 턴(approvalScope)·위임 턴(childCtx)으로 그대로 이어진다 — 그래서 일지 정책을 여기 한 곳에서 정한다.
 //   · 기억 안 남김(memoryOff) → 일지 0
 //   · 개인 공간(spaceKind 'personal') → 종전대로 개인 일지(볼트)
@@ -27,6 +27,7 @@ export function linkOrgTag(scope) {
     개인 공간은 전해 받은 일도 종전 그대로. */
 export function linkJournal(ctx, journal = null, { relayed = false } = {}) {
   const s = linkScopeOf(ctx);
+  relayed = relayed || s?.relayed === true; // 범위의 표지 — 쪽지 배달(scheduler)·위임(chat.mjs childCtx)이 싣고, 결재 후속 턴(approvalScope)이 범위째 이어받는다
   if (!s || journal?.off === true) return journal;
   if (s.memoryOff === true) return { off: true };
   if (s.spaceKind === 'personal') return journal;

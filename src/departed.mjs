@@ -38,8 +38,9 @@ function ownChannels(messages, { link = false } = {}) {
     const lr = link && !c ? linkRecallRoom(m?.contextScope) : null;
     if (lr) {
       const k = `linkr:${lr}`;
-      if (m?.who === 'user') relayed = r ? k : null;
-      out.push(r || (m.who === 'crew' && relayed === k) ? k : `link:${lr}`);
+      const rel = r || m?.contextScope?.relayed === true; // via(쪽지·위임 기록) 또는 범위의 전해 받은 일 표지(그 결재 후속 턴 줄)
+      if (m?.who === 'user') relayed = rel ? k : null;
+      out.push(rel || (m.who === 'crew' && relayed === k) ? k : `link:${lr}`);
       continue;
     }
     if (m?.who === 'user') relayed = r ? c : null;

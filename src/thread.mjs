@@ -571,7 +571,7 @@ const LEDGER_MAX = 50; // ponytail: 채널당 최근 50개 — 더 오래된 전
 // 옛 회수(channelSessionIds)는 uuid가 아닌 이 키를 묻지 않는다. 개인 공간·모름 방 세션은 적지 않는다(회수 대상 밖).
 export async function noteChannelSession(wsId, slug, scope, sessionId, via = null) {
   const ch = msgChannel({ contextScope: scope }); const lr = ch ? null : linkRecallRoom(scope);
-  const c = ch ?? (lr ? `${['crewmail', 'delegate', 'session'].includes(via) ? 'linkr' : 'link'}:${lr}` : null);
+  const c = ch ?? (lr ? `${['crewmail', 'delegate', 'session'].includes(via) || scope?.relayed === true ? 'linkr' : 'link'}:${lr}` : null);
   if (!c || !sessionId) return;
   await withLock(`msgr-sessions:${wsId}`, async () => {
     const l = await readJson(ledgerFile(wsId), {}).catch(() => null);
