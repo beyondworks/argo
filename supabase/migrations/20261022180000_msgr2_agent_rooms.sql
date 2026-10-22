@@ -19,6 +19,89 @@
 -- 부하: 기기 N대 × (시작 + 재연결 + 빠짐 사건). 예) 100대 × 하루 재연결 10회 = 하루 1,000회 ≈ 분당 0.7회. 쓰기 0. 알림 = 빠짐 사건마다 주인 1명당 방송 1회.
 -- 되돌림: scripts/rollback/20261022180000_msgr2_agent_rooms.down.sql · 시험: test/msgr2-agent-rooms-pg.test.mjs
 
+-- 0) 봉투 검사(_msgr2_env_check, 마지막 정의 20261020201300)에 agent.scope를 서버 → 본체 type으로 더한다 — 본체가 이 type을 보내면 계약 validateEnvelope와 같이
+--    wrong_direction(종전 unsupported_type). 본문은 20261020201300의 것에 그 두 줄만 바꾼 것이다(test/msgr2-work-contract-pg.test.mjs가 계약 예제 전부와 대조).
+create or replace function public._msgr2_env_check(e jsonb, p_min_v int, p_max_v int) returns text
+  language plpgsql immutable set search_path = public, pg_temp as $$
+declare t text; d jsonb; x jsonb; sync boolean;
+begin
+  if jsonb_typeof(e) is distinct from 'object' then return 'invalid_envelope'; end if;
+  if not public._msgr2_j_int(e->'v', 1) then return 'invalid_envelope'; end if;
+  if (e->>'v')::numeric < p_min_v or (e->>'v')::numeric > p_max_v then return 'link_version_unsupported'; end if;
+  if jsonb_typeof(e->'type') is distinct from 'string' then return 'invalid_envelope'; end if;
+  t := e->>'type';
+  if t not in ('work.offer', 'work.cancel', 'work.approval_decision', 'work.accept', 'work.progress', 'work.approval_request', 'work.effect',
+               'work.result', 'work.error', 'agent.sync', 'agent.scope') then return 'unsupported_type'; end if;
+  if octet_length(e::text) > 131072 then return 'too_large'; end if;
+  if t in ('work.offer', 'work.cancel', 'work.approval_decision', 'agent.scope') then return 'wrong_direction'; end if; -- agent.scope = 서버→본체 빠짐 알림(아래)
+  sync := t = 'agent.sync';
+  -- 봉투 필드(v1: id·work·seq·agent·device·at·data — 모두 있어야 한다. agent.sync는 work가 null, agent는 null 허용)
+  if not public._msgr2_j_uuid(e->'id') or not public._msgr2_j_int(e->'seq', 0) or not public._msgr2_j_uuid(e->'device') or not public._msgr2_j_ts(e->'at')
+     or jsonb_typeof(e->'data') is distinct from 'object' or not (e ? 'work') or not (e ? 'agent') then return 'invalid_envelope'; end if;
+  if sync then
+    if jsonb_typeof(e->'work') <> 'null' then return 'invalid_envelope'; end if;
+    if jsonb_typeof(e->'agent') <> 'null' and not public._msgr2_j_uuid(e->'agent') then return 'invalid_envelope'; end if;
+  elsif not public._msgr2_j_uuid(e->'work') or not public._msgr2_j_uuid(e->'agent') then return 'invalid_envelope'; end if;
+  d := e->'data';
+  if t = 'work.accept' then
+    if not public._msgr2_j_opt(d->'lease_gen', public._msgr2_j_int(d->'lease_gen', 1)) then return 'invalid_envelope'; end if;
+  elsif t = 'work.progress' then
+    if (d->>'stage') is null or (d->>'stage') not in ('thinking', 'tool', 'writing') or jsonb_typeof(d->'stage') <> 'string'
+       or not public._msgr2_j_opt(d->'note', public._msgr2_j_str(d->'note', 0, 200)) then return 'invalid_envelope'; end if;
+  elsif t = 'work.approval_request' then
+    if not public._msgr2_j_uuid(d->'approval_id') or not public._msgr2_j_str(d->'action', 1, 200) or jsonb_typeof(d->'risk') is distinct from 'string'
+       or (d->>'risk') not in ('low', 'medium', 'high') or not public._msgr2_j_str(d->'summary', 1, 2000)
+       or not (d ? 'effect_key') or not public._msgr2_j_opt(d->'effect_key', public._msgr2_j_str(d->'effect_key', 1, 200), true)
+       or not public._msgr2_j_ts(d->'expires_at') then return 'invalid_envelope'; end if;
+  elsif t = 'work.effect' then
+    if not public._msgr2_j_str(d->'effect_key', 1, 200) or jsonb_typeof(d->'state') is distinct from 'string' or (d->>'state') not in ('intent', 'done', 'failed')
+       or not public._msgr2_j_opt(d->'kind', public._msgr2_j_code(d->'kind')) then return 'invalid_envelope'; end if;
+  elsif t = 'work.result' then
+    if not public._msgr2_j_str(d->'text', 0, 20000) or jsonb_typeof(d->'files') is distinct from 'array' or jsonb_array_length(d->'files') > 20
+       or jsonb_typeof(d->'handoffs') is distinct from 'array' or jsonb_array_length(d->'handoffs') > 8 then return 'invalid_envelope'; end if;
+    for x in select * from jsonb_array_elements(d->'files') loop if not public._msgr2_j_uuid(x) then return 'invalid_envelope'; end if; end loop;
+    for x in select * from jsonb_array_elements(d->'handoffs') loop
+      if jsonb_typeof(x) <> 'object' or not public._msgr2_j_uuid(x->'agent') or not public._msgr2_j_str(x->'text', 1, 4000) then return 'invalid_envelope'; end if;
+    end loop;
+    -- v1.1 회의 결과 posts[]{agent, round 1..2, text 1..3000}(≤10). posts가 있으면 text(요약) ≤ 2000·handoffs 0
+    if d ? 'posts' then
+      if jsonb_typeof(d->'posts') <> 'array' or jsonb_array_length(d->'posts') > 10 then return 'invalid_envelope'; end if;
+      for x in select * from jsonb_array_elements(d->'posts') loop
+        if jsonb_typeof(x) <> 'object' or not public._msgr2_j_uuid(x->'agent') or not public._msgr2_j_int(x->'round', 1) or (x->>'round')::numeric > 2
+           or not public._msgr2_j_str(x->'text', 1, 3000) then return 'invalid_envelope'; end if;
+      end loop;
+      if jsonb_array_length(d->'posts') > 0 and (length(d->>'text') > 2000 or jsonb_array_length(d->'handoffs') > 0) then return 'invalid_envelope'; end if;
+    end if;
+    if d ? 'usage' and jsonb_typeof(d->'usage') not in ('object', 'null') then return 'invalid_envelope'; end if;
+    if jsonb_typeof(d->'usage') = 'object' and not (
+         public._msgr2_j_opt(d->'usage'->'input_tokens', public._msgr2_j_int(d->'usage'->'input_tokens', 0))
+     and public._msgr2_j_opt(d->'usage'->'output_tokens', public._msgr2_j_int(d->'usage'->'output_tokens', 0))
+     and public._msgr2_j_opt(d->'usage'->'cost_usd', public._msgr2_j_num(d->'usage'->'cost_usd'))
+     and public._msgr2_j_opt(d->'usage'->'runner', public._msgr2_j_str(d->'usage'->'runner', 0, 64))
+     and public._msgr2_j_opt(d->'usage'->'model', public._msgr2_j_str(d->'usage'->'model', 0, 200))) then return 'invalid_envelope'; end if;
+  elsif t = 'work.error' then
+    if not public._msgr2_j_code(d->'code') or not (d ? 'runner') or not public._msgr2_j_opt(d->'runner', public._msgr2_j_str(d->'runner', 0, 64), true)
+       or not public._msgr2_j_opt(d->'retry_at', public._msgr2_j_ts(d->'retry_at'), true) then return 'invalid_envelope'; end if;
+  elsif t = 'agent.sync' then
+    if jsonb_typeof(d->'agents') is distinct from 'array' or jsonb_array_length(d->'agents') > 500 then return 'invalid_envelope'; end if;
+    for x in select * from jsonb_array_elements(d->'agents') loop
+      if jsonb_typeof(x) <> 'object' or not public._msgr2_j_str(x->'ws', 1, 200) or not public._msgr2_j_str(x->'slug', 1, 200)
+         or not public._msgr2_j_str(x->'name', 1, 200) or not public._msgr2_j_str(x->'role', 0, 2000)
+         or not (x ? 'face_hash') or not public._msgr2_j_opt(x->'face_hash', public._msgr2_j_str(x->'face_hash', 0, 128), true) then return 'invalid_envelope'; end if;
+      -- v1.1 외부 봇: kind(열린 값 코드), bot{kind 코드, profile ≤ 200} 또는 null
+      if not public._msgr2_j_opt(x->'kind', public._msgr2_j_code(x->'kind')) then return 'invalid_envelope'; end if;
+      if x ? 'bot' and jsonb_typeof(x->'bot') <> 'null' and (jsonb_typeof(x->'bot') <> 'object' or not public._msgr2_j_code(x->'bot'->'kind')
+         or not public._msgr2_j_opt(x->'bot'->'profile', public._msgr2_j_str(x->'bot'->'profile', 0, 200))) then return 'invalid_envelope'; end if;
+    end loop;
+    -- v1.1 기능 알림 features[](열린 값 코드, ≤ 16)
+    if d ? 'features' then
+      if jsonb_typeof(d->'features') <> 'array' or jsonb_array_length(d->'features') > 16 then return 'invalid_envelope'; end if;
+      for x in select * from jsonb_array_elements(d->'features') loop if not public._msgr2_j_code(x) then return 'invalid_envelope'; end if; end loop;
+    end if;
+  end if;
+  return null;
+end $$;
+
 create or replace function public.msgr2_agent_rooms(p_rooms uuid[])
   returns table (room_id uuid, agents uuid[], space_id uuid, space_kind text)
   language plpgsql stable security definer set search_path = public, pg_temp as $$
@@ -61,10 +144,19 @@ begin
 end $$;
 revoke all on function public._msgr2_scope_notify(uuid) from public, anon, authenticated;
 
+-- 알리지 않는 문맥: 백필(서비스 문맥 + msgr2.backfill = on, 20261020200700과 같은 규칙), 그리고 서비스 문맥의 행 삭제(이전 되돌림 scripts/msgr2-migrate-rollback.sql처럼
+-- 사본 표를 비우는 운영 작업 — 사람의 빠짐은 행을 지우지 않고 removed_at을 쓴다).
+create or replace function public._msgr2_scope_quiet(p_op text) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select auth.uid() is null and (coalesce(current_setting('msgr2.backfill', true), '') = 'on' or p_op = 'DELETE')
+$$;
+revoke all on function public._msgr2_scope_quiet(text) from public, anon, authenticated;
+
 -- 방 멤버 행(에이전트): 닫히거나(removed_at null → 값) 지워지면 그 에이전트 주인에게
 create or replace function public.msgr2_scope_on_room_member() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
+  if public._msgr2_scope_quiet(tg_op) then return null; end if;
   if old.member_kind = 'agent' and old.removed_at is null and (tg_op = 'DELETE' or new.removed_at is not null) then
     perform public._msgr2_scope_notify((select a.owner_user_id from public.msgr2_agents a where a.id = old.member_id));
   end if;
@@ -79,6 +171,7 @@ create trigger msgr2_scope_room_member after update of removed_at or delete on p
 create or replace function public.msgr2_scope_on_seat() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
+  if public._msgr2_scope_quiet(tg_op) then return null; end if;
   if old.removed_at is null and (tg_op = 'DELETE' or new.removed_at is not null) then
     perform public._msgr2_scope_notify((select a.owner_user_id from public.msgr2_agents a where a.id = old.agent_id));
   end if;
@@ -93,6 +186,7 @@ create trigger msgr2_scope_seat after update of removed_at or delete on public.m
 create or replace function public.msgr2_scope_on_space_member() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
+  if public._msgr2_scope_quiet(tg_op) then return null; end if;
   if old.removed_at is null and (tg_op = 'DELETE' or new.removed_at is not null
      or (new.expires_at is not null and new.expires_at <= now() and (old.expires_at is null or old.expires_at > now()))) then
     perform public._msgr2_scope_notify(old.user_id);
@@ -109,6 +203,7 @@ create or replace function public.msgr2_scope_on_space() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 declare u uuid;
 begin
+  if public._msgr2_scope_quiet(tg_op) then return null; end if;
   if old.deleted_at is null and new.deleted_at is not null then
     for u in select distinct a.owner_user_id from public.msgr2_agent_seats st join public.msgr2_agents a on a.id = st.agent_id
               where st.space_id = new.id and st.removed_at is null loop

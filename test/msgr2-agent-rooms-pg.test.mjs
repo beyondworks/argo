@@ -143,6 +143,21 @@ test('공간 삭제: 그 공간 방 빈 목록 + 파견된 에이전트 주인�
   assert.equal(scopeSends(U.A), a0 + 1); assert.equal(scopeSends(U.C), c0 + 1);
 });
 
+test('알리지 않는 문맥: 서비스 문맥의 행 삭제(이전 되돌림)·백필 문맥은 알림 0, 서비스 문맥의 닫기(update)는 알림, 본체가 agent.scope를 보내면 wrong_direction', { skip }, () => {
+  const T6 = space('team', U.C, 'Quiet 팀'); smember(T6, U.C, 'owner'); smember(T6, U.A); seat(G.A1, T6);
+  const r1 = room(T6, 'open', '지울 방', [U.A], [G.A1]); const r2 = room(T6, 'open', '닫을 방', [U.A], [G.A1]); const r3 = room(T6, 'open', '백필 방', [U.A], [G.A1]);
+  const svc = "select set_config('argo.uid', '', false); ";
+  const a0 = scopeSends(U.A);
+  db.sql(svc + 'delete from public.msgr2_room_members where room_id = ' + q(r1) + " and member_kind = 'agent'");
+  assert.equal(scopeSends(U.A), a0, '서비스 문맥 삭제(사본 비우기)는 알리지 않는다');
+  db.sql('begin; ' + svc + "set local msgr2.backfill = 'on'; update public.msgr2_room_members set removed_at = now() where room_id = " + q(r3) + " and member_kind = 'agent'; commit;");
+  assert.equal(scopeSends(U.A), a0, '백필 문맥은 알리지 않는다');
+  db.sql(svc + 'update public.msgr2_room_members set removed_at = now() where room_id = ' + q(r2) + " and member_kind = 'agent'");
+  assert.equal(scopeSends(U.A), a0 + 1, '서비스 문맥이라도 닫기(운영 작업·만료 정리)는 알린다');
+  const env = { v: 1, id: 'e3000000-0000-4000-8000-000000000001', work: null, seq: 0, type: 'agent.scope', agent: null, device: runA.dev, at: new Date().toISOString(), data: {} };
+  assert.equal(db.sql('select public._msgr2_env_check(' + db.lit(env) + ', 1, 1)'), 'wrong_direction', '본체가 보내면 계약 validateEnvelope(from runner)와 같이 wrong_direction');
+});
+
 test('되돌림: 함수·트리거가 사라지고 빠짐에도 알림 0, 다시 적용하면 돌아온다', { skip }, () => {
   db.psql(['-v', 'ON_ERROR_STOP=1', '-f', DOWN]);
   assert.equal(db.sql("select count(*) from pg_proc where proname in ('msgr2_agent_rooms', '_msgr2_scope_notify', 'msgr2_scope_on_room_member', 'msgr2_scope_on_seat', 'msgr2_scope_on_space_member', 'msgr2_scope_on_space')"), '0');
