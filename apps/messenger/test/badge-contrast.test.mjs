@@ -63,6 +63,7 @@ function measure(ctx, theme) {
   let ring = null; // box-shadow: 0 0 0 1px var(--msgr-badge-ring) — 테마가 테두리 색을 줄 때만
   const sh = winner(chain, 'box-shadow');
   if (sh && sh.includes('var(--msgr-badge-ring')) { const rv = themeToken(theme, '--msgr-badge-ring'); if (rv && rv !== 'transparent') ring = tok(rv, '--msgr-badge-ring'); }
+  else if (sh) { const m = sh.match(/(?:inset\s+)?0\s+0\s+0\s+1px\s+(var\(--[\w-]+\))/); if (m) ring = tok(m[1], 'box-shadow 테두리'); } // 1px 테두리 알약(유건 2026-10-22 — 채운 잉크 원 대신 얇은 테두리): 테두리 토큰이 경계를 맡는다
   const edge = Math.max(ratio(fill, around), ring ? ratio(ring, around) : 0);
   const text = ctx.endsWith('tabdot') ? null : ratio(tok(winner(chain, 'color'), 'color'), fill);
   return { edge, text };
@@ -87,10 +88,9 @@ test('모든 뱃지 자리 × 6개 테마 — 경계 3:1 이상, 숫자 4.5:1 �
   assert.deepEqual(bad, []);
 });
 
-test('조직 전환 버튼·폰 제목 옆 뱃지는 목록 뱃지와 같은 잉크 알약(--fg 바탕·--bg 숫자)', () => {
-  for (const ctx of ['desk-org', 'phone-title']) {
-    assert.equal(winner(fx[ctx].chain, 'background'), 'var(--fg)', ctx);
-    assert.equal(winner(fx[ctx].chain, 'color'), 'var(--bg)', ctx);
+test('조직 전환 버튼·폰 제목 옆 뱃지는 목록 뱃지와 같은 알약(2026-10-22 — 채운 잉크 원 대신 1px 테두리 알약)', () => {
+  for (const ctx of ['desk-org', 'phone-title']) for (const pr of ['background', 'color', 'box-shadow']) {
+    assert.equal(winner(fx[ctx].chain, pr), winner(fx[ctx === 'desk-org' ? 'desk-row' : 'phone-row'].chain, pr), `${ctx} ${pr}`);
   }
 });
 
