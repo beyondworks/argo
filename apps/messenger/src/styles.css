@@ -1495,10 +1495,10 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-top .msgr-hchips { grid-column: 3; grid-row: 1; display: flex; gap: 10px; margin: 0; }
   .msgr-phone .msgr-main .msgr-top .msgr-hchip svg, .msgr-phone .msgr-main .msgr-top .members svg { width: 20px; height: 20px; }
   .msgr-phone .msgr-main .msgr-top .msgr-hchip { width: 44px; height: 44px; min-width: 44px; min-height: 44px; border-radius: 50%; border: 0; background: var(--card-2); }
-  .msgr-phone .msgr-main .msgr-top .msgr-hchips .msgr-hchip:nth-child(2) { display: none; } /* 기억 토글은 채널 시트로(슬랙 머리엔 원 2개) */
+  .msgr-phone .msgr-main .msgr-top .msgr-hchips .msgr-hchip.mem { display: none; } /* 기억 토글은 채널 시트로(슬랙 머리엔 원 2개) */
   .msgr-phone .msgr-main .msgr-top .members { grid-column: 4; grid-row: 1; display: grid; place-items: center; width: 44px; height: 44px; min-width: 44px; padding: 0; border-radius: 50%; border: 0; background: var(--card-2); }
   .msgr-phone .msgr-main .msgr-top .members .msgr-av { display: none; }
-  .msgr-phone .msgr-main .msgr-top .msgr-seg { display: none; }
+  .msgr-phone .msgr-main .msgr-top .msgr-seg, .msgr-phone .msgr-main .msgr-top .msgr-tabmore { display: none; } /* 탭 줄과 '다른 보기'는 폰 머리에 그리지 않는다(종전 규칙 그대로) */
 
   /* ── 컴포저(슬랙 겹침 기준): 상자 없이 한 줄 56 — [클립→'+' 36원] [@] [입력, 투명] [보내기 36원, 골드]. 특이도 0,3,0 ── */
   .msgr-phone .msgr-main .msgr-composer { display: flex; align-items: flex-end; gap: 0; min-height: 52px; margin: 0 var(--ph-pad); padding: 8px 8px; /* 알약이 글과 함께 자란다(한 줄 36+16=52, 최대 120+16) — 고정 52px이면 여러 줄이 알약 밖으로 넘친다(유건 제보 2026-09-11) */ border: 0; border-radius: 26px; box-shadow: none; /* 안쪽 여백 3·글자 간격 0(유건: 좌우가 더 떨어져야 한다 — 슬랙보다 넓게): 슬랙 실측(원 25–61·글자 69·보내기 342–376, 알약 24–378) */ /* 슬랙 확대 대조: 회색 알약 x16–386·52·r26, 안에 + 원 36·@·보내기 36 */

@@ -382,6 +382,7 @@ export const DICT = {
   'org.crew': ['에이전트', 'Agent'], // 에이전트 한 명을 가리키는 표식(작성자 줄·태그·이름 대체) — 복수형 'Agents'를 단수 자리에 쓰던 것(검수 E)
   'inbox.title': ['알림함', 'Inbox'],
   'ch.tabs': ['대화 보기', 'Conversation view'],
+  'ch.tabs.more': ['다른 보기(멘션·에이전트)', 'More views (mentions, agents)'],
   'inbox.readAll': ['모두 읽음', 'Mark all read'],
   'inbox.count': ['{kind} {n}개', '{kind} · {n}'],
   'inbox.empty': ['아직 알림이 없습니다. 누가 나를 부르거나, 내 글에 에이전트가 답하거나, 결재가 기다리면 여기에 모입니다.', 'Nothing yet. Mentions of you, agent replies to your posts and pending approvals collect here.'],
