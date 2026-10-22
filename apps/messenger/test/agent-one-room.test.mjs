@@ -31,7 +31,7 @@ test('조직에서 내 에이전트 1:1 = 개인 공간의 방(openDm 관문) �
   assert.match(gate, /if \(twin\) \{ toPersonalTwin\(crew, twin, \{ text, source: opts\.source, here, hereCh \}\); return null; \}/, '개인 방으로 옮기고 조직 1:1은 찾지 않는다');
   assert.match(app, /const toPersonalTwin = \(crew, twin, \{ text = '', source = null, here, hereCh \}\) => \{[\s\S]{0,400}runInSpace\(PERSONAL, async \(fn\) => \{ const cid = await fn\.openPersonalCrewDm\(twin\.id, text\); if \(cid && move\) fn\.moveNotice\(\{ \.\.\.move, \.\.\.names \}\); \}\);/, '개인 방을 열고, 열렸을 때만 공간 전환 안내(옛 조직 1:1 돌리기와 같은 함수)');
   assert.ok(gate.indexOf('personalTwin(crew)') < gate.indexOf("supabase.rpc('msgr_create_channel'"), '조직 1:1을 찾거나 만들기 전에 판정한다');
-  assert.match(app, /const personalTwin = \(c\) => personalRoomFor\(c, \{ uid,\n\s*ownRows: \(slug\) => q\(supabase\.from\('msgr_crews'\)\.select\('id, org_id, owner_user_id, ws_id, slug, status, hosting'\)\.eq\('owner_user_id', uid\)\.eq\('slug', slug\)\.in\('status', \['active', 'available'\]\)\),\n\s*roomCrews: \(\) => q\(supabase\.rpc\('msgr_personal_room_crews'\)\) \}\);/, '판정은 순수 async 함수(agent-groups.mjs personalRoomFor — 행동 테스트), App은 조회만 넣는다(내 행은 그 slug만, 봇 준비 상태는 msgr_personal_room_crews)');
+  assert.match(app, /const personalTwin = \(c\) => V2 \? Promise\.resolve\(v2PersonalTwin\(c, uid\)\)[^\n]*: personalRoomFor\(c, \{ uid,\n\s*ownRows: \(slug\) => q\(supabase\.from\('msgr_crews'\)\.select\('id, org_id, owner_user_id, ws_id, slug, status, hosting'\)\.eq\('owner_user_id', uid\)\.eq\('slug', slug\)\.in\('status', \['active', 'available'\]\)\),\n\s*roomCrews: \(\) => q\(supabase\.rpc\('msgr_personal_room_crews'\)\) \}\);/, '판정은 순수 async 함수(agent-groups.mjs personalRoomFor — 행동 테스트), App은 조회만 넣는다(내 행은 그 slug만, 봇 준비 상태는 msgr_personal_room_crews)');
   assert.match(app, /const dmWithCrew = async \(crewId, body = '', opts = \{\}\) => \{[\s\S]{0,200}const cid = await openDm\('crew', crewId, draft, opts\);/, '레일 메뉴·크루 카드·방 밖 멘션·전달 알림은 dmWithCrew → openDm(출처를 넘긴다)');
   assert.match(app, /if \(picks\.length === 1\) return openDm\(picks\[0\]\.kind, picks\[0\]\.id\);/, '새 대화 시트의 한 명 고르기도 openDm');
   const open = app.slice(app.indexOf('const openPersonalCrewDm = async'), app.indexOf('const openPersonalDm = async'));
@@ -55,7 +55,7 @@ test('공간 전환 안내 — 관문이 spaceMoveNotice로 정하고(폰 에이
 });
 
 test('버튼 이름 — 조직 화면의 레일 메뉴·즐겨찾기 줄·크루 카드·방 밖 멘션만, 판정은 dmGoesPersonal(personalRoomKnown — 이미 가진 행)', () => {
-  assert.match(app, /const dmGoesPersonal = \(c\) => !isPersonal && personalRoomKnown\(c, myAgents, uid\);/);
+  assert.match(app, /const dmGoesPersonal = \(c\) => !isPersonal && \(V2 \? !!v2PersonalTwin\(c, uid\) : personalRoomKnown\(c, myAgents, uid\)\);/); // v2 갈래는 v2-agent-dm-personal.test.mjs(2026-10-22)
   assert.match(app, /\{ icon: 'at', label: t\(dmGoesPersonal\(c\) \? 'ui\.dm\.personal' : 'ui\.dm'\), run: \(\) => \{ dmWithCrew\(c\.id\); setRail\(false\); \} \}/, '레일 메뉴(조직)');
   assert.match(app, /const crewCtx = \(c\) => isPersonal \? \[\{ icon: 'at', label: t\('ui\.dm'\),/, '개인 공간 메뉴는 그대로(공간이 바뀌지 않는다)');
   assert.match(app, /onDm=\{\(\) => dmWithCrew\(sheet\)\} dmPersonal=\{dmGoesPersonal\(crewOf\(sheet\)\)\}/);
