@@ -155,6 +155,11 @@ await scenario(1280, 'public-channel-people', async (p) => {
   const memberRow = () => p.evaluate(() => window.__dmInviteFixture.tables.msgr_channel_members.some((r) => r.channel_id === 'general' && r.member_kind === 'user' && r.member_id === 'user-third'));
   const excluded = () => p.evaluate(() => window.__dmInviteFixture.tables.msgr_channels.find((c) => c.id === 'general').excluded_user_ids ?? []);
   assert.equal(await memberRow(), false, '내보낸 뒤에는 참여 행이 없다');
+  // 내보낸 목록은 채널 설정 접힘 안에 있다(UX 정리 P1 2026-10-22) — 접힌 동안에는 안 보이고, 펼치면 보인다
+  assert.equal(await restoreBtn().count(), 0, '접힌 동안 되돌리기는 구성원 목록에 섞이지 않는다');
+  const foldHead = sheet.locator('.msgr-fold .fold-head').first();
+  if ((await foldHead.getAttribute('aria-expanded')) !== 'true') await foldHead.click();
+  await restoreBtn().waitFor({ timeout: 5000 });
   // 되살리기가 실패하면 성공 알림도, 제외 해제도 없다
   await p.evaluate(() => { window.__dmInviteFixture.failNext = 'msgr_channel_members:upsert'; });
   await restoreBtn().click(); await p.waitForTimeout(700);
