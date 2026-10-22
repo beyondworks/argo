@@ -32,7 +32,7 @@ test('동의 전엔(또는 아직 모르면) 사이드바 채널·멤버·에이
     "{!(V2 && !isPhone) && !isPersonal && !orgBlocked && <RailSection id={orgId ? 'channels' : 'start'}",
     '{!(V2 && !isPhone) && railRoom.showDms && (<RailSection id="dms"',
     '{!(V2 && !isPhone) && !isPersonal && !orgBlocked && org && members.length > 0 && (<RailSection id="people"',
-    '{railView.section && (<RailSection id="mine"', 'orgReady: !orgBlocked && !!org', // 구역 판정은 agents-empty.mjs railAgentsView(D7) — 조직 쪽은 그대로 동의 게이트가 막는다(orgReady). 조직은 비어도 구역을 둔다(UXM-08)
+    '{!(V2 && !isPhone) && railView.section && (<RailSection id="mine"', 'orgReady: !orgBlocked && !!org', // 구역 판정은 agents-empty.mjs railAgentsView(D7) — 조직 쪽은 그대로 동의 게이트가 막는다(orgReady). 조직은 비어도 구역을 둔다(UXM-08)
     '{sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet',
     '{chSheet && channel && !orgBlocked && <ChannelSheet',
     'gated={orgBlocked}',

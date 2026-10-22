@@ -3120,6 +3120,20 @@ function Shell({ session }) {
         <span className="ph-kbody"><span className="ph-kl1"><span className="name">{g.display_name}</span>{fav && <span className="ph-afav" role="img" aria-label={t('phone.agents.fav')}><I name="star" size={12} /></span>}</span><span className="ph-kl2"><span className={`ph-astate ${st}`}><span className={`msgr-dot${on && st !== 'relink' ? ' mark' : ''}`} />{t(`phone.agent.${st}`)}</span>{g.role_text && <span className="snip">{g.role_text}</span>}</span></span>
       </button>
     </div>); };
+  // 데스크톱 v2 레일 '에이전트' 구역 = 내 에이전트 명단(유건 2026-10-22 20:1x "'#일반'에 있을 때랑 '#연구실'에 있을 때 왜 에이전트 목록이 변하는거야?").
+  // 옛 구역은 지금 공간(orgId)의 crews·파견 대기(myAvailable)를 세서, 방을 열 때마다 숨은 공간이 바뀌면 개수·접속·'파견'이 따라 바뀌었다.
+  // 한 목록 레일은 열린 방과 무관하다: 폰 에이전트 탭(#1141 v2MyAgents → agentGroups)과 같은 명단, 접속 점은 에이전트 자체의 최근 접속. 파견은 채널 시트 '에이전트 추가'·카드 메뉴로
+  const olAgentRow = (g) => { const on = g.rows.some((r) => seenWithin(r, AWAY_MS, Date.now(), crewSeenAt(r))); const st = agentRowState(groupState(g), on); const lpId = `agent:${g.key}`; const def = agentOpenRow(g); return (
+    <div key={g.key} className={`msgr-railrow nomore${ctx?.trigger === lpId ? ' open' : ''}`} onContextMenu={(e) => openCtx(e, agentItems(g), lpId)}>
+      <button type="button" className="item" onClick={() => openAgentGroup(g)} title={`${g.display_name} · ${t(`phone.agent.${st}`)}${g.role_text ? ` · ${g.role_text}` : ''}`}><Av name={g.display_name} crew size="xs" crewId={def.id} /><span className="name">{g.display_name}</span><span className={`msgr-dot${on && st !== 'relink' ? ' mark' : ''}`} aria-label={t(`phone.agent.${st}`)} /></button>
+    </div>); };
+  const olAgentsSection = V2 && !isPhone && (<RailSection id="mine" label={`${t('rail.agents')} · ${agentGroups.length}`}>
+    <div className="msgr-list mine">
+      {pauseNote && pauseNoteEl}
+      {agentGroups.map(olAgentRow)}
+      {myAgents !== null && !agentGroups.length && <p className="msgr-rail-empty">{t('onelist.new.agent.none')} <RunnerButton /></p>}
+    </div>
+  </RailSection>);
   const levelOf = (it) => approvalGrade(it.kind === 'join' ? it : { ...it, kind: it.apKind }); // 결재 표의 종류는 apKind(loadApprovals)
   const approvalSum = (it) => { const [k, p] = it.kind === 'join' ? joinReqKey({ crew: it.crewName, room: it.roomName }) : approvalSummaryKey({ ...it, kind: it.apKind }); return (lang === 'en' ? (x) => x : koJosa)(t(k, p)); }; // 한두 줄 요약 — "목적을 위해 할 일"(결재 페이지와 같은 문장), 넣기 요청은 "'효일'을 '유건, 하나' 방에 넣어 달라는 요청"(D6)
   const openApproval = (it) => {
@@ -3511,7 +3525,8 @@ function Shell({ session }) {
           </div>
         </RailSection>)}
         {!isPhone && pauseNote && !railView.section && pauseNoteEl}{/* 무료 계정 — 내 에이전트 구역이 숨을 때(개인 공간에 연결된 에이전트 0)만 구역 밖에. 구역이 있으면 그 안 맨 위(검수 #945 LOW-4) */}
-        {railView.section && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right">{railVisible.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
+        {V2 && !isPhone && olAgentsSection}
+        {!(V2 && !isPhone) && railView.section && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right">{railVisible.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
             {!isPhone && pauseNote && pauseNoteEl}
             {railView.hint && <p className="msgr-rail-empty">{t(railView.hint.key, railView.hint.vars)} <RunnerButton /></p>}{/* 비어도 구역과 연결 단추를 둔다 — 통째로 사라져 에이전트를 붙일 곳이 안 보였다(UXM-08) */}
@@ -3549,8 +3564,10 @@ function Shell({ session }) {
           </div>)}
           {org && !orgBlocked && <button type="button" className={`btn ghost bell${page === 'inbox' ? ' on' : ''}`} onClick={() => page === 'inbox' ? setPage('chat') : openInbox()} title={t('inbox.title')} aria-label={t('inbox.title')}><I name="bell" size={15} />{inboxUnread > 0 && <span className="n">{inboxUnread > 99 ? '99+' : inboxUnread}</span>}</button>}
           {deskAp && <button type="button" className="btn ghost bell" onClick={() => openApproval(approvalItems[0])} title={t('desk.ap.open')} aria-label={t('phone.agents.approvals', { n: approvalItems.length })}><I name="stamp" size={15} /><span className="n">{approvalItems.length > 99 ? '99+' : approvalItems.length}</span></button>}{/* v2 데스크톱 결재 입구(UX 정리 P1) — 결재가 있을 때만, 폰 결재 카드와 같은 목록. 누르면 가장 최근 결재의 방(그 방 일 카드에 승인·거절) */}
+          {V2 && !isPhone ? ((orgs ?? []).length > 0 && !olOrgGated && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { const go = () => { setPage((p) => (p === 'activity' ? 'chat' : 'activity')); setRail(false); }; if (isPersonal || !org) runInSpace(olOrg ?? orgs[0].id, go); else go(); }} title={t('act.title')} aria-label={t('act.title')}><I name="folder" size={15} /></button>) : (<>{/* v2 데스크톱: 기억 단추는 열린 방과 무관하게 늘 — 개인 방에서 누르면 범위 조직(없으면 첫 조직)의 기억으로(#1143 레일 전수 수색) */}
           {org && isPersonal && !orgBlocked && !isPhone && <span className="btn ghost msgr-foot-slot" aria-hidden="true" />}{/* 개인 공간엔 기억이 없다 — 자리는 비워 둬 알림·설정 아이콘이 조직 공간과 같은 x에 있게(공간을 오갈 때 45px씩 움직이지 않는다, LA-22). 폰은 이 줄이 머리 오른쪽 원이라 해당 없음 */}
           {org && !isPersonal && !orgBlocked && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="folder" size={15} /></button>}{/* 기억 = 폴더(폰 아래 탭과 같은 뜻 — 반짝이는 에이전트, UXM-10) */}
+          </>)}
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
         </div>}
       </aside>

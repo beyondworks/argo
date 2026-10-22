@@ -153,3 +153,12 @@ test('배선(#1143 재검수 Nit 2): 범위 메뉴·새 대화 팝오버는 본�
   assert.match(app, /useDismiss\(!!olOrgMenu, \(\) => setOlOrgMenu\(false\), '\.msgr-scopewrap, \.msgr-olorgmenu, \.msgr-inboxorgbtn'/);
   assert.match(app, /useDismiss\(V2 && !isPhone && olNew, \(\) => setOlNew\(false\), '\.msgr-newtalkpop, \.msgr-newbtn'/);
 });
+
+test('배선(유건 2026-10-22 20:1x): 데스크톱 v2 레일은 열린 방과 무관 — 에이전트 구역은 내 에이전트 명단(agentGroups), 기억 단추는 늘', () => {
+  const sec = app.slice(app.indexOf('const olAgentsSection = '), app.indexOf('const levelOf = '));
+  assert.match(sec, /label=\{`\$\{t\('rail\.agents'\)\} · \$\{agentGroups\.length\}`\}/, '머리 숫자 = 내 에이전트 수(지금 공간의 crews 수가 아니다)');
+  assert.match(sec, /\{agentGroups\.map\(olAgentRow\)\}/);
+  for (const bad of ['myAvailable', 'railVisible', 'crews.filter', 'railSort', 'dispatch']) assert.ok(!sec.includes(bad), `공간에 묶인 값을 쓰지 않는다: ${bad}`);
+  assert.match(app, /\{V2 && !isPhone && olAgentsSection\}\n\s*\{!\(V2 && !isPhone\) && railView\.section && \(<RailSection id="mine"/, '옛 구역은 옛 셸·폰에서만');
+  assert.match(app, /\{V2 && !isPhone \? \(\(orgs \?\? \[\]\)\.length > 0 && !olOrgGated && <button[^\n]*runInSpace\(olOrg \?\? orgs\[0\]\.id, go\)/, '기억 단추는 열린 방과 무관하게 늘(개인 방이면 범위 조직의 기억으로)');
+});
