@@ -1808,11 +1808,12 @@ function Shell({ session }) {
   useEffect(() => { let live = true; loadMyInvitesIf({ enabled: V2, uid, ready: () => currentV2()?.ready(), rpc: (fn) => rawSupabase.rpc(fn) }).then((l) => { if (live && l) setMyInvites(l); }, () => {}); return () => { live = false; }; }, [uid, syncEpoch, myInvitesTick]); // eslint-disable-line react-hooks/exhaustive-deps -- 플래그 끔(옛 서버)·로그인 전은 호출 0(loadMyInvitesIf)
   // 한 목록(v2, 메신저 단순화 2단계) — msgr2_inbox 한 번 + 방송으로 행 고치기. 다시 읽는 때: 시작·복귀(syncEpoch)·방 사건·모르는 방의 첫 글(방마다 한 번). 주기 조회 없음
   const [ol, setOl] = useState(null); const [olMore, setOlMore] = useState(false); const [olPro, setOlPro] = useState(false); const [olTick, bumpOl] = useReducer((x) => x + 1, 0);
-  const [olFilter, setOlFilter] = useState('all'); const [olOrg, setOlOrg] = useState(null); const [olOrgMenu, setOlOrgMenu] = useState(false);
+  const [olFilter, setOlFilter] = useState('all'); const [olOrg, setOlOrg] = useState(null); const [olOrgMenu, setOlOrgMenu] = useState(false); const [olNew, setOlNew] = useState(false); // olNew = 새 대화 시트
   const olRef = useRef(ol); olRef.current = ol; const olMiss = useRef(new Set()); // 다시 읽어도 목록에 없던 방(들어가지 않은 open 방 방송) — 글마다 다시 읽지 않게
   useEffect(() => { if (!V2 || !uid) return undefined; let live = true; loadOneList(supabase).then((r) => { if (!live) return; if (r.error) { if (r.error.pro) setOlPro(true); return; } setOlPro(false); setOl(r.rows); setOlMore(r.more); }, () => {}); return () => { live = false; }; }, [uid, syncEpoch, olTick]); // eslint-disable-line react-hooks/exhaustive-deps
   const olMsgRef = useRef(null);
   olMsgRef.current = (x) => { if (!V2) return; const r = oneListBump(olRef.current, x, { uid, active: activeChannel.current }); if (r.known) { setOl(r.rows); return; } if (!olRef.current || olMiss.current.has(x.room_id)) return; olMiss.current.add(x.room_id); bumpOl(); };
+  useEffect(() => { if (V2 && page === 'chat' && chId && ol?.some((r) => r.room_id === chId && r.unread)) setOl((cur) => oneListSeen(cur, chId)); }, [chId, page, ol]); // eslint-disable-line react-hooks/exhaustive-deps -- 보고 있는 방은 안 읽음 0(목록을 거치지 않고 열린 방 — 시작 때 마지막 방·알림·검색)
   const v2RoomEventRef = useRef(null); const v2EventPlan = useRef(null); // 묶음 창(500ms) 안의 사건 계획 — 창마다 목록 읽기 한 번(#1088 검수 2: 사건마다 약 8건)
   const v2EventRun = useRef(null);
   v2EventRun.current = () => {
@@ -2614,6 +2615,7 @@ function Shell({ session }) {
   const hasPublic = hasPublicChannel(channels, previewChannels);
   const newChKind = newChannelKind(channels, previewChannels);
   const openNewCh = () => { setNewCh({ name: '', kind: newChKind }); if (!isPhone) setRail(true); }; // 폰은 채널 탭 목록 맨 위에 칸이 열린다(서랍 없음)
+  latestOpen.current.openNewCh = openNewCh; // 한 목록의 새 대화 > 조직 채널: 그 조직으로 맞춘 뒤의 새 채널 칸(runInSpace가 맞춘 뒤의 것을 부른다)
   // 조직 시작 단계 재료(D1·D3·D6) — 빈 조직 안내와 첫 채널 뒤 남은 단계 카드가 같이 쓴다
   const onboard = { hasPublic, invited: members.length > 1, hasCrew: crews.length > 0, isAdmin: !!isAdmin, adminName: orgAdmins[0]?.display_name || null,
     openAgents: () => { setSettingsTab('crews'); setPage('settings'); setRail(false); }, openRunner: () => setRunnerOpen(true) };
@@ -3139,10 +3141,22 @@ function Shell({ session }) {
   const olShown = oneListView(ol, { filter: olFilter, org: olOrg, q: isPhone ? tabQText : '' }).map((r) => ({ ...r, _title: olName(r) }));
   const olUnreadN = oneListUnread(ol);
   const olOrgName = olOrg ? (olOrgList.find((o) => o.id === olOrg)?.name ?? '') : null;
-  const olOrgPick = olOrgList.length > 0 && (<span className="msgr-sortwrap msgr-inboxorg">
-    <button type="button" className={`msgr-inboxorgbtn${olOrg ? ' active' : ''}`} onClick={() => setOlOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={olOrgMenu} title={t('onelist.chip.org')}>{olOrgName || t('onelist.chip.org')}<I name="caret" size={12} /></button>
-    {olOrgMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setOlOrgMenu(false)}>{[{ id: null, name: t('onelist.org.all') }, ...olOrgList].map((o) => <button key={o.id ?? 'all'} type="button" role="menuitemradio" aria-checked={olOrg === o.id} onClick={() => { setOlOrg(o.id); setOlOrgMenu(false); }}>{olOrg === o.id ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{o.name}</button>)}</div>}
-  </span>);
+  const olOrgBtn = (
+    <button type="button" className={`msgr-inboxorgbtn${olOrg ? ' active' : ''}`} onClick={(e) => { const top = e.currentTarget.getBoundingClientRect().bottom + 6; setOlOrgMenu((v) => (v ? false : isPhone ? top : true)); }} aria-haspopup="menu" aria-expanded={!!olOrgMenu} title={t('onelist.chip.org')}>{olOrgName || t('onelist.chip.org')}<I name="caret" size={12} /></button>
+  );
+  const olOrgMenuEl = (<>
+    {olOrgMenu && (<>
+      <div className="msgr-scrim clear" onClick={() => setOlOrgMenu(false)} role="presentation" />
+      <div className="msgr-rowmenu msgr-olorgmenu" role="menu" style={typeof olOrgMenu === 'number' ? { position: 'fixed', top: olOrgMenu, left: 16, right: 16, width: 'auto', maxWidth: 'none' } : undefined}>{/* 폰: 칩 줄은 가로 스크롤 상자라 그 안의 절대 배치 메뉴가 잘렸다 — 단추 바로 아래 화면 기준으로 */}
+        {olOrgList.length > 0 && [{ id: null, name: t('onelist.org.all') }, ...olOrgList].map((o) => <button key={o.id ?? 'all'} type="button" role="menuitemradio" aria-checked={olOrg === o.id} onClick={() => { setOlOrg(o.id); setOlOrgMenu(false); }}>{olOrg === o.id ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}<span className="label">{o.name}</span></button>)}
+        {olOrgList.length > 0 && <div className="sep" />}
+        {joinable.map((o) => <button key={`j-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOlOrgMenu(false); joinDomain(o); }}><Av name={o.name} size="xs" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}
+        {deletedOrgs.map((o) => <button key={`d-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOlOrgMenu(false); restoreOrg(o); }}><Av name={o.name} size="xs" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}
+        {orgJoinForms(isPhone)}
+      </div>
+    </>)}
+  </>);
+  const olOrgPick = isPhone ? olOrgBtn : <span className="msgr-sortwrap msgr-inboxorg">{olOrgBtn}{olOrgMenuEl}</span>; // 조직 거르개 — 조직이 없어도 둔다: 공간 메뉴가 없어진 자리의 '초대 코드로 참여·조직 만들기·도메인 참여·복구' 입구(설계 2절). 폰은 메뉴를 칩 줄 밖에(가로 스크롤 상자가 잘랐다)
   const olAvatar = (row, phone) => {
     const sz = phone ? 'kk' : 'xs';
     if (row.room_kind !== 'direct' && row.space_kind === 'team') return phone ? <span className={`ph-chav${row.room_kind === 'private' ? ' lock' : ''}`} aria-hidden="true"><I name={row.room_kind === 'private' ? 'lock' : 'hash'} size={20} /></span> : <I name={row.room_kind === 'private' ? 'lock' : 'hash'} size={14} />;
@@ -3170,11 +3184,29 @@ function Shell({ session }) {
   );
   const olEmpty = ol !== null && !olShown.length && <div className="msgr-hint ph-empty" role="status">{t(ol.length ? 'onelist.empty.filter' : 'onelist.empty')}</div>;
   const olMoreNote = olMore && <div className="msgr-hint">{t('onelist.more', { n: ONE_LIST_LIMIT })}</div>;
+  // 새 대화 단추 하나(설계 2절) — 재료: 친구(수락), 내 에이전트(한 사람 = 한 줄), 채널을 만들 수 있는 조직(손님 제외 — 최종 판정은 서버)
+  const olNewSheet = V2 && olNew && <NewTalkSheet onClose={() => setOlNew(false)}
+    friends={withoutHidden(friends.filter((f) => f.status === 'accepted'), hiddenUserIds).map((f) => ({ id: f.user_id, name: nameOfUser(f.user_id) }))}
+    agents={agentGroups.map((g) => ({ id: g.id, name: g.display_name, role: g.role_text, g }))}
+    orgs={(orgs ?? []).filter((o) => newChannelOffer({ role: o.role }).can).map((o) => ({ id: o.id, name: o.name }))}
+    onPerson={(id) => { setOlNew(false); setTabQ(null); openPersonalDm(id); }} onAgent={(g) => { setOlNew(false); openAgentGroup(g); }}
+    onGroup={() => { setOlNew(false); setTabQ(null); runInSpace(PERSONAL, () => setDmGroup(true)); }}
+    onChannel={(oid) => { setOlNew(false); setTabQ(null); runInSpace(oid, (fn) => fn.openNewCh()); }}
+    onAddFriend={() => { setOlNew(false); setFriendAdd(true); }} />;
+  // 새 채널 칸(한 목록) — 옛 화면은 채널 구역·채널 탭에 있었다. 어느 조직에 만드는지 이름을 같이 보인다
+  const olNewChForm = V2 && newCh && !isPersonal && (
+    <form className={`msgr-inline${isPhone ? ' ph-inline' : ''}`} onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
+      <div className="msgr-klabel">{t('onelist.new.channel.in', { org: org?.name ?? '' })}</div>
+      <input className="msgr-input" placeholder={t('ch.name')} value={newCh.name} onChange={(e) => setNewCh((c) => ({ ...c, name: e.target.value }))} autoFocus maxLength={80} />
+      <Seg label={t('ch.new.kind')} value={newCh.kind} onPick={(v) => setNewCh((c) => ({ ...c, kind: v }))} options={[['public', t('ch.new.public')], ['private', t('ch.new.private')]].map(([v, l]) => ({ v, label: l, icon: <I name={v === 'private' ? 'lock' : 'hash'} size={12} /> }))} />
+      <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!newCh.name.trim()}><I name="check" size={13} />{t('ui.create')}</button><button type="button" className="btn sm" onClick={() => setNewCh(null)}>{t('ui.cancel')}</button></div>
+    </form>
+  );
   const phoneRoot = (
     <div className="ph-root" data-tab={rootTab}>
       {rootTab === 'friends' && (<PhoneHead title={t('phone.tab.friends')} actions={[searchAct, { key: 'add', icon: 'personplus', label: t('friends.add'), run: () => { setTabQ(null); setFriendAdd(true); } }, gearAct]} />)}
       {rootTab === 'chats' && !V2 && (<PhoneHead title={t('phone.tab.chats')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('dm.new'), run: () => { if (!isPersonal) return; setTabQ(null); setDmGroup(true); } }]} />)}{/* 채팅 탭은 검색·새 대화만(UX 정리 P1) — 설정은 친구·에이전트 탭 머리에. 새 대화는 폰에서 그룹 대화를 만드는 유일한 입구라 남긴다 */}
-      {rootTab === 'chats' && V2 && (<PhoneHead title={t('phone.tab.talk')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('dm.new'), run: () => { setTabQ(null); runInSpace(PERSONAL, () => setDmGroup(true)); } }]} />)}{/* 새 대화 = 지금은 개인 1:1·그룹 시트(통합 새 대화 단추는 다음 단계) */}
+      {rootTab === 'chats' && V2 && (<PhoneHead title={t('phone.tab.talk')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('onelist.new'), run: () => { setTabQ(null); setOlNew(true); } }]} />)}{/* 새 대화 단추 하나 — 사람·에이전트 1:1, 여러 명 방, 조직 채널(NewTalkSheet) */}
       {rootTab === 'channels' && (<PhoneHead left={orgRow ? <button type="button" className="ph-orgtitle" onClick={() => { setChPlus(false); setOrgMenu((v) => !v); }} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><I name="hash" size={22} className="ph-orgmark" /><span className="name">{orgRow.name}</span><SpaceBadge c={otherOrgsUnread} /><I name="caret" size={18} className="caret" /></button> : null} title={t('phone.tab.channels')} actions={[onOrgTab && !orgBlocked && searchAct, onOrgTab && !orgBlocked && { key: 'plus', icon: 'plus', label: t('phone.ch.add'), menu: true, on: chPlus, run: () => { setOrgMenu(false); setChPlus((v) => !v); } }, gearAct]}>{orgMenuPop}{chPlusPop}</PhoneHead>)}
       {rootTab === 'agents' && (<PhoneHead title={t('phone.tab.agents')} actions={[searchAct, { ...gearAct, run: () => openSettings(null, 'agents') }]} />)}
       {rootTab === 'memory' && (<PhoneHead left={orgRow ? <button type="button" className="ph-orgtitle" onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><I name="folder" size={22} className="ph-orgmark" /><span className="name">{orgRow.name}</span><I name="caret" size={18} className="caret" /></button> : null} title={t('phone.tab.memory')} actions={[onOrgTab && !orgBlocked && searchAct, { ...gearAct, run: () => openSettings(null, 'memory') }]}>{orgMenuPop}</PhoneHead>)}
@@ -3205,7 +3237,8 @@ function Shell({ session }) {
         </>)}
         {rootTab === 'chats' && V2 && (<>{/* 한 목록(메신저 단순화 2단계) — 개인 1:1·여러 명 방·조직 채널을 공간 전환 없이 한곳에 */}
           {!tabQText.trim() && approvalItems.length > 0 && apCard}
-          <div className="ph-chiprow"><div className="ph-chips" role="radiogroup" aria-label={t('onelist.filter')}>{ONE_LIST_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={!olOrg && olFilter === k} className={!olOrg && olFilter === k ? 'active' : ''} onClick={() => { setOlFilter(k); setOlOrg(null); }}>{k === 'unread' && olUnreadN ? t('phone.chip.unread', { n: olUnreadN }) : t(`onelist.chip.${k}`)}</button>)}{olOrgPick}</div></div>
+          <div className="ph-chiprow"><div className="ph-chips" role="radiogroup" aria-label={t('onelist.filter')}>{ONE_LIST_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={!olOrg && olFilter === k} className={!olOrg && olFilter === k ? 'active' : ''} onClick={() => { setOlFilter(k); setOlOrg(null); }}>{k === 'unread' && olUnreadN ? t('phone.chip.unread', { n: olUnreadN }) : t(`onelist.chip.${k}`)}</button>)}{olOrgPick}</div></div>{olOrgMenuEl}
+          {olNewChForm}
           <div className="msgr-list ph-rooms">{olShown.map(olPhoneRow)}</div>
           {ol === null && <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>}{olEmpty}{olMoreNote}
         </>)}
@@ -3326,8 +3359,9 @@ function Shell({ session }) {
         {!isPersonal && isPhone && aiConsentLoading && ( // L-3: 조회 중 로딩(같은 이유로 폰만 bare)
           <OrgGateLoading t={t} bare />
         )}
-        {V2 && !isPhone && (<RailSection id="onelist" label={t('onelist.title')} right={olOrgPick || null}>{/* 한 목록(메신저 단순화 2단계) */}
+        {V2 && !isPhone && (<RailSection id="onelist" label={t('onelist.title')} right={<span className="right">{olOrgPick}<button type="button" className="btn" onClick={() => setOlNew(true)} title={t('onelist.new')} aria-label={t('onelist.new')}><I name="plus" size={14} /></button></span>}>{/* 한 목록(메신저 단순화 2단계) */}
           <Seg className="msgr-inboxseg" label={t('onelist.filter')} value={olOrg ? null : olFilter} onPick={(v) => { setOlFilter(v); setOlOrg(null); }} options={ONE_LIST_FILTERS.map((k) => ({ v: k, label: k === 'unread' && olUnreadN ? t('phone.chip.unread', { n: olUnreadN }) : t(`onelist.chip.${k}`) }))} />
+          {olNewChForm}
           <div className="msgr-list">{olShown.map(olDeskRow)}</div>
           {ol === null && <div className="msgr-hint">{t('ui.loading')}</div>}{olEmpty}{olMoreNote}
         </RailSection>)}
@@ -3485,6 +3519,7 @@ function Shell({ session }) {
       {runnerOpen && <RunnerSheet hasOrg={(orgs ?? []).length > 0} onClose={() => setRunnerOpen(false)} onAgents={runnerAgents} onNote={setNote} onError={setErr} />}
       {friendAdd && <FriendAddSheet onClose={() => setFriendAdd(false)} uid={uid} friends={friends} members={isPersonal ? [] : members} onChanged={onFriendsChanged}
         onDm={(id) => { setFriendAdd(false); openDm('user', id); }} onPersonalDm={(id) => { setFriendAdd(false); openPersonalDm(id); setRail(false); }} onNote={setNote} onError={setErr} />}
+      {olNewSheet}
       {dmGroup && <DmGroupSheet personal={isPersonal} onAddFriend={() => { setDmGroup(false); setFriendAdd(true); }} members={withoutHidden(members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now())), isPersonal ? hiddenUserIds : null)} crews={railVisible} hints={crewHints} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
       {grpSheet && isPhone && !isPersonal && <ChannelGroupSheet {...grpSheet} groups={sortGroups(grp.groups)} links={grp.links} channels={chChannels} onCreate={createGroup} onSave={saveGroup} onDelete={deleteGroup} onMove={moveChannel} onPicked={(k) => setChMenu(k)} onClose={() => setGrpSheet(null)} />}
       {isPhone && (V2
@@ -3519,6 +3554,37 @@ function DmPeekSheet({ channel, name, uid, whoOf, onOpen, onClose }) {
   );
 }
 /* ─── 새 그룹 대화 시트(유건 2026-09-15): 조직 멤버·파견 크루를 여럿 골라 그룹 DM. 한 명이면 1:1. ─── */
+/* 새 대화(메신저 단순화 2단계, 설계 2절) — 단추 하나에서 사람 1:1 · 에이전트 1:1 · 여러 명 방 · 조직 채널. 조직 채널만 "어느 조직에"를 한 번 고른다(조직이 하나면 바로).
+   사람 1:1 = 친구(개인 공간 1:1, 서버가 친구 여부를 판정), 에이전트 1:1 = 어디서 눌러도 같은 개인 1:1 방(#1140·#1141), 여러 명 방 = 개인 그룹 시트(DmGroupSheet) */
+function NewTalkSheet({ friends = [], agents = [], orgs = [], onPerson, onAgent, onGroup, onChannel, onAddFriend, onClose }) {
+  const { t } = useT();
+  const [step, setStep] = useState('menu');
+  useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  const title = { menu: 'onelist.new', person: 'onelist.new.person', agent: 'onelist.new.agent', org: 'onelist.new.channel.pick' }[step];
+  const pick = (name, sub, run, key, av) => <button key={key} type="button" role="menuitem" onClick={run}>{av}<span><b>{name}</b>{sub && <small>{sub}</small>}</span></button>;
+  return (
+    <div className="msgr-sheetwrap">
+      <div className="msgr-scrim clear" onClick={onClose} />
+      <section className="msgr-crewsheet msgr-dmpeek msgr-dmgroup msgr-newtalk" role="dialog" aria-label={t(title)}>
+        <header className="head">{step !== 'menu' && <button type="button" className="msgr-titlebtn" onClick={() => setStep('menu')} aria-label={t('onelist.new.back')}><I name="back" size={16} /></button>}<strong>{t(title)}</strong><span className="msgr-klabel" /><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
+        <div className="peek"><div className="msgr-addmenu" role="menu">
+          {step === 'menu' && (<>
+            {pick(t('onelist.new.person'), t('onelist.new.person.desc'), () => setStep('person'), 'person', <I name="person" size={14} />)}
+            {pick(t('onelist.new.agent'), t('onelist.new.agent.desc'), () => setStep('agent'), 'agent', <I name="memory" size={14} />)}
+            {pick(t('onelist.new.group'), t('onelist.new.group.desc'), onGroup, 'group', <I name="chatplus" size={14} />)}
+            <button type="button" role="menuitem" disabled={!orgs.length} onClick={() => (orgs.length === 1 ? onChannel(orgs[0].id) : setStep('org'))}><I name="hash" size={14} /><span><b>{t('onelist.new.channel')}</b><small>{!orgs.length ? t('onelist.new.channel.none') : orgs.length === 1 ? t('onelist.new.channel.in', { org: orgs[0].name }) : t('onelist.new.channel.desc')}</small></span></button>
+          </>)}
+          {step === 'person' && friends.map((f) => pick(f.name, null, () => onPerson(f.id), f.id, <Av name={f.name} size="xs" userId={f.id} />))}
+          {step === 'agent' && agents.map((g) => pick(g.name, g.role || null, () => onAgent(g.g), g.id, <Av name={g.name} crew size="xs" crewId={g.id} />))}
+          {step === 'org' && orgs.map((o) => pick(o.name, null, () => onChannel(o.id), o.id, <Av name={o.name} size="xs" />))}
+        </div>
+          {step === 'person' && !friends.length && <p className="note">{t('onelist.new.person.none')} {onAddFriend && <button type="button" className="btn sm" onClick={onAddFriend}><I name="plus" size={12} />{t('friends.add')}</button>}</p>}
+          {step === 'agent' && !agents.length && <p className="note">{t('onelist.new.agent.none')} <RunnerButton /></p>}
+        </div>
+      </section>
+    </div>
+  );
+}
 function DmGroupSheet({ members, crews, uid, nameOfUser, onCreate, onClose, personal = false, onAddFriend, hints = null }) {
   const { t } = useT();
   const [picks, setPicks] = useState(() => new Map()); const [busy, setBusy] = useState(false); const [qs, setQs] = useState('');
