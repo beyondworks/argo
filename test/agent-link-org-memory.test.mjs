@@ -106,7 +106,7 @@ test('결함: 공간을 모르는 링크 턴(옛 범위·조회 실패)은 일�
   assert.doesNotMatch(await vaultJournal(ws) + await orgJournal(ws), /UNKNOWN_ROOM|BAD_SPACE/);
 });
 
-test('이어지는 턴: 쪽지(sendCrewMail → 배달 문맥)·결재 범위(approvalScope)가 공간을 잃지 않고, 배달 턴도 조직 칸에 쓴다', async () => {
+test('이어지는 턴: 쪽지(sendCrewMail → 배달 문맥)·결재 범위(approvalScope)가 공간을 잃지 않고, 팀 방의 배달 턴(전해 받은 일)은 어느 일지에도 쓰지 않는다(검수 I-3)', async () => {
   const ws = await company();
   await writeFile(join(paths(ws).agents, 'mina.md'), '---\nname: 미나\nrole: 분석\n---\n# 미나\n');
   const { sendCrewMail } = await import('../src/crewmail.mjs');
@@ -121,45 +121,60 @@ test('이어지는 턴: 쪽지(sendCrewMail → 배달 문맥)·결재 범위(ap
   assert.deepEqual([ctx.scope.space, ctx.scope.spaceKind], [SPACE, 'team'], '배달 턴 문맥도');
   assert.deepEqual(approvalScope(link({ space: SPACE, spaceKind: 'team' })).scope, link({ space: SPACE, spaceKind: 'team' }).scope, '결재 범위 각인은 범위를 통째로');
   await chat(ws, 'mina', 'MAIL_TEAM 배달', null, { source: 'crewmail', mirrorCtx: ctx });
-  assert.doesNotMatch(await vaultJournal(ws), /MAIL_TEAM/);
-  assert.match(await orgJournal(ws), /MAIL_TEAM 배달/);
+  assert.doesNotMatch(await vaultJournal(ws) + await orgJournal(ws), /MAIL_TEAM/, '받은 에이전트는 그 방 멤버가 아닐 수 있어 소속으로 거둘 수 없다 — 일지 0');
+  await chat(ws, 'seoyun', 'APPROVAL_FOLLOW 후속', null, { mirrorCtx: { kind: 'scope', scope: approvalScope(link({ space: SPACE, spaceKind: 'team' })).scope } });
+  assert.match(await orgJournal(ws), /APPROVAL_FOLLOW 후속/, '결재 후속 턴(같은 에이전트)은 조직 칸에');
   const personal = crewmailMirrorCtx(ws, 'mina', { link: { kind: 'link', work: WORK, room: ROOM, owner: true, space: PSPACE, spaceKind: 'personal' } });
   assert.equal(personal.scope.spaceKind, 'personal', '개인 공간 쪽지도 공간을 잇는다(개인 일지 그대로)');
 });
 
-test('회수(recallLinkRooms): 서버가 "없음"이라 한 팀 방만 — 대화 줄·조직 칸 일지·모델 전사를 지우고, 개인 공간 링크 줄·옛 메신저 줄·다른 팀 방은 남긴다. 조회 실패면 0', async () => {
+test('회수(recallLinkRooms): 서버가 "없음"이라 한 팀 방만 — 직접 받은 줄·조직 칸·모델 전사는 에이전트 소속으로, 전해 받은 줄은 내 에이전트가 하나라도 남았나로. 개인·모름·옛 메신저 줄은 그대로(검수 I-1·I-2·I-3)', async () => {
   const ws = await company();
   const { appendTurn, loadThread, noteChannelSession, threadChannelIds } = await import('../src/thread.mjs');
   const { recallLinkRooms, recallDeparted } = await import('../src/gateway/msgr-recall.mjs');
-  const GONE = 'dddddddd-0000-4000-8000-0000000000a1', KEEP = 'dddddddd-0000-4000-8000-0000000000a2', PROOM = 'dddddddd-0000-4000-8000-0000000000a3', LEGACY = 'dddddddd-0000-4000-8000-0000000000a4';
+  const GONE = 'dddddddd-0000-4000-8000-0000000000a1', KEEP = 'dddddddd-0000-4000-8000-0000000000a2', PROOM = 'dddddddd-0000-4000-8000-0000000000a3', SHARED = 'dddddddd-0000-4000-8000-0000000000a5';
   const team = (room) => ({ kind: 'link', work: WORK, room, owner: true, space: SPACE, spaceKind: 'team' });
-  await appendTurn(ws, 'seoyun', { userMsg: 'GONE_LINE 지시', reply: 'GONE_REPLY', sessionId: null, via: 'crewmail', contextScope: team(GONE) }); // 쪽지 배달 턴도 조직 대화
+  const cfg = { configDirs: [join(process.env.HOME, '.claude')] };
+  await appendTurn(ws, 'seoyun', { userMsg: 'GONE_LINE 지시', reply: 'GONE_REPLY', sessionId: null, contextScope: team(GONE) });
   await appendTurn(ws, 'seoyun', { userMsg: 'KEEP_LINE 지시', reply: 'KEEP_REPLY', sessionId: null, contextScope: team(KEEP) });
+  await appendTurn(ws, 'seoyun', { userMsg: 'RELAYED_LINE 쪽지', reply: 'RELAYED_REPLY', sessionId: null, via: 'crewmail', contextScope: team(SHARED) }); // 이 에이전트는 SHARED 멤버가 아니다
   await appendTurn(ws, 'seoyun', { userMsg: 'PERSONAL_LINE 지시', reply: 'PERSONAL_REPLY', sessionId: null, contextScope: { kind: 'link', work: WORK, room: PROOM, owner: true, space: PSPACE, spaceKind: 'personal' } });
-  await appendTurn(ws, 'seoyun', { userMsg: 'LEGACY_LINE 지시', reply: 'LEGACY_REPLY', sessionId: null, contextScope: { kind: 'msgr', channelId: LEGACY } });
+  await appendTurn(ws, 'seoyun', { userMsg: 'UNKNOWN_LINE 지시', reply: 'UNKNOWN_REPLY', sessionId: null, contextScope: { kind: 'link', work: WORK, room: PROOM, owner: true } }); // 공간 모름(옛 범위)
+  await appendTurn(ws, 'seoyun', { userMsg: 'LEGACY_SAME_ID 지시', reply: 'LEGACY_REPLY', sessionId: null, contextScope: { kind: 'msgr-dm', channelId: GONE, ownerSolo: true } }); // 옛 채널 id = v2 방 id(백필)
   await turn(ws, 'GONE_JOURNAL 정리', { mirrorCtx: link({ room: GONE, space: SPACE, spaceKind: 'team' }) });
   await turn(ws, 'KEEP_JOURNAL 정리', { mirrorCtx: link({ room: KEEP, space: SPACE, spaceKind: 'team' }) });
-  const SID = '9a000000-0000-4000-8000-000000000001';
+  const SID = '9a000000-0000-4000-8000-000000000001', RSID = '9a000000-0000-4000-8000-000000000002';
   await noteChannelSession(ws, 'seoyun', team(GONE), SID);
+  await noteChannelSession(ws, 'seoyun', team(SHARED), RSID, 'crewmail');
   const proj = join(process.env.HOME, '.claude', 'projects', 'x'); await mkdir(proj, { recursive: true });
-  await writeFile(join(proj, `${SID}.jsonl`), 'GONE_TRANSCRIPT');
-  const asked = [];
+  await writeFile(join(proj, `${SID}.jsonl`), 'GONE_TRANSCRIPT'); await writeFile(join(proj, `${RSID}.jsonl`), 'RELAYED_TRANSCRIPT');
   // 조회 실패 — 아무것도 지우지 않는다
-  assert.deepEqual(await recallLinkRooms(ws, ['seoyun'], async () => null, { configDirs: [join(process.env.HOME, '.claude')] }), { removed: 0, transcripts: 0, journals: 0, channels: 0 });
+  assert.deepEqual(await recallLinkRooms(ws, ['seoyun'], async () => null, cfg), { removed: 0, transcripts: 0, journals: 0, channels: 0 });
   assert.match(JSON.stringify(await loadThread(ws, 'seoyun')), /GONE_LINE/);
-  const sum = await recallLinkRooms(ws, ['seoyun'], async (pairs) => { asked.push(...pairs.map((p) => p.id)); return new Map(pairs.map((p) => [`${p.slug}:${p.id}`, p.id !== GONE])); }, { configDirs: [join(process.env.HOME, '.claude')] });
-  assert.deepEqual(new Set(asked), new Set([GONE, KEEP]), '묻는 방 = 팀 링크 방(대화·장부·조직 칸) — 개인 공간·옛 메신저 방은 묻지 않는다');
+  // 1차: GONE에서 이 에이전트가 빠짐(다른 내 에이전트도 없음), KEEP 그대로, SHARED에는 이 에이전트는 없지만 내 다른 에이전트가 있다
+  const asked = [];
+  const answer = (map) => async (pairs) => { asked.push(...pairs.map((p) => p.id)); const out = new Map(); for (const p of pairs) { const [mine, any] = map[p.id]; out.set(`${p.slug}:${p.id}`, mine); out.set(`*:${p.id}`, any); } return out; };
+  const sum = await recallLinkRooms(ws, ['seoyun'], answer({ [GONE]: [false, false], [KEEP]: [true, true], [SHARED]: [false, true] }), cfg);
+  assert.deepEqual(new Set(asked), new Set([GONE, KEEP, SHARED]), '묻는 방 = 팀이라고 명시된 링크 방만 — 개인·모름·옛 메신저 방은 묻지 않는다(I-2)');
   assert.deepEqual([sum.channels, sum.journals, sum.transcripts], [1, 1, 1]);
-  const t = JSON.stringify(await loadThread(ws, 'seoyun'));
-  assert.doesNotMatch(t, /GONE_LINE|GONE_REPLY/, '빠진 방의 대화 줄');
-  for (const k of ['KEEP_LINE', 'PERSONAL_LINE', 'LEGACY_LINE']) assert.match(t, new RegExp(k), `남김: ${k}`);
-  const org = await orgJournal(ws);
-  assert.doesNotMatch(org, /GONE_JOURNAL/); assert.match(org, /KEEP_JOURNAL/);
-  assert.equal((await readdir(proj)).includes(`${SID}.jsonl`), false, '그 방 링크 턴의 모델 전사');
-  assert.ok(!(await threadChannelIds(ws, 'seoyun')).has(KEEP), '옛 회수(recallDeparted)가 모으는 방에 링크 방은 없다 — 옛 서버가 v2 새 방을 모른다고 지우지 않게');
+  let t = JSON.stringify(await loadThread(ws, 'seoyun'));
+  assert.doesNotMatch(t, /GONE_LINE|GONE_REPLY/, '빠진 방의 직접 받은 줄');
+  for (const k of ['KEEP_LINE', 'RELAYED_LINE', 'PERSONAL_LINE', 'UNKNOWN_LINE', 'LEGACY_SAME_ID']) assert.match(t, new RegExp(k), `남김: ${k}`);
+  assert.doesNotMatch(await orgJournal(ws), /GONE_JOURNAL/); assert.match(await orgJournal(ws), /KEEP_JOURNAL/);
+  assert.deepEqual((await readdir(proj)).sort(), [`${RSID}.jsonl`], '그 방의 직접 받은 링크 턴 전사만');
+  // 2차: SHARED에 내 에이전트가 하나도 남지 않음 → 전해 받은 줄·그 전사도 거둔다
+  await recallLinkRooms(ws, ['seoyun'], answer({ [KEEP]: [true, true], [SHARED]: [false, false] }), cfg);
+  t = JSON.stringify(await loadThread(ws, 'seoyun'));
+  assert.doesNotMatch(t, /RELAYED_LINE|RELAYED_REPLY/); assert.equal((await readdir(proj)).length, 0);
+  // 옛 회수(옛 브리지): 같은 id(GONE)의 옛 줄을 지워도 v2 링크 줄은 건드리지 않고, 링크 방은 묻지 않는다(I-1 반대 방향)
+  await appendTurn(ws, 'seoyun', { userMsg: 'LINK_AFTER 지시', reply: 'R', sessionId: null, contextScope: team(GONE) });
+  assert.ok(!(await threadChannelIds(ws, 'seoyun')).has(KEEP), '옛 회수가 모으는 방에 링크 방은 없다');
   const legacyAsked = [];
-  await recallDeparted(ws, ['seoyun'], async (pairs) => { legacyAsked.push(...pairs.map((p) => p.id)); return new Map(); });
-  assert.ok(!legacyAsked.includes(KEEP), '옛 회수는 링크 방 대화를 묻지 않는다');
+  await recallDeparted(ws, ['seoyun'], async (pairs) => { legacyAsked.push(...pairs.map((p) => p.id)); return new Map(pairs.map((p) => [`${p.slug}:${p.id}`, false])); });
+  assert.deepEqual(legacyAsked, [GONE], '옛 회수는 옛 줄의 채널만 묻는다');
+  t = JSON.stringify(await loadThread(ws, 'seoyun'));
+  assert.doesNotMatch(t, /LEGACY_SAME_ID/, '옛 회수는 옛 줄을 지운다(종전 그대로)');
+  for (const k of ['LINK_AFTER', 'KEEP_LINE', 'PERSONAL_LINE', 'UNKNOWN_LINE']) assert.match(t, new RegExp(k), `옛 회수가 남김: ${k}`);
 });
 
 test('동기화 제외: 팀·모름 방 첨부의 턴 임시 칸(vault/files/msgr2-turn/)·조직 칸, 개인 공간 첨부(vault/files/msgr2/)는 종전대로 동기화', () => {

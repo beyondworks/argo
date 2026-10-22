@@ -381,7 +381,10 @@ export function createAgentLinkHost(deps) {
     proBlocked = true; nextPlanAt = clock.now() + PLAN_CACHE_MS;
     if (link) { link.stop(); link = null; }
     if (timer) { clock.clearTimeout(timer); timer = null; }
+    const known = new Map(agents);
     agents.clear(); agentIds.clear();
+    // 무료가 되어 쉬는 동안에도 조직 기억은 거둔다(분리 검수 I-4) — 쉼에 들어갈 때 한 번. 서버 함수는 Pro를 보지 않고, 갱신된 기존 기기 세션이면 답한다
+    runRecall({ known, force: true }).catch((e) => log('recall failed', e.code ?? e.message));
   }
   /** 쉼 관문. 'open' = 쉬지 않음, 'blocked' = 쉬는 중(요청 0), 'resumed' = 방금 플랜을 다시 봤더니 Pro·체험이라 쉼을 풀었다(다시 연다). */
   async function planGate() {
@@ -432,10 +435,12 @@ export function createAgentLinkHost(deps) {
     if (!deps.recallLinkRooms || recallTimer) return;
     recallTimer = clock.setTimeout(() => { recallTimer = null; runRecall().catch((e) => log('recall failed', e.code ?? e.message)); }, ms);
   }
-  async function runRecall() {
-    if (stopped || proBlocked || recallRunning) return;
+  async function runRecall({ known = agents, force = false } = {}) {
+    if (stopped || (proBlocked && !force) || recallRunning || !deps.recallLinkRooms || !current) return;
     const byWs = new Map();
-    for (const [id, a] of agents) if (a.kind !== 'bot') { if (!byWs.has(a.ws)) byWs.set(a.ws, new Map()); byWs.get(a.ws).set(a.slug, id); }
+    for (const [id, a] of known) if (a.kind !== 'bot') { if (!byWs.has(a.ws)) byWs.set(a.ws, new Map()); byWs.get(a.ws).set(a.slug, id); }
+    // 대응표를 모른다(무료 첫 시작 등) — 로컬 에이전트 목록으로 묻되 에이전트 단위 판정 없이 방 단위('*:방')로만(내 에이전트가 하나도 없는 방)
+    if (!byWs.size && force && currentUid) for (const x of await deps.listOwnedAgents(currentUid).catch(() => [])) { if (!byWs.has(x.ws)) byWs.set(x.ws, new Map()); byWs.get(x.ws).set(x.slug, null); }
     if (!byWs.size) { recallPending = true; return; }
     recallRunning = true; recallPending = false;
     try {
@@ -447,7 +452,12 @@ export function createAgentLinkHost(deps) {
           if (r?.error || !Array.isArray(r?.data)) return null; // 옛 서버(함수 없음)·오류 — 지우지 않는다
           const byRoom = new Map(r.data.map((x) => [String(x.room_id).toLowerCase(), Array.isArray(x.agents) ? x.agents : null]));
           const out = new Map();
-          for (const { slug, id } of pairs) { const ag = byRoom.get(id); const me = idOf.get(slug); if (ag && me) out.set(`${slug}:${id}`, ag.includes(me)); }
+          for (const { slug, id } of pairs) {
+            const ag = byRoom.get(id); if (!ag) continue;
+            const me = idOf.get(slug);
+            out.set(`*:${id}`, ag.length > 0); // 주인의 에이전트가 그 방에 하나라도 있나(전해 받은 기록 판정)
+            if (me) out.set(`${slug}:${id}`, ag.includes(me)); else if (!ag.length) out.set(`${slug}:${id}`, false); // 대응표 없이도 "내 에이전트가 하나도 없음"은 확실
+          }
           return out;
         };
         const sum = await deps.recallLinkRooms(ws, [...idOf.keys()], presence);
@@ -471,7 +481,12 @@ export function createAgentLinkHost(deps) {
       const on = deps.meetingEnabled?.() === true;
       if (!OFFER_KINDS.includes(kind) || (kind !== 'chat' && !on)) throw Object.assign(new Error(`unsupported offer kind: ${kind}`), { code: 'unsupported' });
       const extra = { ...deps.meeting, planOf: deps.planOf, uid: currentUid, chat: deps.chat, interruptTurn: deps.interruptTurn };
-      if (kind === 'meeting') return runMeetingOffer(offer, ctx, { agents, deps: { ...extra, scopeExtra: scopeOf(await roomInfo(offer.data.room, offer.agent)) } });
+      if (kind === 'meeting') {
+        const scopeExtra = scopeOf(await roomInfo(offer.data.room, offer.agent));
+        // 회의 참가자 턴의 모델 전사도 장부에(팀 방이면 회수 때 지운다 — 분리 검수 참고)
+        const chat = async (w, s, ...rest) => { const r = await deps.chat(w, s, ...rest); if (r?.sessionId && deps.noteSession) await deps.noteSession(w, s, { kind: 'link', room: offer.data.room, ...scopeExtra }, r.sessionId).catch(() => {}); return r; };
+        return runMeetingOffer(offer, ctx, { agents, deps: { ...extra, chat, scopeExtra } });
+      }
       if (kind === 'bot' || agents.get(offer.agent)?.kind === 'bot') {
         if (!on) throw Object.assign(new Error('external bot is off'), { code: 'unsupported' });
         return runBotOffer(offer, ctx, { agents, deps: extra });

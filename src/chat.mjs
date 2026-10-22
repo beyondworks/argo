@@ -1446,7 +1446,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const dmTurn = mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm';
   // 메신저 v2 링크 범위 턴(일·쪽지 배달·결재 후속·위임)의 일지 칸 — 팀 공간은 조직 칸(org-<공간>-ch-<방>), 개인 공간은 종전 그대로, 모르면 끈다(link-memory.mjs, 2026-10-22).
   // 범위가 이어지는 모든 턴이 여기를 지난다 — 부르는 곳마다 따로 정하면 한 곳이 빠질 때 조직 대화가 개인 일지에 섞인다(옛 결함).
-  journal = linkJournal(mirrorCtx, journal);
+  journal = linkJournal(mirrorCtx, journal, { relayed: !!from || source === 'crewmail' }); // 전해 받은 일(위임·쪽지 배달)의 팀 방 턴은 일지 0(분리 검수 I-3)
   const linkOrg = !!linkScopeOf(mirrorCtx) && String(journal?.tag ?? '').startsWith('org-'); // 링크 조직 칸 — 옛 채널 턴과 달리 PC 조직 칸에 쓴다(v2 서버에는 채널 일지가 없다)
   // 손님 턴 — 크루 주인이 아닌 사람이 시킨 메신저 턴(isGuestCtx, fail-closed). 주인의 몸(파일·셸·웹·커넥터·브라우저·도구 설치·예약)에
   // 손대지 않고 방 대화로 답하며, 필요한 일은 주인에게 결재로 올린다(규칙 7·9). 아래 강제 지점이 전부 이 한 값을 본다.

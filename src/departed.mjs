@@ -20,29 +20,40 @@ export const msgChannel = (m) => {
 
 /** 회수 각인을 적용할 줄의 방 — 옛 메신저 채널 줄(msgChannel) 또는 메신저 v2 링크 범위 줄(팀·모름 공간의 방). 각인 적용(applyDeparted)·회수(forgetChannels)가 쓴다.
     옛 회수가 모으는 방 목록(channelIdsOf)에는 링크 줄을 넣지 않는다 — 옛 서버는 v2에서 새로 생긴 방을 모른다고 답해 지우면 안 되는 조직 기억을 지운다. 링크 방은 linkRoomIdsOf로 따로 모은다. */
-export const recallChannel = (m) => msgChannel(m) ?? linkRecallRoom(m?.contextScope);
+// (분리 검수 I-1 반영) 링크 줄의 각인 키는 'link:<방>'·'linkr:<방>'이다 — ownChannels({ link: true })가 정한다. 옛 채널 id와 v2 방 id가 같아도 섞이지 않는다.
+const LINK_KEY = /^linkr?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** 각인 키로 쓸 수 있나 — 옛 채널 id 또는 link:/linkr: 방 키 */
+export const isRecallKey = (k) => CHANNEL_ID.test(String(k)) || LINK_KEY.test(String(k));
 
 // 다른 크루가 보낸 일 — 쪽지·위임·세션 메시지. 메신저 턴(via:'msgr')·루틴·작업·회의실은 이 크루가 직접 받은 일이다(분리 검수 H-1: via 전체를 건너뛰면 실제 채널 줄이 하나도 안 지워졌다).
 const RELAYED = new Set(['crewmail', 'delegate', 'session']);
 /** 회수 대상 줄의 채널 — 전해 받은 일(RELAYED 지시와 그 바로 뒤 크루 답)은 null. */
-// pick = 방을 고르는 규칙(옛 채널만 = msgChannel, 각인 적용 = recallChannel). 링크 범위 줄은 전해 받은 일이어도 회수한다 — 쪽지·위임 배달 턴도 같은 조직 방 범위에서 돌아
-// 그 글이 곧 조직 대화다(v2 쪽지는 link 범위를 그대로 잇는다, crewmail.mjs).
-function ownChannels(messages, pick = msgChannel) {
+// link = 메신저 v2 링크 팀 방 줄도 키로 낸다(각인 적용·회수). 직접 받은 링크 줄 = 'link:<방>', 전해 받은 일(쪽지·위임 지시와 그 바로 뒤 답) = 'linkr:<방>' —
+// 전해 받은 줄은 받은 에이전트의 방 소속이 아니라 "주인의 에이전트가 그 방에 하나라도 남았나"로 거둔다(분리 검수 I-3, msgr-recall.mjs recallLinkRooms).
+function ownChannels(messages, { link = false } = {}) {
   const out = []; let relayed = null;
   for (const m of messages) {
-    const c = pick(m);
-    const link = !!c && !msgChannel(m);
+    const c = msgChannel(m);
     const r = RELAYED.has(m?.via);
+    const lr = link && !c ? linkRecallRoom(m?.contextScope) : null;
+    if (lr) {
+      const k = `linkr:${lr}`;
+      if (m?.who === 'user') relayed = r ? k : null;
+      out.push(r || (m.who === 'crew' && relayed === k) ? k : `link:${lr}`);
+      continue;
+    }
     if (m?.who === 'user') relayed = r ? c : null;
-    out.push(c && (link || !(r || (m.who === 'crew' && relayed === c))) ? c : null);
+    out.push(c && !(r || (m.who === 'crew' && relayed === c)) ? c : null);
   }
   return out;
 }
+/** 줄마다 각인 키(옛 채널 id·link:/linkr: 방 키 또는 null) — 회수(thread.mjs forgetThreadChannels)가 각인 시각을 모을 때 쓴다 */
+export const recallKeysOf = (messages) => ownChannels(messages ?? [], { link: true });
 
-/** 스레드 안의 링크 범위 회수 방(팀·모름 공간) — v2 회수(recallLinkRooms)가 서버에 물을 방. */
+/** 스레드 안의 링크 팀 방 각인 키('link:<방>'·'linkr:<방>') — v2 회수(recallLinkRooms)가 서버에 물을 방. 개인 공간·모름 줄은 없다. */
 export function linkRoomIdsOf(t) {
   const out = new Set();
-  for (const m of t?.messages ?? []) { const c = msgChannel(m) ? null : linkRecallRoom(m?.contextScope); if (c) out.add(c); }
+  for (const k of recallKeysOf(t?.messages)) if (k && LINK_KEY.test(k)) out.add(k.toLowerCase());
   return out;
 }
 
@@ -91,7 +102,7 @@ export function unscopedSummaryGone(departed, s) {
 export function applyDeparted(t) {
   const d = t?.departed;
   if (!d || typeof d !== 'object' || !Array.isArray(t.messages)) return 0;
-  const own = ownChannels(t.messages, recallChannel);
+  const own = ownChannels(t.messages, { link: true });
   const before = t.messages.length;
   t.messages = t.messages.filter((m, i) => { const c = own[i]; return !(c && d[c] && (Number(m.ts) || 0) <= entry(d[c]).ts); });
   if (unscopedSummaryGone(d, t.summary)) delete t.summary; // 회수된 주인 혼자 1:1 줄을 접은 범위 없는 요약(위 summary.solo) — 줄이 이미 없어도(옛 버전 사본) 요약 자신의 표지로 거른다. 표지를 잃은 옛 버전 요약도
@@ -109,9 +120,9 @@ export function applyDeparted(t) {
 
 /** 채널들을 빠진 것으로 각인하고 적용한다(제자리 수정). tsByChannel = 다른 파일까지 본 채널별 최대 ts. 반환: 지운 줄 수, 지운 채널 세션 id. */
 export function forgetChannels(t, ids, tsByChannel = {}) {
-  const want = new Set((ids ?? []).map((x) => String(x).toLowerCase()).filter((c) => CHANNEL_ID.test(c)));
+  const want = new Set((ids ?? []).map((x) => String(x).toLowerCase()).filter(isRecallKey));
   if (!want.size) return { removed: 0, sessionIds: [] };
-  const own = ownChannels(t.messages ?? [], recallChannel);
+  const own = ownChannels(t.messages ?? [], { link: true });
   t.departed = { ...(t.departed ?? {}) };
   const sessionIds = [];
   for (const c of want) {
@@ -128,7 +139,7 @@ export function forgetChannels(t, ids, tsByChannel = {}) {
 export function mergeDeparted(a, b) {
   const out = {};
   for (const d of [a, b]) for (const [k, v] of Object.entries(d && typeof d === 'object' ? d : {})) {
-    if (!CHANNEL_ID.test(k)) continue;
+    if (!isRecallKey(k)) continue;
     const c = k.toLowerCase(); const cur = out[c] ?? { ts: 0, sids: [] }; const e = entry(v);
     out[c] = { ts: Math.max(cur.ts, e.ts), sids: [...new Set([...cur.sids, ...e.sids])] };
   }
