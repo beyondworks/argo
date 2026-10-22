@@ -1484,6 +1484,7 @@ export const DICT = {
   'onelist.browse.in': ['{org} 채널 둘러보기', 'Browse channels in {org}'],
   'onelist.err': ['대화 목록을 불러오지 못했습니다.', 'Couldn’t load your conversations.'],
   'onelist.retry': ['다시 시도', 'Try again'],
+  'onelist.scope': ['보는 범위 — 모든 대화 또는 조직', 'Scope — all conversations or one organization'],
   'onelist.more': ['최근 대화 {n}개까지 보입니다. 더 오래된 대화는 검색으로 찾으세요.', 'Showing your {n} most recent conversations. Use search for older ones.'],
   'memory.personal.soon': ['개인 기억은 Pro에서 PC와 동기화됩니다 — 준비 중', 'Personal memory will sync with your PC on Pro — coming soon'],
   'phone.tab.channels': ['채널', 'Channels'],

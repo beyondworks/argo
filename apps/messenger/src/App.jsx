@@ -1815,6 +1815,7 @@ function Shell({ session }) {
   const olRef = useRef(ol); olRef.current = ol; const olMiss = useRef(new Set()); // 다시 읽어도 목록에 없던 방(들어가지 않은 open 방 방송) — 글마다 다시 읽지 않게
   useEffect(() => { if (!V2 || !uid) return undefined; let live = true; loadOneList(supabase).then((r) => { if (!live) return; if (r.error) { if (r.error.pro) setOlPro(true); else setOlErr(true); return; } setOlPro(false); setOlErr(false); setOl(r.rows); setOlMore(r.more); }, () => { if (live) setOlErr(true); }); return () => { live = false; }; }, [uid, syncEpoch, olTick]); // eslint-disable-line react-hooks/exhaustive-deps
   const olMsgRef = useRef(null);
+  useEffect(() => { if (!olOrgMenu) return undefined; const k = (e) => { if (e.key === 'Escape') setOlOrgMenu(false); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [olOrgMenu]); // 범위 메뉴는 Esc로 닫는다
   olMsgRef.current = (x) => { if (!V2) return; const r = oneListBump(olRef.current, x, { uid, active: activeChannel.current }); if (r.known) { setOl(r.rows); return; } if (!olRef.current || olMiss.current.has(x.room_id)) return; olMiss.current.add(x.room_id); bumpOl(); };
   useEffect(() => { if (V2 && page === 'chat' && chId && ol?.some((r) => r.room_id === chId && r.unread)) setOl((cur) => oneListSeen(cur, chId)); }, [chId, page, ol]); // eslint-disable-line react-hooks/exhaustive-deps -- 보고 있는 방은 안 읽음 0(목록을 거치지 않고 열린 방 — 시작 때 마지막 방·알림·검색)
   const v2RoomEventRef = useRef(null); const v2EventPlan = useRef(null); // 묶음 창(500ms) 안의 사건 계획 — 창마다 목록 읽기 한 번(#1088 검수 2: 사건마다 약 8건)
@@ -3164,7 +3165,29 @@ function Shell({ session }) {
       </div>
     </>)}
   </>);
-  const olOrgPick = isPhone ? olOrgBtn : <span className="msgr-sortwrap msgr-inboxorg">{olOrgBtn}</span>; // 조직 거르개 — 조직이 없어도 둔다: 공간 메뉴가 없어진 자리의 '초대 코드로 참여·조직 만들기·도메인 참여·복구' 입구(설계 2절). 폰은 메뉴를 칩 줄 밖에(가로 스크롤 상자가 잘랐다)
+  const olOrgPick = isPhone ? olOrgBtn : <span className="msgr-sortwrap msgr-inboxorg">{olOrgBtn}</span>;
+  // 데스크톱 v2 레일 위쪽(유건 2026-10-22 19:0x — Slack·Telegram처럼): 범위 선택 카드 → 검색 + 새 대화 → 거르개 칩 → 목록
+  const olUnreadOf = (id) => oneListUnread((olRows ?? []).filter((r) => r.space_kind === 'team' && r.space_id === id));
+  const olScopeName = olOrg ? ((orgs ?? []).find((o) => o.id === olOrg)?.name ?? olOrgName ?? '') : t('onelist.org.all');
+  const olAllMark = (sm) => <span className={`msgr-av msgr-scopeall${sm ? ' sm' : ''}`} aria-hidden="true"><I name="chat" size={sm ? 13 : 15} /></span>;
+  const olScope = V2 && !isPhone && (<div className="msgr-scopewrap">
+    <button type="button" className={`msgr-org msgr-scope${olOrgMenu ? ' open' : ''}`} onClick={() => setOlOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={!!olOrgMenu} title={t('onelist.scope')}>
+      {olOrg ? <Av name={olScopeName} /> : olAllMark(false)}<span className="name">{olScopeName}</span>{olOrg && <SpaceBadge c={{ n: olUnreadN - olUnreadOf(olOrg) }} />}<I name="caret" size={14} className="caret" />
+    </button>
+    {olOrgMenu && (<>
+      <div className="msgr-scrim clear" onClick={() => setOlOrgMenu(false)} />
+      <div className="msgr-menu-pop msgr-scopepop" role="menu">
+        <button type="button" role="menuitemradio" aria-checked={!olOrg} className={!olOrg ? 'on' : ''} onClick={() => { setOlOrg(null); setOlOrgMenu(false); }}>{olAllMark(true)}<span className="label">{t('onelist.org.all')}</span><SpaceBadge c={{ n: olUnreadN }} /></button>
+        {(orgs ?? []).length > 0 && <div className="sep" />}
+        {(orgs ?? []).map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={olOrg === o.id} className={olOrg === o.id ? 'on' : ''} onClick={() => { setOlOrg(o.id); setOlOrgMenu(false); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><SpaceBadge c={{ n: olUnreadOf(o.id) }} /></button>)}
+        {joinable.map((o) => <button key={`j-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOlOrgMenu(false); joinDomain(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}
+        {deletedOrgs.map((o) => <button key={`d-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOlOrgMenu(false); restoreOrg(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}
+        <div className="sep" />
+        {orgJoinForms()}
+      </div>
+    </>)}
+  </div>);
+  const olChips = V2 && !isPhone && <Seg className="msgr-inboxseg" label={t('onelist.filter')} value={olFilter} onPick={setOlFilter} options={ONE_LIST_FILTERS.map((k) => ({ v: k, label: k === 'unread' && olUnreadN ? t('phone.chip.unread', { n: olUnreadN }) : t(`onelist.chip.${k}`) }))} />; // 범위(조직)는 위 카드가 정하고, 칩은 그 안에서 거른다 // 조직 거르개 — 조직이 없어도 둔다: 공간 메뉴가 없어진 자리의 '초대 코드로 참여·조직 만들기·도메인 참여·복구' 입구(설계 2절). 폰은 메뉴를 칩 줄 밖에(가로 스크롤 상자가 잘랐다)
   const olAvatar = (row, phone) => {
     const sz = phone ? 'kk' : 'xs';
     const pair = oneListPair(row); // 1:1(에이전트 1:1은 이름 없는 private 방)은 상대 얼굴
@@ -3241,7 +3264,7 @@ function Shell({ session }) {
   const olLoadNote = olErr ? <div className="msgr-hint ph-empty" role="alert">{t('onelist.err')} <button type="button" className="btn sm" onClick={() => { setOlErr(false); bumpOl(); }}>{t('onelist.retry')}</button></div> : <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>; // 못 읽으면(Pro 거절이 아닌 오류) 다시 시도 — 데스크톱 v2는 옛 구역이 없어 '불러오는 중'에 멈췄다(분리 검수 6)
   const olMoreNote = olMore && <div className="msgr-hint">{t('onelist.more', { n: ONE_LIST_LIMIT })}</div>;
   // 새 대화 단추 하나(설계 2절) — 재료: 친구(수락), 내 에이전트(한 사람 = 한 줄), 채널을 만들 수 있는 조직(손님 제외 — 최종 판정은 서버)
-  const olNewSheet = V2 && olNew && <NewTalkSheet onClose={() => setOlNew(false)}
+  const olNewSheet = V2 && olNew && <NewTalkSheet pop={!isPhone} onClose={() => setOlNew(false)}
     friends={withoutHidden(friends.filter((f) => f.status === 'accepted'), hiddenUserIds).map((f) => ({ id: f.user_id, name: nameOfUser(f.user_id) }))}
     agents={agentGroups.map((g) => ({ id: g.id, name: g.display_name, role: g.role_text, g }))}
     orgs={(orgs ?? []).map((o) => ({ id: o.id, name: o.name, canNew: newChannelOffer({ role: o.role }).can }))} onBrowse={(oid) => { setOlNew(false); setTabQ(null); setNewCh(null); runInSpace(oid, (fn) => fn.openBrowse()); }}
@@ -3394,8 +3417,12 @@ function Shell({ session }) {
           {isPhone && <span className="msgr-smalltitle" aria-hidden="true">{dmTab ? t('phone.tab.dm') : isPersonal ? t('personal.space') : (org?.name ?? t('org.pick'))}</span>}
           {!(V2 && !isPhone) && <button type="button" className={`msgr-org${orgMenu ? ' open' : ''}${isPersonal ? ' personal' : ''}`} onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} title={t('org.switch')}>
             {isPersonal ? <PersonalMark /> : <Av name={org?.name ?? '?'} />}<span className="name">{isPersonal ? t('personal.space') : (org?.name ?? t('org.pick'))}</span><SpaceBadge c={elsewhere} /><I name="caret" size={14} className="caret" />
-          </button>}{/* v2 데스크톱: 공간 바꾸기 단추 없음 — 한 목록 + 조직 거르개(조직 관리·초대는 다음 단계에 '나'로) */}
-          <form className="msgr-search" onSubmit={(e) => { e.preventDefault(); runSearch(searchQ); }}><I name="search" size={13} /><input ref={searchRef} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); leaveSearch(); e.currentTarget.blur(); } }} placeholder={t('search.ph', { key: shortcutLabel('K') })} aria-label={t('search.title')} />{searchQ.trim() && !searchBusy && searchRes?.q !== searchQ.trim() && <span className="msgr-search-enter" aria-hidden="true">{t('search.enter')}</span>}{searchQ && <button type="button" className="clear" onClick={leaveSearch} aria-label={t('ui.close')}><I name="x" size={12} /></button>}</form>{/* 입력만으로는 반응이 없어 Enter를 몰랐다(UXM-21) — 매 글자 검색은 조회가 늘어 하지 않는다 */}
+          </button>}{/* v2 데스크톱: 공간 바꾸기 단추 대신 범위 선택 카드(olScope) */}
+          {V2 && !isPhone && olScope}{/* Slack 왼쪽 위 워크스페이스 이름 + ▾ — 모든 대화 / 조직, 메뉴는 카드 바로 아래 */}
+{(() => { const f = (
+          <form className="msgr-search" onSubmit={(e) => { e.preventDefault(); runSearch(searchQ); }}><I name="search" size={13} /><input ref={searchRef} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); leaveSearch(); e.currentTarget.blur(); } }} placeholder={t('search.ph', { key: shortcutLabel('K') })} aria-label={t('search.title')} />{searchQ.trim() && !searchBusy && searchRes?.q !== searchQ.trim() && <span className="msgr-search-enter" aria-hidden="true">{t('search.enter')}</span>}{searchQ && <button type="button" className="clear" onClick={leaveSearch} aria-label={t('ui.close')}><I name="x" size={12} /></button>}</form>
+          ); return V2 && !isPhone ? <div className="msgr-searchrow">{f}<button type="button" className="msgr-newbtn" onClick={() => setOlNew((v) => !v)} title={t('onelist.new')} aria-label={t('onelist.new')} aria-haspopup="dialog" aria-expanded={!!olNew}><I name="chatplus" size={17} /></button>{!isPhone && olNewSheet}</div> : f; })()}{/* v2 데스크톱: 검색칸 오른쪽 같은 높이의 새 대화(Slack·Telegram '새 메시지') — 누르면 바로 아래 팝오버 */}
+          {V2 && !isPhone && olChips}{/* Telegram 데스크톱 폴더 탭처럼 목록 바로 위 한 줄, 고르게 나눔 */}{/* 입력만으로는 반응이 없어 Enter를 몰랐다(UXM-21) — 매 글자 검색은 조회가 늘어 하지 않는다 */}
           {orgMenu && (<>
             <div className="msgr-scrim clear" onClick={() => setOrgMenu(false)} />
             <div className="msgr-menu-pop" role="menu">
@@ -3421,13 +3448,11 @@ function Shell({ session }) {
         {!isPersonal && isPhone && aiConsentLoading && ( // L-3: 조회 중 로딩(같은 이유로 폰만 bare)
           <OrgGateLoading t={t} bare />
         )}
-        {V2 && !isPhone && olOrgMenuEl}{/* 조직▾ 메뉴는 구역 머리(summary) 밖 — 안이면 머리의 preventDefault가 '만들기'·'참여' 제출을 막고 스페이스가 구역을 접었다 */}
-        {V2 && !isPhone && (<RailSection id="onelist" label={t('onelist.title')} right={<span className="right">{olOrgPick}<button type="button" className="btn" onClick={() => setOlNew(true)} title={t('onelist.new')} aria-label={t('onelist.new')}><I name="plus" size={14} /></button></span>}>{/* 한 목록(메신저 단순화 2단계) */}
-          <Seg className="msgr-inboxseg" label={t('onelist.filter')} value={olOrg ? null : olFilter} onPick={(v) => { setOlFilter(v); setOlOrg(null); }} options={ONE_LIST_FILTERS.map((k) => ({ v: k, label: k === 'unread' && olUnreadN ? t('phone.chip.unread', { n: olUnreadN }) : t(`onelist.chip.${k}`) }))} />
+        {V2 && !isPhone && (<div className="msgr-sec msgr-onelist" data-sec="onelist">{/* 한 목록(메신저 단순화 2단계) — 접기 머리 없음(한 목록은 접을 이유가 없다, Telegram·Slack 목록) */}
           {olNewChForm}{olBrowse}
           <div className="msgr-list">{olShown.map(olDeskRow)}</div>
           {ol === null && olLoadNote}{olEmpty}{olGateNote}{olMoreNote}
-        </RailSection>)}
+        </div>)}
         {!(V2 && !isPhone) && !isPersonal && !orgBlocked && <RailSection id={orgId ? 'channels' : 'start'} label={orgId ? t('ch.list') : t('org.start')} right={!orgId ? null : <span className="right">
           {<button type="button" className="btn msgr-chbrowse" onClick={() => browse ? setBrowse(null) : openBrowse()} disabled={!orgId} title={t('ch.browse')} aria-label={t('ch.browse')} aria-expanded={!!browse}><I name="hash" size={14} /></button>}
           {canNewCh && <button type="button" className="btn msgr-chnew" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button>}
@@ -3582,7 +3607,7 @@ function Shell({ session }) {
       {runnerOpen && <RunnerSheet hasOrg={(orgs ?? []).length > 0} onClose={() => setRunnerOpen(false)} onAgents={runnerAgents} onNote={setNote} onError={setErr} />}
       {friendAdd && <FriendAddSheet onClose={() => setFriendAdd(false)} uid={uid} friends={friends} members={isPersonal ? [] : members} onChanged={onFriendsChanged}
         onDm={(id) => { setFriendAdd(false); openDm('user', id); }} onPersonalDm={(id) => { setFriendAdd(false); openPersonalDm(id); setRail(false); }} onNote={setNote} onError={setErr} />}
-      {olNewSheet}
+      {isPhone && olNewSheet}
       {dmGroup && <DmGroupSheet personal={isPersonal} onAddFriend={() => { setDmGroup(false); setFriendAdd(true); }} members={withoutHidden(members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now())), isPersonal ? hiddenUserIds : null)} crews={railVisible} hints={crewHints} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
       {grpSheet && isPhone && !isPersonal && <ChannelGroupSheet {...grpSheet} groups={sortGroups(grp.groups)} links={grp.links} channels={chChannels} onCreate={createGroup} onSave={saveGroup} onDelete={deleteGroup} onMove={moveChannel} onPicked={(k) => setChMenu(k)} onClose={() => setGrpSheet(null)} />}
       {isPhone && (V2
@@ -3619,17 +3644,14 @@ function DmPeekSheet({ channel, name, uid, whoOf, onOpen, onClose }) {
 /* ─── 새 그룹 대화 시트(유건 2026-09-15): 조직 멤버·파견 크루를 여럿 골라 그룹 DM. 한 명이면 1:1. ─── */
 /* 새 대화(메신저 단순화 2단계, 설계 2절) — 단추 하나에서 사람 1:1 · 에이전트 1:1 · 여러 명 방 · 조직 채널. 조직 채널만 "어느 조직에"를 한 번 고른다(조직이 하나면 바로).
    사람 1:1 = 친구(개인 공간 1:1, 서버가 친구 여부를 판정), 에이전트 1:1 = 어디서 눌러도 같은 개인 1:1 방(#1140·#1141), 여러 명 방 = 개인 그룹 시트(DmGroupSheet) */
-function NewTalkSheet({ friends = [], agents = [], orgs = [], onPerson, onAgent, onGroup, onChannel, onBrowse, onAddFriend, onClose }) {
+function NewTalkSheet({ friends = [], agents = [], orgs = [], onPerson, onAgent, onGroup, onChannel, onBrowse, onAddFriend, onClose, pop = false }) { // pop: 데스크톱 — 누른 단추 바로 아래 팝오버(Slack·Telegram '새 메시지'). 폰은 아래에서 올라오는 시트
   const { t } = useT();
   const [step, setStep] = useState('menu'); const [org, setOrg] = useState(null); // org = 조직 채널 단계에서 고른 조직
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   const title = step === 'orgact' ? t('onelist.new.channel.in', { org: org?.name ?? '' }) : t({ menu: 'onelist.new', person: 'onelist.new.person', agent: 'onelist.new.agent', org: 'onelist.new.channel.pick' }[step]);
   const pick = (name, sub, run, key, av, disabled = false) => <button key={key} type="button" role="menuitem" onClick={run} disabled={disabled}>{av}<span><b>{name}</b>{sub && <small>{sub}</small>}</span></button>;
   const goOrg = (o) => { setOrg(o); setStep('orgact'); };
-  return (
-    <div className="msgr-sheetwrap">
-      <div className="msgr-scrim clear" onClick={onClose} />
-      <section className="msgr-crewsheet msgr-dmpeek msgr-dmgroup msgr-newtalk" role="dialog" aria-label={title}>
+  const body = (<>
         <header className="head">{step !== 'menu' && <button type="button" className="msgr-titlebtn" onClick={() => setStep(step === 'orgact' && orgs.length > 1 ? 'org' : 'menu')} aria-label={t('onelist.new.back')}><I name="back" size={16} /></button>}<strong>{title}</strong><span className="msgr-klabel" /><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
         <div className="peek"><div className="msgr-addmenu" role="menu">
           {step === 'menu' && (<>
@@ -3650,7 +3672,12 @@ function NewTalkSheet({ friends = [], agents = [], orgs = [], onPerson, onAgent,
           {step === 'person' && !friends.length && <p className="note">{t('onelist.new.person.none')}</p>}
           {step === 'agent' && !agents.length && <p className="note">{t('onelist.new.agent.none')} <RunnerButton /></p>}
         </div>
-      </section>
+  </>);
+  if (pop) return (<><div className="msgr-scrim clear" onClick={onClose} /><div className="msgr-menu-pop msgr-newtalkpop msgr-dmgroup msgr-newtalk" role="dialog" aria-label={title}>{body}</div></>);
+  return (
+    <div className="msgr-sheetwrap">
+      <div className="msgr-scrim clear" onClick={onClose} />
+      <section className="msgr-crewsheet msgr-dmpeek msgr-dmgroup msgr-newtalk" role="dialog" aria-label={title}>{body}</section>
     </div>
   );
 }
