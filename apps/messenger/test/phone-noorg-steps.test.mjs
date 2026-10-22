@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 
 test('조직 없는 단계는 한 목록(noOrgSteps) — 데스크톱 본문과 폰 홈이 같이 쓴다', () => {
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  assert.match(src, /function noOrgSteps\(\{ t, createOrg, joinWithCode, joinable = \[\], joinDomain, deletedOrgs = \[\], restoreOrg \}\)/);
-  assert.match(src, /: noOrgSteps\(\{ t, createOrg, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg \}\);/, '데스크톱 빈 화면');
+  assert.match(src, /function noOrgSteps\(\{ t, createOrg, joinWithCode, joinable = \[\], joinDomain, deletedOrgs = \[\], restoreOrg, hasAgent = false, createForm = null \}\)/);
+  assert.match(src, /: noOrgSteps\(\{ t, createOrg, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg, hasAgent, createForm \}\);/, '데스크톱 빈 화면(조직 0개면 이름 입력을 바로 — UX 정리 P1)');
   assert.match(src, /isPhone && !orgId \? <div className="msgr-phsteps"><OrgStepList steps=\{noOrgSteps\(/, '폰 홈');
 });
