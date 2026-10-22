@@ -79,7 +79,7 @@ test('혼합: 1번 호출로 내 방 전부(개인 1:1·친구 1:1·여러 명 �
   for (const k of [R.agentDm, R.friendDm, R.group, R.empty]) { assert.equal(by[k].space_kind, 'personal'); assert.equal(by[k].space_name, null, '개인 방은 주인 표시 없음'); }
   assert.deepEqual([by[R.agentDm].peer_kind, by[R.agentDm].peer_id], ['agent', AG]);
   assert.deepEqual([by[R.friendDm].peer_kind, by[R.friendDm].peer_id], ['user', U.B]);
-  assert.equal(by[R.group].peer_kind, null, '여러 명 방은 상대 없음');
+  assert.deepEqual([by[R.group].peer_kind, by[R.group].peer_id], ['user', U.B], '나 말고 한 명뿐인 private 방도 상대가 있다(여러 명 방은 아래 시험)');
   assert.deepEqual([by[R.t1open].users, by[R.t1open].agents], [2, 1]);
   assert.equal(by[R.t1open].unread, 2); assert.equal(by[R.t1open].last_preview, '자료 올렸어요');
   assert.equal(by[R.t2open].unread, 0, '내 글은 안 읽음이 아니다');
@@ -166,6 +166,28 @@ test('방 1,000개: 한 번에 200개(상한), 쪽 넘김으로 겹침·빠짐 �
   console.log('# EXPLAIN\n' + plan.split('\n').map((l) => '# ' + l).join('\n'));
   const ms = db.as(big.uid, big.sid, 'select extract(milliseconds from clock_timestamp() - now())::int from (select count(*) from public.msgr2_inbox(200)) q');
   console.log('# 방 1,000개 사용자 첫 쪽 200개: 함수 실행 ' + ms + 'ms(임시 PG, 맥 two)');
+});
+
+test('상대(peer): 에이전트 1:1(private·이름 없음) = 그 에이전트, 둘만 있는 private = 상대, 셋 이상·상대가 나간 방 = 없음, 값은 그 방 멤버에서만', { skip }, () => {
+  const sp = space('personal', U.Z);
+  const AZ = db.sql('insert into public.msgr2_agents (owner_user_id, ws_id, slug, display_name) values (' + q(U.Z) + ", 'wsz', 'tidy', '정리봇') returning id");
+  const P = {
+    agent: room(sp, 'private', '', [U.Z], { agents: [AZ], at: ago(9) }), // msgr2_agent_dm_open과 같은 모양
+    pair: room(sp, 'private', '', [U.Z, U.B], { at: ago(8) }),
+    three: room(sp, 'private', '셋', [U.Z, U.B, U.C], { at: ago(7) }),
+    twoAgents: room(sp, 'private', '', [U.Z], { agents: [AZ, AG], at: ago(6) }),
+    left: room(sp, 'private', '', [U.Z, U.C], { at: ago(5) }),
+  };
+  db.sql('update public.msgr2_room_members set removed_at = now() where room_id = ' + q(P.left) + ' and member_id = ' + q(U.C));
+  const by = Object.fromEntries(inbox(z).map((r) => [r.room_id, r]));
+  assert.deepEqual(Object.keys(by).sort(), Object.values(P).sort(), 'Z의 방만(남의 방 없음)');
+  assert.deepEqual([by[P.agent].peer_kind, by[P.agent].peer_id], ['agent', AZ], '① 에이전트 1:1');
+  assert.deepEqual([by[P.pair].peer_kind, by[P.pair].peer_id], ['user', U.B], '② 둘만 있는 private');
+  assert.equal(by[P.three].peer_kind, null, '③ 사람 셋'); assert.equal(by[P.twoAgents].peer_kind, null, '③ 나 + 에이전트 둘');
+  assert.equal(by[P.left].peer_kind, null, '④ 상대가 나간 방(활동 멤버 나뿐)');
+  for (const r of [...inbox(z), ...inbox(a)]) if (r.peer_id) {
+    assert.equal(db.sql('select count(*) from public.msgr2_room_members where room_id = ' + q(r.room_id) + ' and member_id = ' + q(r.peer_id) + ' and removed_at is null'), '1', '⑤ 상대는 그 방의 활동 멤버: ' + r.room_name);
+  }
 });
 
 test('되돌림: down 파일을 적용하면 함수가 없고, 다시 적용하면 같은 결과', { skip }, () => {

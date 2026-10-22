@@ -11,6 +11,8 @@
 -- 순서·쪽: 고정 먼저, 그다음 마지막 활동(마지막 글 시각, 글이 없으면 방 만든 시각) 최신순, 같으면 방 id 역순. 한 번에 p_limit(1~200, 기본 200)개.
 --   다음 쪽은 마지막 행의 (pinned, last_at, room_id)를 p_before_*로 넘긴다. 돌려준 행 수 = p_limit이면 더 있을 수 있다.
 -- 안 읽음: msgr2_unread와 같은 규칙(내 읽음 뒤, 지우지 않음, 시스템 글 아님, 내 글 아님, 차단한 사람 글 아님, 99에서 멈춤) — 이 쪽의 행만 센다.
+-- 상대(peer): 1:1이면 상대 하나. direct 방, 또는 나 말고 활동 멤버(removed_at null)가 정확히 1명(사람·에이전트)인 private 방 — 에이전트 1:1은
+--   msgr2_agent_dm_open이 이름 없는 private 방으로 만든다(20261020200600). 여러 명 방·상대가 나간 방은 null. 값은 그 방의 room_members에서만 온다.
 -- 마지막 글 미리보기: 지우지 않고 차단한 사람 글이 아닌 마지막 글의 앞 140자(시스템 글은 본문 대신 kind로 화면이 문구를 고른다).
 -- 쓰기 0(stable). 주기 호출을 만들지 않는다 — 화면은 목록을 열 때·앱 시작·복귀 때 1번, 그 뒤는 기존 방송(v2:u:)으로 고친다.
 -- 되돌림: scripts/rollback/20261022160000_msgr2_inbox.down.sql · 시험: test/msgr2-inbox-pg.test.mjs
@@ -82,9 +84,11 @@ begin
       from page pg
       left join public.msgr2_reads rd on rd.room_id = pg.id and rd.user_id = uid
       left join lateral (
-        select o.member_kind as k, o.member_id as i from public.msgr2_room_members o
-         where pg.kind = 'direct' and o.room_id = pg.id and o.removed_at is null and not (o.member_kind = 'user' and o.member_id = uid)
-         order by (o.member_kind = 'user') desc, o.member_id limit 1) peer on true
+        select o.k, o.i from (
+          select o.member_kind as k, o.member_id as i, count(*) over () as n from public.msgr2_room_members o
+           where pg.kind in ('direct', 'private') and o.room_id = pg.id and o.removed_at is null and not (o.member_kind = 'user' and o.member_id = uid)) o
+         where pg.kind = 'direct' or o.n = 1
+         order by (o.k = 'user') desc, o.i limit 1) peer on true
      order by pg.pin desc, pg.act desc, pg.id desc;
 end $$;
 revoke all on function public.msgr2_inbox(int, boolean, timestamptz, uuid) from public, anon;
