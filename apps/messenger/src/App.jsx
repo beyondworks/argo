@@ -1815,7 +1815,6 @@ function Shell({ session }) {
   const olRef = useRef(ol); olRef.current = ol; const olMiss = useRef(new Set()); // 다시 읽어도 목록에 없던 방(들어가지 않은 open 방 방송) — 글마다 다시 읽지 않게
   useEffect(() => { if (!V2 || !uid) return undefined; let live = true; loadOneList(supabase).then((r) => { if (!live) return; if (r.error) { if (r.error.pro) setOlPro(true); else setOlErr(true); return; } setOlPro(false); setOlErr(false); setOl(r.rows); setOlMore(r.more); }, () => { if (live) setOlErr(true); }); return () => { live = false; }; }, [uid, syncEpoch, olTick]); // eslint-disable-line react-hooks/exhaustive-deps
   const olMsgRef = useRef(null);
-  useEffect(() => { if (!olOrgMenu) return undefined; const k = (e) => { if (e.key === 'Escape') setOlOrgMenu(false); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [olOrgMenu]); // 범위 메뉴는 Esc로 닫는다
   olMsgRef.current = (x) => { if (!V2) return; const r = oneListBump(olRef.current, x, { uid, active: activeChannel.current }); if (r.known) { setOl(r.rows); return; } if (!olRef.current || olMiss.current.has(x.room_id)) return; olMiss.current.add(x.room_id); bumpOl(); };
   useEffect(() => { if (V2 && page === 'chat' && chId && ol?.some((r) => r.room_id === chId && r.unread)) setOl((cur) => oneListSeen(cur, chId)); }, [chId, page, ol]); // eslint-disable-line react-hooks/exhaustive-deps -- 보고 있는 방은 안 읽음 0(목록을 거치지 않고 열린 방 — 시작 때 마지막 방·알림·검색)
   const v2RoomEventRef = useRef(null); const v2EventPlan = useRef(null); // 묶음 창(500ms) 안의 사건 계획 — 창마다 목록 읽기 한 번(#1088 검수 2: 사건마다 약 8건)
@@ -2187,6 +2186,8 @@ function Shell({ session }) {
     m.toggleAttribute('data-up', m.getBoundingClientRect().bottom > floor - 8);
   }, [isPhone, dmSortMenu, sortMenu]);
   useDismiss(meMenu, () => setMeMenu(false), 'button.me:not(.item), .msgr-rowmenu.me', 'button.me:not(.item)');
+  useDismiss(!!olOrgMenu, () => setOlOrgMenu(false), '.msgr-scopewrap, .msgr-olorgmenu, .msgr-inboxorgbtn', isPhone ? '.msgr-inboxorgbtn' : '.msgr-scope', isPhone); // 한 목록 범위 메뉴 — 본문(머리·가운데·입력창)을 눌러도 닫힌다. 막(.msgr-scrim z 65)이 본문 칸보다 아래층이라 클릭이 본문으로 갔다(#1143 재검수 Nit 2)
+  useDismiss(V2 && !isPhone && olNew, () => setOlNew(false), '.msgr-newtalkpop, .msgr-newbtn', '.msgr-newbtn'); // 새 대화 팝오버(데스크톱) — 같은 이유. 폰은 시트가 화면을 덮는다
   const [lastAt, setLastAt] = useState({}); // 채널 → 마지막 메시지 시각(ms). 최근순 정렬 재료 — 조직 로드 때 한 번 조회, 이후 방송으로 갱신
   // 방 토픽 구독(목록의 '답변 중', 비공개 방의 글·반응·수정) — 바뀐 방만 붙이고 뗀다(방을 옮길 때 50개 전부 다시 붙이던 것, 검수 #690 M1).
   // 토큰 갱신은 조직 구독 효과의 setAuth가 조인된 채널에 전달하므로 의존성에 넣지 않는다. 모바일 복귀(resumeEpoch)엔 전부 다시 붙인다(검수 #690 M2).

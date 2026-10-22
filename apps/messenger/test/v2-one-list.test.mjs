@@ -148,3 +148,8 @@ test('배선(#1143 화면 검수 반영): 줄 메뉴는 옛 메뉴 그대로, �
   assert.match(app, /useState\(\(\) => v2PhonePage\(isPhone && PULL_RESTORE_PAGES/);
   assert.match(app, /useEffect\(\(\) => \{ if \(V2 && page !== v2PhonePage\(page\)\) setPage\(v2PhonePage\(page\)\); \}, \[page\]\);/);
 });
+
+test('배선(#1143 재검수 Nit 2): 범위 메뉴·새 대화 팝오버는 본문을 눌러도 닫힌다 — 문서 전체 pointerdown(useDismiss)', () => {
+  assert.match(app, /useDismiss\(!!olOrgMenu, \(\) => setOlOrgMenu\(false\), '\.msgr-scopewrap, \.msgr-olorgmenu, \.msgr-inboxorgbtn'/);
+  assert.match(app, /useDismiss\(V2 && !isPhone && olNew, \(\) => setOlNew\(false\), '\.msgr-newtalkpop, \.msgr-newbtn'/);
+});
