@@ -64,7 +64,7 @@ import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
 import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDeniedKey, scopePendingApprovals, highPolicyOrgs, approvalDenied, approvalCmdMode, decideApproval, readRoomJoinRequests, singleFlight } from './approval-display.js';
-import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, earlierLineLabel, archivedRoomFor, archivedSearchRooms, ARCHIVED_ROOM_COLS, archivedReadStep, clearEarlierUnread, saveAgentLook, fillAgentLooks, ownRowsReader, withAgentCol, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
+import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, v2MyAgents, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, earlierLineLabel, archivedRoomFor, archivedSearchRooms, ARCHIVED_ROOM_COLS, archivedReadStep, clearEarlierUnread, saveAgentLook, fillAgentLooks, ownRowsReader, withAgentCol, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -2472,6 +2472,7 @@ function Shell({ session }) {
     if (pins) setAgentPins(new Set(pins.map((p) => `${p.org_id}:${p.target_id}`)));
     if (own === null) return;
     setOwnCrews(newerOwn(own));
+    if (V2) { setMyAgents(stampFetched(v2MyAgents(own.rows, uid))); return; } // v2: 내 에이전트 한 행 = 개인 공간의 그 에이전트(옛 개인 행·조직 쌍둥이 행 조회가 v2에서 비어 폰 에이전트 탭이 '없음'이던 결함, 2026-10-22)
     const wsOf = new Map(own.rows.filter((c) => !c.org_id).map((c) => [c.id, c.ws_id]));
     setMyAgents(stampFetched([...withoutCopies(personal ?? []).filter((c) => c.owner_user_id === uid && c.status === 'active').map((c) => ({ ...c, org_id: null, ws_id: c.ws_id ?? wsOf.get(c.id) ?? null })), ...withoutCopies(own.rows).filter((c) => c.org_id)]));
   }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps -- readOwnCrews는 uid로만 바뀐다
