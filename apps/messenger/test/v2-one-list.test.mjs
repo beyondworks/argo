@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { loadOneList, oneListOrgs, oneListView, oneListBump, oneListSeen, oneListSort, oneListTitle, oneListPair, oneListUnread, oneListSpace, ONE_LIST_LIMIT } from '../src/v2/one-list.mjs';
+import { loadOneList, oneListOrgs, oneListView, oneListBump, oneListSeen, oneListSort, oneListTitle, oneListPair, oneListPinOrder, oneListUnread, oneListSpace, ONE_LIST_LIMIT } from '../src/v2/one-list.mjs';
 
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const T1 = 't1', T2 = 't2', ME = 'me';
@@ -105,7 +105,7 @@ test('배선: 폰 v2 아래 탭 4개(대화·에이전트·기억·나), 나 = �
 });
 
 test('배선(분리 검수 반영): 검색은 이름을 붙인 뒤, 옛 조직 에이전트 1:1은 개인 1:1로, 목록 읽기 실패는 다시 시도, 들어간 채널은 한 번 다시 읽기', () => {
-  assert.match(app, /const olShown = oneListView\(olRows\?\.map\(\(r\) => \(\{ \.\.\.r, _title: olName\(r\) \}\)\), \{ filter: olFilter/, '이름 먼저 — 1:1은 방 이름이 비어 있다');
+  assert.match(app, /const olShown = oneListPinOrder\(oneListView\(olRows\?\.map\(\(r\) => \(\{ \.\.\.r, _title: olName\(r\) \}\)\), \{ filter: olFilter/, '이름 먼저 — 1:1은 방 이름이 비어 있다');
   assert.match(app, /const maybeAgentDm = row\.space_kind === 'team' && row\.users === 1 && row\.agents === 1;[^\n]*if \(maybeAgentDm && fn\.redirect\?\.\(row\.room_id, 'list'\)\) return;/);
   assert.match(app, /latestOpen\.current\.redirect = openAgentDmInstead;/);
   assert.match(app, /if \(r\.error\) \{ if \(r\.error\.pro\) setOlPro\(true\); else setOlErr\(true\); return; \}/);
@@ -114,4 +114,31 @@ test('배선(분리 검수 반영): 검색은 이름을 붙인 뒤, 옛 조직 �
   assert.match(app, /const olOrgGated = V2 && \(aiConsent === undefined \? !aiConsentFailOpen : !aiConsented\);/, 'AI 이용 동의 전·조회 중엔 조직 방을 뺀다(9/27)');
   assert.match(app, /const olRows = olOrgGated && ol \? ol\.filter\(\(r\) => r\.space_kind !== 'team'\) : ol;/);
   for (const k of ['olOrgList = oneListOrgs(olRows)', 'olUnreadN = oneListUnread(olRows)']) assert.ok(app.includes(k), `칩·탭 숫자도 거른 행: ${k}`);
+});
+
+test('고정 순서: 고정한 방끼리만 pinPos 순, 순번 없는 고정 방은 뒤(서버 순서 유지), 고정 안 한 방은 그대로', () => {
+  const r = [row({ id: 'p1', pinned: true }), row({ id: 'p2', pinned: true }), row({ id: 'p3', pinned: true }), row({ id: 'x' })];
+  assert.deepEqual(oneListPinOrder(r, new Map([['p3', 0], ['p1', 1]])).map((x) => x.room_id), ['p3', 'p1', 'p2', 'x']);
+  assert.deepEqual(oneListPinOrder(r, new Map()).map((x) => x.room_id), ['p1', 'p2', 'p3', 'x']);
+  assert.equal(oneListPinOrder(null, new Map()), null);
+});
+
+test('배선(#1143 화면 검수 반영): 줄 메뉴는 옛 메뉴 그대로, 조직 메뉴는 구역 머리 밖, 폰은 채널·친구 탭으로 시작하지 않는다', () => {
+  // Important 1 — 줄 메뉴(우클릭·더 보기·길게 누르기)·고정·순서
+  const rows = app.slice(app.indexOf('const olPatch = '), app.indexOf('const olEmpty = '));
+  assert.match(rows, /const base = \(isDm \? dmItemsOf\(c, isPhone\) : chItemsOf\(c\)\)/, '지금 공간의 방은 옛 줄 메뉴 그대로');
+  assert.match(rows, /runInSpace\(space, \(fn\) => fn\.olRowAction\?\.\(row\.room_id, t\(key\)\)\)/, '다른 공간의 방은 그 공간으로 맞춘 뒤 같은 항목');
+  assert.match(rows, /savePrefs\(\[\{ channel_id: row\.room_id, \[key\]: on \}\]\)/, '고정·알림 = msgr_channel_prefs(v2 msgr2_room_pref_set)');
+  for (const k of ['{...olCtx(row, items)}', "{...rowLongPress({ id: row.room_id }, items", '{...olDrag(row)}', 'className="more" onClick={(e) => openCtx(e, items, row.room_id)}']) assert.ok(rows.includes(k), k);
+  assert.match(app, /latestOpen\.current\.olRowAction = \(roomId, label, tries = 0\) => \{[^\n]*if \(!c && tries < 10\) \{ setTimeout\([^\n]*if \(it\) it\.run\(\); else setNote\(t\('ch\.noEdit'\)\);/, '저장본으로 연 공간은 방 목록이 다음 렌더 — 다시 찾는다(실측)');
+  assert.match(app, /const olShown = oneListPinOrder\(oneListView\(/);
+  assert.match(app, /import \{[^\n]*oneListSort[^\n]*\} from '\.\/v2\/one-list\.mjs';/, '고정 바꾸기가 쓰는 정렬을 가져온다(빠지면 앱 전체가 멈췄다 — 클릭 표 실측)');
+  // Important 2 — 조직▾ 메뉴는 summary 밖
+  assert.match(app, /const olOrgPick = isPhone \? olOrgBtn : <span className="msgr-sortwrap msgr-inboxorg">\{olOrgBtn\}<\/span>;/, '머리 칸에는 단추만');
+  assert.match(app, /\{V2 && !isPhone && olOrgMenuEl\}[^\n]*\n\s*\{V2 && !isPhone && \(<RailSection id="onelist"/, '메뉴는 구역 밖(앞)에');
+  assert.match(app, /setNewOrg\(null\); setOrgMenu\(false\); setOlOrgMenu\(false\);/, '조직을 만들면 메뉴를 닫는다');
+  // Important 3 — 시작 탭
+  assert.match(app, /const v2PhonePage = \(p\) => \(V2 && \(p === 'channels' \|\| p === 'friends'\) \? 'chats' : p\);/);
+  assert.match(app, /useState\(\(\) => v2PhonePage\(isPhone && PULL_RESTORE_PAGES/);
+  assert.match(app, /useEffect\(\(\) => \{ if \(V2 && page !== v2PhonePage\(page\)\) setPage\(v2PhonePage\(page\)\); \}, \[page\]\);/);
 });

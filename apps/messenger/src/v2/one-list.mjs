@@ -54,6 +54,14 @@ export function oneListBump(rows, msg, { uid = null, active = null } = {}) {
   return { rows: oneListSort([next, ...rest]), known: true };
 }
 
+/** 고정한 방끼리의 순서(끌기·위로/아래로 — pinPos: Map id→순번). 순번 없는 고정 방은 뒤에, 같으면 서버 순서 그대로. 고정 안 한 방은 그대로 */
+export function oneListPinOrder(rows, pinPos) {
+  if (!rows) return rows;
+  const pin = rows.filter((r) => r.pinned); const rest = rows.filter((r) => !r.pinned);
+  const rank = (r) => pinPos?.get?.(r.room_id) ?? 1e9;
+  return [...pin.map((r, i) => [r, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([r]) => r), ...rest];
+}
+
 /** 방을 열면 그 방 안 읽음 0(서버 읽음 표시는 방 화면이 한다) */
 export const oneListSeen = (rows, roomId) => (rows ?? []).map((r) => (r.room_id === roomId && r.unread ? { ...r, unread: 0 } : r));
 

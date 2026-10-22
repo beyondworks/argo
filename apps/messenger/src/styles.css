@@ -2493,4 +2493,3 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-olorgmenu .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-olorgmenu .msgr-inline { padding: 4px 2px 6px; }
 .msgr-olorgmenu .msgr-av.sm.ghost { width: 20px; height: 20px; }
-.msgr-sortwrap .msgr-olorgmenu { right: -36px; } /* 데스크톱: 단추 오른쪽 끝에 맞추면 220px 메뉴가 레일 왼쪽 밖으로 나갔다 — + 단추 끝까지 */
