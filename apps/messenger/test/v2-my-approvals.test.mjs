@@ -69,7 +69,8 @@ test('App 배선: v2는 결재 목록을 v2 표에서, 채팅 탭 맨 위 카드
   assert.match(load, /if \(V2\) \{ const d = await v2LoadMyApprovals\(supabase, uid\)\.catch\(\(\) => null\); if \(d\) setApprovals\(v2ApprovalItems\(\{ \.\.\.d, uid \}\)\); return; \}/);
   assert.ok(load.indexOf('if (V2)') < load.indexOf("msgr_crew_approvals"), 'v2면 옛 표를 읽지 않는다(옛 경로는 v2 끔에서 그대로)');
   assert.match(app, /if \(v2ApprovalsNeedReload\(works, approvalsRef\.current, uid\)\) approvalsSoon\.current\(\);/, "일 표지가 결재와 관련될 때만 다시 읽기");
-  assert.match(app, /\{rootTab === 'chats' && \(<>\n {10}\{!tabQText\.trim\(\) && approvalItems\.length > 0 && apCard\}/, '채팅 탭 맨 위 — 0건이면 카드 없음');
+  assert.match(app, /\{rootTab === 'chats' && !V2 && \(<>\n {10}\{!tabQText\.trim\(\) && approvalItems\.length > 0 && apCard\}/, '채팅 탭 맨 위 — 0건이면 카드 없음');
+  assert.match(app, /\{rootTab === 'chats' && V2 && \(<>\{\/\*[^\n]*\*\/\}\n {10}\{!tabQText\.trim\(\) && approvalItems\.length > 0 && apCard\}/, 'v2 한 목록 대화 탭도 같은 규칙');
   assert.match(app, /\{rootTab === 'agents' && \(<>\n {10}\{!tabQText\.trim\(\) && apCard\}/, "에이전트 탭은 종전대로(0건이면 '없음'으로 꺼 둔 카드)");
   assert.equal(app.match(/className=\{`ph-apcard\$\{/g)?.length, 1, '카드 모양은 한 곳(apCard)');
   assert.match(app, /const deskAp = V2 && !isPhone && approvalItems\.length > 0;/, '데스크톱 결재 단추는 v2·있을 때만');

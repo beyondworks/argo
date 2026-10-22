@@ -21,7 +21,7 @@ test('레일은 이동만(검색·채널·1:1·내 에이전트): 멤버·친구
   assert.doesNotMatch(app, /t\('rail\.members'\)|msgr-railhint/, '레일에 멤버 절·안내문 없음(유건 지적: 복잡)');
   // 친구 절은 개인 공간에만(유건 2026-09-17 카톡식: 개인 홈=친구, 채팅 탭=채팅) — 조직 레일에는 여전히 없다
   assert.equal((app.match(/t\('rail\.friends'\)/g) || []).length, 1, '친구 절은 한 곳');
-  assert.match(app, /\{isPersonal && !dmTab && \(<RailSection id="friends" label=\{`\$\{t\('rail\.friends'\)\}/, '친구 절은 개인 공간 홈에서만');
+  assert.match(app, /\{!\(V2 && !isPhone\) && isPersonal && !dmTab && \(<RailSection id="friends" label=\{`\$\{t\('rail\.friends'\)\}/, '친구 절은 개인 공간 홈에서만(v2 데스크톱은 한 목록 — 새 대화 > 사람과 1:1이 친구 입구, 메신저 단순화 2단계)');
   assert.match(app, /const railArgo = myCrews\.filter\(\(c\) => sourceOf\(c\) === 'argo'\); const railExt = myCrews\.filter\(\(c\) => sourceOf\(c\) !== 'argo'\);/, '평평한 목록 + 외부만 소제목(유건 결정)'); assert.doesNotMatch(app, /folderHead\(|msgr-folderpick|rail\.folder\.none/, '그룹 UI 없음'); assert.doesNotMatch(app.slice(app.indexOf('const railRow'), app.indexOf('const railArgo')), /msgr-klabel src/, '행에 출처 글자 없음');
   assert.match(app, /\['friends', 'set\.tab\.friends'\]/, '설정 친구 탭'); assert.match(app, /\{tab === 'friends' && !gated && <FriendsCard/, '친구 카드는 친구 탭(동의 게이트 중엔 예외 — App Store 5.1.2 재검수 M-5, 2026-09-27)');
   assert.match(i18n, /'set\.tab\.friends': \['[^']+', '[^']+'\]/);

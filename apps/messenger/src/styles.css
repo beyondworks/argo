@@ -2484,3 +2484,41 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-v2-invites .row { display: flex; align-items: center; gap: 8px; } /* 초대함(v2/InvitesCard.jsx) — 기기 카드와 같은 줄 모양 */
 .msgr-v2-invites .row.dim { opacity: .6; } /* 만료된 초대(서버가 다음 다시 읽기 때 뺀다) */
 .msgr-v2-invites .msgr-rows .row .msgr-v2-dev .sub { font-size: 12px; color: var(--fg-3); overflow-wrap: anywhere; white-space: normal; overflow: visible; text-overflow: clip; }
+/* 한 목록(메신저 단순화 2단계 2026-10-22): 조직 거르개 단추·메뉴 — 레일 구역 머리의 다른 아이콘 단추와 같은 낮은 무게 */
+.msgr-inboxorgbtn { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 6px; border: 0; border-radius: 8px; background: none; color: var(--fg-3); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.msgr-inboxorgbtn.active { color: var(--fg); font-weight: 600; background: var(--secondary); }
+@media (hover: hover) { .msgr-inboxorgbtn:hover { background: var(--card-2); } } .msgr-inboxorgbtn:active { background: var(--card-2); }
+.msgr-olorgmenu, .msgr-sortwrap .msgr-olorgmenu { z-index: 73; min-width: 220px; max-width: 280px; } /* .msgr-sortwrap .msgr-rowmenu(min 130)보다 앞서게 — 코드 입력 칸이 들어간다 */
+.msgr-olorgmenu .sep { height: 1px; background: var(--border-soft); margin: 4px 6px; }
+.msgr-olorgmenu .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-olorgmenu .msgr-inline { padding: 4px 2px 6px; }
+.msgr-olorgmenu .msgr-av.sm.ghost { width: 20px; height: 20px; }
+/* v2 데스크톱 레일 위쪽(유건 2026-10-22 19:0x — Slack·Telegram 배치): 범위 카드(옛 조직 카드 모양) → 검색 + 새 대화 → 칩 → 목록. 색은 기존 토큰 그대로 */
+.msgr-scopewrap { position: relative; }
+.msgr-av.msgr-scopeall { border-radius: 9px; width: 30px; height: 30px; display: grid; place-items: center; background: var(--card-2); color: var(--fg-2); border: 1px solid var(--border-soft); flex: none; }
+.msgr-av.msgr-scopeall.sm { width: 22px; height: 22px; border-radius: 7px; }
+.msgr-scopepop button:not(.btn) { min-height: 36px; padding: 0 8px; }
+.msgr-scopepop .msgr-badge { margin-left: auto; }
+.msgr-searchrow { position: relative; display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; } /* 왼쪽·오른쪽 끝 = 범위 카드 끝(한 시작선) */
+.msgr-searchrow .msgr-search, .msgr-side .msgr-searchrow .msgr-search { flex: 1; min-width: 0; margin: 0; height: 36px; padding: 0 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-sizing: border-box; } /* 범위 카드(.msgr-org)와 같은 면·경계 — 레일 배경 위에 글자만 떠 보였다(규칙집 2-11) */
+.msgr-newbtn { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg-2); cursor: pointer; box-sizing: border-box; } /* 검색칸과 같은 높이·면·반경의 정사각 */
+@media (hover: hover) { .msgr-newbtn:hover { color: var(--fg); background: var(--card-2); } } .msgr-newbtn:active, .msgr-newbtn[aria-expanded='true'] { color: var(--fg); background: var(--card-2); } /* 범위 카드(.msgr-org:hover)와 같은 눌림 */
+.msgr-newtalkpop { top: calc(100% + 6px); padding: 0; gap: 0; overflow: hidden; }
+.msgr-newtalkpop .head { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--border-soft); }
+.msgr-newtalkpop .head strong { font-size: 13.5px; white-space: nowrap; }
+.msgr-newtalkpop .head .msgr-klabel { flex: 1; }
+.msgr-newtalkpop .peek { padding: 6px; max-height: min(60vh, 420px); overflow-y: auto; }
+.msgr-newtalkpop .msgr-addmenu { padding: 0; background: none; }
+.msgr-newtalkpop .note { margin: 6px 8px 4px; font-size: 12px; color: var(--fg-3); }
+.msgr-inboxseg, .msgr-seg[role='radiogroup'].msgr-inboxseg { display: flex; margin: 8px 0 6px; padding: 2px; } /* 트랙 32 = 알약 28 + 안쪽 2 */
+.msgr-inboxseg > button { flex: 1 1 0; min-width: 0; justify-content: center; padding: 0 8px; }
+.msgr-onelist { padding-top: 2px; }
+.msgr-onelist > .msgr-list { padding: 0; } /* 줄 바탕의 왼쪽·오른쪽 끝도 같은 시작선 */
+.msgr-newtalkpop .head > button.msgr-titlebtn { width: 32px; height: 32px; flex: none; padding: 0; justify-content: center; border-radius: 10px; } /* 팝오버 공용 규칙(.msgr-menu-pop button 폭 100%)이 머리 단추까지 늘렸다 */
+.msgr-newtalkpop .head > button.msgr-titlebtn:last-child { margin-left: auto; } /* 닫기는 머리 오른쪽 끝 */
+/* v2 폰 한 목록(유건 2026-10-22 "모바일 화면은 어때?" 검토, 색 토큰은 그대로 — 모양만 기존 부품에 맞춤) */
+@media (max-width: 760px) {
+  .msgr-phone .ph-ol .ph-krow .msgr-av.kk:not(.crew):not(.face) { border-radius: 16px; background: var(--card-2); border: 1px solid var(--border-soft); color: var(--fg-2); } /* 사진 없는 사람·그룹 글자 칸 = 채널 칸(.ph-chav)과 같은 면·경계·반경 — 줄마다 모양이 달랐다 */
+  .msgr-phone .ph-ol .ph-kl2 { align-items: center; } .msgr-phone .ph-ol .ph-kbadges { align-self: center; padding-top: 0; } /* 배지와 미리보기 글자의 세로 중앙을 맞춘다(실측 1.6px 아래였다) */
+  .msgr-phone .ph-root.ph-v2 .ph-apcard.on { border-color: var(--border); } /* 결재 있음 카드도 다른 카드와 같은 얇은 경계 — 라이트 진한·다크 흰 테두리(규칙집 2-1·1-6). 결재 있음은 아이콘 칸이 말한다 */
+}

@@ -116,6 +116,7 @@ test('UL9 성공 안내가 오면 앞 오류 토스트를 지운다 — 같은 �
 
 // 화면 검수 UL10(2026-10-05): 에이전트 0명 구역(UXM-08)에도 정렬 단추가 남았다 — 정렬할 것이 없으면 숨긴다.
 test('UL10 데스크톱 에이전트 구역 — 보이는 에이전트가 0명이면 정렬 단추를 그리지 않는다', () => {
-  const sec = app.slice(app.indexOf('<RailSection id="mine"'), app.indexOf('<div className="msgr-list mine">'));
+  const old = app.indexOf('{!(V2 && !isPhone) && railView.section && (<RailSection id="mine"'); // 옛 셸·폰 구역(v2 데스크톱은 내 에이전트 명단 olAgentsSection — 정렬 단추 없음)
+  const sec = app.slice(old, app.indexOf('<div className="msgr-list mine">', old));
   assert.match(sec, /right=\{<span className="right">\{railVisible\.length > 0 && <span className="msgr-sortwrap msgr-railsort">/);
 });

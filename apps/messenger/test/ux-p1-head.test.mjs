@@ -36,9 +36,13 @@ test('알림·기억 표지: 꺼졌을 때만 머리에(눌러서 다시 켬), �
 });
 
 test('폰 채팅 탭 머리: 검색·새 대화만(새 대화는 폰에서 그룹 대화를 만드는 유일한 입구), 설정은 친구·에이전트 탭 머리에', () => {
-  const chats = app.slice(app.indexOf("{rootTab === 'chats' && (<PhoneHead"), app.indexOf("{rootTab === 'channels' && (<PhoneHead"));
+  const chats = app.slice(app.indexOf("{rootTab === 'chats' && !V2 && (<PhoneHead"), app.indexOf("{rootTab === 'chats' && V2 && (<PhoneHead"));
   assert.ok(chats.length > 50);
   assert.ok(chats.includes('searchAct') && chats.includes("key: 'new', icon: 'chatplus'") && chats.includes('setDmGroup(true)'));
   assert.ok(!chats.includes('gearAct'), '채팅 탭에는 톱니가 없다');
+  // v2 한 목록(메신저 단순화 2단계): 대화 탭 머리도 검색·새 대화만 — 새 대화는 단추 하나(NewTalkSheet: 사람·에이전트 1:1·여러 명 방·조직 채널)
+  const talk = app.slice(app.indexOf("{rootTab === 'chats' && V2 && (<PhoneHead"), app.indexOf("{rootTab === 'channels' && (<PhoneHead"));
+  assert.ok(talk.includes('searchAct') && talk.includes("key: 'new', icon: 'chatplus'") && talk.includes('setOlNew(true)'));
+  assert.ok(!talk.includes('gearAct'), '대화 탭에도 톱니가 없다(설정은 아래 탭 나)');
   assert.match(app, /\{rootTab === 'friends' && \(<PhoneHead[^\n]*gearAct\]\} \/>\)\}/, '친구 탭 톱니는 그대로');
 });
