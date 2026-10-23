@@ -154,6 +154,11 @@ const WS_LEDGER_FILES = new Set([
   'usage.jsonl',  // 사용액 원장(청구 근거) — appendUsage가 서버측에서 쓴다
   'events.jsonl', // 활동 원장 — 사장이 보는 활동 화면의 근거(events.mjs)
 ]);
+/* 원장 조각(ledger.mjs — `events.<기기>.<YYYY-MM>.jsonl`·`usage.…`, ARGO_LEDGER_SPLIT=1)도 같은 원장이다. 정확한 이름 목록만 보면 조각 쓰기가
+   열려 청구·월 예산 근거를 크루가 고칠 수 있다. 판정은 조각 정규식보다 넓게 — `events.`·`usage.`로 시작해 `.jsonl`로 끝나면 원장으로 본다
+   (리더가 읽지 않는 변종 이름도 막는 쪽이 안전하다). `myevents.jsonl`·`events-notes.md`·`events.json`은 원장이 아니다. 입력은 normName(소문자) 뒤. */
+const LEDGER_NAME_RE = /^(events|usage)\.(.+\.)?jsonl$/;
+const isLedgerName = (n) => WS_LEDGER_FILES.has(n) || LEDGER_NAME_RE.test(n);
 /* 크루 카드 = 그 크루의 시스템 프롬프트이자 러너·모델·범위(skills/mcp) 선언이다. update_profile 도구는
    자기 프로필 변경조차 사장 결재로 올리는데(chat.mjs), 파일 직접 쓰기는 그 결재를 통째로 건너뛴다 —
    자기 범위 확대와 동료 카드 오염이 결재 없이 가능해진다. 카드 내용은 이미 시스템 프롬프트로,
@@ -351,11 +356,30 @@ function globToRe(seg) {
 }
 const GUARDED_DOT = [...BASH_GUARDED.filter((n) => n.startsWith('.')), '.assistant']; // .assistant는 글자 대조에선 경계 규칙(BASH_DOT_DIR_RE)이지만 글롭 대조에는 이름으로 넣는다(`.assist*`)
 const GLOB_PROBES = GUARDED_DOT.flatMap((n) => [n, `${n}x`, `${n}-x.json`, `${n}.json`]);
+/* 원장 조각 이름(isLedgerName 주석)의 셸 대조. 셸은 원장을 읽기·쓰기 구분 없이 이름만 나와도 막는다(옛 두 이름과 같다 — BASH_GUARDED).
+   ① 글자: `events.<무엇>.jsonl`·`usage.<무엇>.jsonl`. 앞이 이름 글자면 다른 이름(`myevents.x.jsonl`은 옛 부분 문자열 대조가 따로 본다).
+   ② 글롭: `rm usage.*.jsonl`·`cat events*`처럼 원장과 맞을 수 있는 조각. 크루 셸의 기본 위치는 회사 폴더라 **회사 폴더 바로 아래를 가리킬 수 있는
+      단어**만 본다 — 경로가 없는 단어, `./`, 절대·`~`·`$`·`..` 경로(어디를 가리킬지 모른다)의 마지막 조각. `data/*.jsonl`처럼 하위 폴더 상대 경로는
+      원장일 수 없어 보지 않는다(과잉 차단 방지). 글자가 하나도 없는 글롭(`*`·`*.*`·`?`)은 보지 않는다 — 회사 폴더 통째 지우기는 머리말의 셸 한계와 같은 범위다. */
+const BASH_LEDGER_RE = /(?<![A-Za-z0-9_-])(events|usage)\.([^\s/\\'"]*\.)?jsonl(?![A-Za-z0-9_-])/i;
+const LEDGER_PROBES = ['events.jsonl', 'usage.jsonl', 'events.host-1a2b3c4d.2026-10.jsonl', 'usage.host-1a2b3c4d.2026-10.jsonl'];
+const ledgerGlobHit = (w) => {
+  const segs = w.split(/[\\/]/);
+  const last = segs[segs.length - 1];
+  const relSub = !/^([\\/]|~|\$)/.test(w) && !segs.includes('..') && segs.filter((x) => x && x !== '.').length > 1;
+  if (relSub || !/[*?[]/.test(last) || !/[a-z]/i.test(last.replace(/\[[^\]]*\]/g, ''))) return false;
+  // 글롭 앞 글자가 `events.`·`usage.`로 시작하거나 그 앞부분이면 거절 — 기기 조각 이름은 정해져 있지 않아(`usage.d*` → `usage.dev-…`) 견본 대조만으로는 놓친다
+  const lit = fold(last.slice(0, last.search(/[*?[]/)));
+  if (lit.length >= 2 && ['events.', 'usage.'].some((k) => lit.startsWith(k) || k.startsWith(lit))) return true;
+  const re = globToRe(last);
+  return LEDGER_PROBES.some((p) => re.test(p));
+};
 export function shellNamesGuarded(cmd) {
   const plain = unquote(String(cmd ?? ''));
   const words = plain.split(SHELL_SEP).filter(Boolean).flatMap((w) => expandBraces(w));
-  const literalHit = (t) => BASH_GUARDED.some((n) => fold(t).includes(fold(n))) || BASH_DIR_RE.test(` ${t}`) || BASH_DOT_DIR_RE.test(t);
+  const literalHit = (t) => BASH_GUARDED.some((n) => fold(t).includes(fold(n))) || BASH_DIR_RE.test(` ${t}`) || BASH_DOT_DIR_RE.test(t) || BASH_LEDGER_RE.test(t);
   if (literalHit(plain) || words.some(literalHit)) return true;
+  if (words.some(ledgerGlobHit)) return true;
   for (const w of words) {
     for (const seg of w.split('/')) {
       if (!seg.startsWith('.') || !/[*?[]/.test(seg)) continue;
@@ -372,7 +396,7 @@ export function shellNamesGuarded(cmd) {
 
 /** p가 금지 구역인가 — 판정 전 자기 워크스페이스 안(inWorkspace)이 먼저 통과됐다는 전제의 2차 검사.
     canonical(실경로) 기준 — 심링크로 금지 구역을 우회하지 못한다.
-    mode='write'면 원장(usage/events.jsonl)까지 금지에 포함한다 — 읽기는 열려 있다(WS_LEDGER_FILES).
+    mode='write'면 원장(usage/events.jsonl과 그 조각 — isLedgerName)까지 금지에 포함한다 — 읽기는 열려 있다(WS_LEDGER_FILES).
     mode='sweep'(Grep/Glob 재귀 **루트** 판정)은 읽기 금지에 더해 보호 구역의 **조상**까지 금지한다 —
     검색은 루트 아래를 재귀하므로 루트가 조상이기만 해도 하드 구역 내용이 결과로 흘러나온다(아래 주석).
     (export: 회귀 테스트용) */
@@ -460,7 +484,7 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
       const head = normName(rel[0]); // 후행 점·공백·ADS·대소문자 손질 후 비교
       if (WS_CONTROL_DIRS.has(head)) return true; // agents/** — 크루 카드는 하위까지 전부
       if (rel.length !== 1) return false;
-      return WS_CONTROL_FILES.has(head) || (mode === 'write' && WS_LEDGER_FILES.has(head));
+      return WS_CONTROL_FILES.has(head) || (mode === 'write' && isLedgerName(head));
     }
     // 하드 구역은 **렉시컬(abs)과 canonical(real) 둘 다** fail-closed로 본다(2026-07-30).
     // canonical만 보면 "보호 구역 안에 있으면서 밖을 가리키는 심링크"를 놓친다 — 실제로 조달이 만드는
@@ -639,7 +663,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 구분자(또는 ~) 동반 값은 키와 무관하게 전체 판정을 탄다.
       if (!vv.includes('/') && !vv.includes('\\') && !vv.startsWith('~')) {
         const n = normName(vv);
-        const valueHit = n.startsWith('.') || WS_CONTROL_FILES.has(n) || WS_LEDGER_FILES.has(n);
+        const valueHit = n.startsWith('.') || WS_CONTROL_FILES.has(n) || isLedgerName(n);
         if (!valueHit && !PATHY_KEY_RE.test(String(k))) continue;
       }
       if (await isForbidden(vv, 'write')) return true; // 인자는 쓰기일 수 있다 — 넓은 쪽으로 판정
