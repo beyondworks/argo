@@ -7,6 +7,7 @@
 -- F4 Pro가 끝난 계정: Pro일 때 등록한 기기(기기 갱신은 Pro를 보지 않는다 — 갑자기 끊기지 않게)로 옛 글에 첨부를 계속 올릴 수 있었다.
 --    msgr2_attachment_add와 _msgr2_storage_write의 사람 갈래에 _msgr2_pro_ok(auth.uid())를 더한다(관문 스위치 msgr2_pro_gate=off면 통과 — 종전 판정과 같음).
 --    본문은 직전 정의(20261020200200·20261020200800) 그대로이고 그 한 줄만 다르다. 에이전트(본체 기기) 갈래·읽기는 바꾸지 않는다.
+-- c(이름 없는 옛 봇 재생성 막기): 맨 아래 _msgr2_bf_agents 절.
 -- 되돌림: scripts/rollback/20261023180000_msgr2_seat_keep_pro_attach.down.sql · 시험: test/msgr2-seat-keep-pro-attach-pg.test.mjs
 
 create or replace function public.msgr2_seat_ensure(p_agent uuid, p_space uuid) returns text
@@ -78,3 +79,30 @@ begin
 end $$;
 revoke all on function public._msgr2_storage_write(text) from public, anon, authenticated;
 grant execute on function public._msgr2_storage_write(text) to authenticated;
+
+-- c 이름 없는 옛 봇이 백필로 다시 생기지 않게(유건 사용 검수 2026-10-23 "정체모를 이상한 이름의 봇들이 너무 많은데").
+--    10/16에 지운 VPS 봇(msgr_bot_create — slug 'bot-'+16진 12자)의 자리(msgr_crews)는 없고 msgr_agents 행만 남아, 백필 1단계가 "이름 = slug, active"로 옮겼다
+--    (맥 one 운영 읽기: 유건 계정 45개, 자리·일·글 0). 운영 행 삭제는 맥 one이 따로 한다. 백필은 msgr2_backfill_run·restart(service_role)로 다시 돌 수 있으므로,
+--    다시 돌아도 같은 행을 되살리지 않게 _msgr2_bf_agents가 **자리가 하나도 없는 'bot-'+12자 행만** 건너뛴다. 자리가 없는 보통 에이전트(검수 #1084)는 종전대로 옮긴다.
+--    본문은 20261020200700 그대로이고 where 한 줄만 다르다. 이미 옮긴 msgr2_agents 행은 바꾸지 않는다(지우지 않는다).
+create or replace function public._msgr2_bf_agents(p_after text, p_limit int, out written bigint, out next text, out done boolean)
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare n bigint;
+begin
+  select count(*) into n from public.msgr_crews where agent_id is null;
+  if n > 0 then raise exception 'msgr2_backfill_agent_ids_missing: % crews', n using errcode = '55000', hint = '먼저 select public.msgr_agents_backfill() (런북 2단계)'; end if;
+  select count(*) into n from public.msgr2_agents v join public.msgr_agents a on (a.owner_user_id, a.ws_id, a.slug) = (v.owner_user_id, v.ws_id, v.slug) where a.id <> v.id;
+  if n > 0 then raise exception 'msgr2_backfill_agent_id_conflict: % agents', n using errcode = '55000', hint = 'v2 agent.sync가 옛 에이전트와 다른 id로 먼저 등록했다(런북 함정 1)'; end if;
+  insert into public.msgr2_agents as t (id, owner_user_id, ws_id, slug, display_name, role_text, face, hosting, status, created_at)
+  select a.id, a.owner_user_id, a.ws_id, a.slug, left(coalesce(rep.display_name, a.slug), 80), left(coalesce(rep.role_text, ''), 200), rep.face,
+         case when coalesce(bool_and_bot.all_bot, false) then 'bot' else 'local' end, case when rep.status = 'paused' then 'paused' else 'active' end, a.created_at
+    from public.msgr_agents a
+    left join lateral (select c.* from public.msgr_crews c where c.agent_id = a.id order by (c.org_id is null) desc, c.registered_at desc, c.id limit 1) rep on true
+    left join lateral (select bool_and(c.hosting = 'bot') as all_bot from public.msgr_crews c where c.agent_id = a.id) bool_and_bot on true
+   where a.slug !~ '^bot-[0-9a-f]{12}$' or exists (select 1 from public.msgr_crews c where c.agent_id = a.id) -- 자리를 지운 옛 VPS 봇(msgr_bot_create 'bot-'+12자)은 옮기지 않는다(20261023180000)
+  on conflict (id) do update set display_name = excluded.display_name, role_text = excluded.role_text, face = excluded.face,
+    hosting = excluded.hosting, status = excluded.status, updated_at = now()
+  where (t.display_name, t.role_text, t.face, t.hosting, t.status) is distinct from (excluded.display_name, excluded.role_text, excluded.face, excluded.hosting, excluded.status);
+  get diagnostics written = row_count;
+  done := true;
+end $$;

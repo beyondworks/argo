@@ -1,5 +1,5 @@
 -- 되돌림: supabase/migrations/20261023180000_msgr2_seat_keep_pro_attach.sql을 걷어 낸다(마이그레이션이 아니다 — 바로 실행하는 파일).
--- 하는 일: msgr2_seat_ensure를 지우고, msgr2_attachment_add·_msgr2_storage_write를 직전 본문(20261020200200·20261020200800)으로 되돌린다. 표·행은 바꾸지 않았다.
+-- 하는 일: msgr2_seat_ensure를 지우고, msgr2_attachment_add·_msgr2_storage_write·_msgr2_bf_agents를 직전 본문(20261020200200·20261020200800·20261020200700)으로 되돌린다. 표·행은 바꾸지 않았다.
 -- 앱이 msgr2_seat_ensure를 쓰기 시작한 뒤라면 되돌림 뒤 방에 넣기가 함수 없음으로 실패한다 — 앱을 먼저 되돌리거나 함께 되돌린다.
 -- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261023180000_msgr2_seat_keep_pro_attach.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
@@ -49,4 +49,24 @@ begin
 end $$;
 revoke all on function public._msgr2_storage_write(text) from public, anon, authenticated;
 grant execute on function public._msgr2_storage_write(text) to authenticated;
+create or replace function public._msgr2_bf_agents(p_after text, p_limit int, out written bigint, out next text, out done boolean)
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare n bigint;
+begin
+  select count(*) into n from public.msgr_crews where agent_id is null;
+  if n > 0 then raise exception 'msgr2_backfill_agent_ids_missing: % crews', n using errcode = '55000', hint = '먼저 select public.msgr_agents_backfill() (런북 2단계)'; end if;
+  select count(*) into n from public.msgr2_agents v join public.msgr_agents a on (a.owner_user_id, a.ws_id, a.slug) = (v.owner_user_id, v.ws_id, v.slug) where a.id <> v.id;
+  if n > 0 then raise exception 'msgr2_backfill_agent_id_conflict: % agents', n using errcode = '55000', hint = 'v2 agent.sync가 옛 에이전트와 다른 id로 먼저 등록했다(런북 함정 1)'; end if;
+  insert into public.msgr2_agents as t (id, owner_user_id, ws_id, slug, display_name, role_text, face, hosting, status, created_at)
+  select a.id, a.owner_user_id, a.ws_id, a.slug, left(coalesce(rep.display_name, a.slug), 80), left(coalesce(rep.role_text, ''), 200), rep.face,
+         case when coalesce(bool_and_bot.all_bot, false) then 'bot' else 'local' end, case when rep.status = 'paused' then 'paused' else 'active' end, a.created_at
+    from public.msgr_agents a
+    left join lateral (select c.* from public.msgr_crews c where c.agent_id = a.id order by (c.org_id is null) desc, c.registered_at desc, c.id limit 1) rep on true
+    left join lateral (select bool_and(c.hosting = 'bot') as all_bot from public.msgr_crews c where c.agent_id = a.id) bool_and_bot on true
+  on conflict (id) do update set display_name = excluded.display_name, role_text = excluded.role_text, face = excluded.face,
+    hosting = excluded.hosting, status = excluded.status, updated_at = now()
+  where (t.display_name, t.role_text, t.face, t.hosting, t.status) is distinct from (excluded.display_name, excluded.role_text, excluded.face, excluded.hosting, excluded.status);
+  get diagnostics written = row_count;
+  done := true;
+end $$;
 commit;
