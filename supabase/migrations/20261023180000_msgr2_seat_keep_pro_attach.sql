@@ -268,7 +268,9 @@ begin
     posts := coalesce(d->'posts', '[]'::jsonb); np := jsonb_array_length(posts);
     if (np > 0 and w.kind <> 'meeting') or (w.kind = 'meeting' and jsonb_array_length(d->'handoffs') > 0)
        or (np > 0 and (np > cardinality(w.meeting_agents) * w.meeting_rounds
-                       or exists (select 1 from jsonb_array_elements(posts) p where not ((p->>'agent')::uuid = any (w.meeting_agents)) or (p->>'round')::int > w.meeting_rounds))) then
+                       or exists (select 1 from jsonb_array_elements(posts) p where not ((p->>'agent')::uuid = any (w.meeting_agents)) or (p->>'round')::int > w.meeting_rounds)
+                       or exists (select 1 from jsonb_array_elements(posts) p where not exists ( -- S1: 글쓴이는 이 본체 주인의 에이전트만
+                                    select 1 from public.msgr2_agents g where g.id = (p->>'agent')::uuid and g.owner_user_id = uid)))) then
       return public._msgr2_rej('post_denied');
     end if;
     select coalesce(array_agg((f #>> '{}')::uuid), '{}') into slots from jsonb_array_elements(d->'files') f;
@@ -736,4 +738,63 @@ begin
 end $$;
 revoke all on function public.msgr2_message_delete(bigint) from public, anon;
 grant execute on function public.msgr2_message_delete(bigint) to authenticated;
+
+-- ── S1·S3(재공개 전 검수 ① 보안, 우선순위 마지막) ──────────────────────────────────────────
+-- S1 사람 채팅 켬: 친구가 내 회의방에 자기 에이전트를 넣고 내가 둘 다 멘션하면, 회의 일이 내 본체로 가고 posts에 친구 에이전트를 글쓴이로 보내도 통과했다.
+--    처방 두 겹: 회의 참가자를 대표(첫 참가자)와 같은 주인의 에이전트로 거른다(_msgr2_user_offers, 본문은 20261020201500 그대로 + 두 줄),
+--    msgr2_link_send work.result posts의 글쓴이가 이 본체 주인의 에이전트인지 본다(위 link_send 본문). 같은 주인의 회의는 종전대로.
+-- S3 v2 팀에서 내보낸(또는 나간) 사람이 같은 id의 옛 조직 멤버 행(removed_at null)으로 옛 조직 문서(msgr_org_docs — v2도 쓰는 표)·옛 채널을 계속 읽었다.
+--    처방: _msgr2_space_drop이 옛 멤버 행도 닫는다(본문은 20261020200600 그대로 + 세 줄). 옛 표가 없는 DB(v2만)에서는 건너뛴다.
+--    손님 기한 끝(expires_at)은 시각으로 끝나 이 함수를 지나지 않는다 — 옛 판정도 expires_at을 보는지는 별도 확인(미룸).
+-- 부하: 사람 글 1개당 회의 참가자 주인 비교(최대 5행), 공간에서 빠질 때 옛 행 1행 고치기.
+create or replace function public._msgr2_user_offers(m public.msgr2_messages) returns int
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare ag uuid; targets uuid[]; v_meeting boolean; parts uuid[]; k int := 0; w uuid;
+begin
+  if m.deleted_at is not null or m.author_kind <> 'user' then return 0; end if;
+  select r.meeting into v_meeting from public.msgr2_rooms r where r.id = m.room_id;
+  if coalesce(v_meeting, false) then
+    select array_agg(q.member_id order by q.added_at, q.member_id) into parts from (
+      select mm.member_id, mm.added_at from public.msgr2_room_members mm join public.msgr2_agents g on g.id = mm.member_id and g.status = 'active' and g.hosting = 'local'
+       where mm.room_id = m.room_id and mm.member_kind = 'agent' and mm.removed_at is null
+         and (cardinality(m.mentions) = 0 or mm.member_id = any (m.mentions))
+       order by mm.added_at, mm.member_id limit public._msgr2_clamp('msgr2_meeting_agents', 5, 5)) q;
+    if cardinality(parts) > 0 then -- S1: 참가자는 대표(첫 참가자)와 같은 주인의 에이전트만 — 대표 주인의 본체가 남의 에이전트 이름으로 글을 쓰지 않게
+      parts := array(select x from unnest(parts) with ordinality u(x, o)
+                      where (select g.owner_user_id from public.msgr2_agents g where g.id = x) = (select g.owner_user_id from public.msgr2_agents g where g.id = parts[1]) order by o);
+      w := public._msgr2_make_offer_x(m.room_id, m.topic_id, parts[1], 'user', m.author_user_id, m.author_user_id, m.body, m.id, null, 0, parts);
+      if w is not null then k := 1; end if;
+    end if;
+    return k;
+  end if;
+  if cardinality(m.mentions) > 0 then
+    select array_agg(distinct mm.member_id) into targets from public.msgr2_room_members mm
+      where mm.room_id = m.room_id and mm.member_kind = 'agent' and mm.removed_at is null and mm.member_id = any (m.mentions);
+  elsif (select count(*) from public.msgr2_room_members mm where mm.room_id = m.room_id and mm.member_kind = 'user' and mm.removed_at is null and mm.member_id <> m.author_user_id) = 0
+        and (select count(*) from public.msgr2_room_members mm where mm.room_id = m.room_id and mm.member_kind = 'agent' and mm.removed_at is null) = 1 then
+    select array_agg(mm.member_id) into targets from public.msgr2_room_members mm where mm.room_id = m.room_id and mm.member_kind = 'agent' and mm.removed_at is null;
+  end if;
+  foreach ag in array coalesce(targets, '{}') loop
+    w := public._msgr2_make_offer(m.room_id, m.topic_id, ag, 'user', m.author_user_id, m.author_user_id, m.body, m.id, null, 0);
+    if w is not null then k := k + 1; end if;
+  end loop;
+  return k;
+end $$;
+
+create or replace function public._msgr2_space_drop(p_space uuid, p_uid uuid) returns void
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare prev text;
+begin
+  update public.msgr2_space_members set removed_at = now() where space_id = p_space and user_id = p_uid and removed_at is null;
+  if to_regclass('public.msgr_org_members') is not null then -- S3: 같은 id의 옛 조직 멤버 행도 닫는다(옛 문서·옛 채널 판정이 이 행을 본다)
+    prev := current_setting('argo.msgr_account_delete', true);
+    -- 스스로 나갈 때: 옛 보호 트리거(msgr_member_self_guard)가 본인에게 허용하는 전이는 이 표지가 있을 때 "본인 행 removed_at null → 값"뿐이다(msgr_delete_me와 같은 길).
+    -- 이 한 줄 동안만 켜고 되돌린다. 역할·기한 바꾸기는 표지가 있어도 막힌다(그 트리거 첫 줄).
+    perform set_config('argo.msgr_account_delete', '1', true);
+    update public.msgr_org_members set removed_at = now() where org_id = p_space and user_id = p_uid and removed_at is null;
+    perform set_config('argo.msgr_account_delete', coalesce(prev, ''), true);
+  end if;
+  perform public._msgr2_space_close(p_space, p_uid);
+  perform public._msgr2_send_u(p_uid, 'spaces', jsonb_build_object('space_id', p_space, 'removed', true));
+end $$;
 

@@ -454,4 +454,45 @@ drop function if exists public.msgr2_room_set(uuid, text, boolean, boolean);
 drop function if exists public.msgr2_space_display_name_set(uuid, text);
 drop function if exists public.msgr2_message_edit(bigint, text);
 drop function if exists public.msgr2_message_delete(bigint);
+-- S1·S3: 직전 본문(20261020201500·20261020200600)으로
+create or replace function public._msgr2_user_offers(m public.msgr2_messages) returns int
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare ag uuid; targets uuid[]; v_meeting boolean; parts uuid[]; k int := 0; w uuid;
+begin
+  if m.deleted_at is not null or m.author_kind <> 'user' then return 0; end if;
+  select r.meeting into v_meeting from public.msgr2_rooms r where r.id = m.room_id;
+  if coalesce(v_meeting, false) then
+    select array_agg(q.member_id order by q.added_at, q.member_id) into parts from (
+      select mm.member_id, mm.added_at from public.msgr2_room_members mm join public.msgr2_agents g on g.id = mm.member_id and g.status = 'active' and g.hosting = 'local'
+       where mm.room_id = m.room_id and mm.member_kind = 'agent' and mm.removed_at is null
+         and (cardinality(m.mentions) = 0 or mm.member_id = any (m.mentions))
+       order by mm.added_at, mm.member_id limit public._msgr2_clamp('msgr2_meeting_agents', 5, 5)) q;
+    if cardinality(parts) > 0 then
+      w := public._msgr2_make_offer_x(m.room_id, m.topic_id, parts[1], 'user', m.author_user_id, m.author_user_id, m.body, m.id, null, 0, parts);
+      if w is not null then k := 1; end if;
+    end if;
+    return k;
+  end if;
+  if cardinality(m.mentions) > 0 then
+    select array_agg(distinct mm.member_id) into targets from public.msgr2_room_members mm
+      where mm.room_id = m.room_id and mm.member_kind = 'agent' and mm.removed_at is null and mm.member_id = any (m.mentions);
+  elsif (select count(*) from public.msgr2_room_members mm where mm.room_id = m.room_id and mm.member_kind = 'user' and mm.removed_at is null and mm.member_id <> m.author_user_id) = 0
+        and (select count(*) from public.msgr2_room_members mm where mm.room_id = m.room_id and mm.member_kind = 'agent' and mm.removed_at is null) = 1 then
+    select array_agg(mm.member_id) into targets from public.msgr2_room_members mm where mm.room_id = m.room_id and mm.member_kind = 'agent' and mm.removed_at is null;
+  end if;
+  foreach ag in array coalesce(targets, '{}') loop
+    w := public._msgr2_make_offer(m.room_id, m.topic_id, ag, 'user', m.author_user_id, m.author_user_id, m.body, m.id, null, 0);
+    if w is not null then k := k + 1; end if;
+  end loop;
+  return k;
+end $$;
+
+create or replace function public._msgr2_space_drop(p_space uuid, p_uid uuid) returns void
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+begin
+  update public.msgr2_space_members set removed_at = now() where space_id = p_space and user_id = p_uid and removed_at is null;
+  perform public._msgr2_space_close(p_space, p_uid);
+  perform public._msgr2_send_u(p_uid, 'spaces', jsonb_build_object('space_id', p_space, 'removed', true));
+end $$;
+
 commit;
