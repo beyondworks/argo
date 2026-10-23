@@ -16,6 +16,7 @@ import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './pa
 import { supabase as rawSupabase, configured, q } from './supabase.js';
 import { v2Enabled } from './v2/flag.mjs';
 import { seatEnsure, seatRecall, seatSaveScope } from './v2/seat.mjs';
+import { deleteRoomV2, roomDeleteErrKey } from './v2/room-delete.mjs'; // v2 대화 삭제(재공개 전 검수 b)
 import { splitLegacyBots } from './v2/legacy-bots.mjs'; // 이름 없는 옛 봇은 기본 목록 밖(유건 사용 검수 2026-10-23) // 에이전트 자리 — 방에 넣기는 범위 보존(재공개 전 검수 F1)
 import { createV2ClientFor, createV2Runtime, currentV2 } from './v2/runtime.mjs';
 import { bindLifecycle } from './link/lifecycle.mjs';
@@ -2274,6 +2275,13 @@ function Shell({ session }) {
     await finishChannelAction(c, t(c.kind === 'dm' ? 'dm.leave.done' : 'ch.leave.done', { name: c.kind === 'dm' ? dmName(c) : c.name }));
   };
   const deleteChannel = async (c) => { // 영구 삭제 — 메시지·구성원·첨부 행은 FK cascade, 저장소 객체는 Storage API
+    if (V2) { // v2: 서버가 지울 수 있는지 보고 파일 목록을 준다 → Storage API로 파일 → 방 행 삭제(재공개 전 검수 b, src/v2/room-delete.mjs)
+      const r = await deleteRoomV2(rawSupabase.rpc.bind(rawSupabase), rawSupabase.storage.from('msgr'), c.id);
+      if (r.error) throw new Error(friendlyErr(r.error.message, t));
+      if (!r.ok) throw new Error(t(roomDeleteErrKey(r.code)));
+      await finishChannelAction(c, t(c.kind === 'dm' ? 'dm.delete.done' : 'ch.delete.done', { name: c.kind === 'dm' ? dmName(c) : c.name }));
+      return;
+    }
     try { // 첨부 객체는 Storage API로 먼저(조직 관리자 권한 — 아니면 남되 채널이 사라져 열람 불가). 실패해도 채널 삭제는 진행.
       const ids = (await q(supabase.from('msgr_messages').select('id').eq('channel_id', c.id))).map((m) => m.id);
       const paths = ids.length ? (await q(supabase.from('msgr_attachments').select('storage_path').in('message_id', ids))).map((a) => a.storage_path) : [];
