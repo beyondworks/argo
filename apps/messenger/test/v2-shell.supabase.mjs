@@ -170,6 +170,23 @@ const rpcs = {
     if (state.failDecline) throw new Error('msgr2_app_device_required'); // state.failDecline = true면 실패(미리보기 안 오류 확인)
     const had = state.myInvites.some((i) => i.code === p_code && Date.parse(i.expires_at) > Date.now()); state.myInvites = state.myInvites.filter((i) => i.code !== p_code); return had; }, // 서버처럼: 이미 정해졌으면(만료·취소) false
   msgr2_invite_accept: ({ p_code }) => { const mine = state.myInvites.find((i) => i.code === p_code); if (mine) { state.myInvites = state.myInvites.filter((i) => i.code !== p_code); fire(`v2:u:${uid}`, 'spaces', { space_id: mine.space_id }); } return { space_id: T, role: 'member', rooms: [GEN], already_member: true }; },
+  // 재공개 전 검수 b·F7(서버 20261023180000)과 같은 의미의 대역 — 거부 코드는 {ok:false, code}
+  msgr2_room_delete_files: ({ p_room }) => { const T_ = state.tables; if (T_.msgr2_works.some((w) => w.room_id === p_room && ['offered', 'accepted', 'running', 'awaiting_approval'].includes(w.state))) return { ok: false, code: 'work_active' };
+    return { ok: true, paths: T_.msgr2_attachments.filter((a) => a.room_id === p_room).map((a) => a.storage_path.replace(/^msgr\//, '')) }; },
+  msgr2_room_delete: ({ p_room }) => { const T_ = state.tables; const r = T_.msgr2_rooms.find((x) => x.id === p_room); if (!r) return { ok: false, code: 'forbidden' };
+    const mids = new Set(T_.msgr2_messages.filter((m) => m.room_id === p_room).map((m) => m.id));
+    T_.msgr2_rooms = T_.msgr2_rooms.filter((x) => x.id !== p_room); T_.msgr2_room_members = T_.msgr2_room_members.filter((x) => x.room_id !== p_room);
+    T_.msgr2_messages = T_.msgr2_messages.filter((m) => m.room_id !== p_room); T_.msgr2_attachments = T_.msgr2_attachments.filter((a) => !mids.has(a.message_id) && a.room_id !== p_room);
+    state.deletedRooms = [...(state.deletedRooms ?? []), p_room]; fire(`v2:u:${uid}`, 'rooms', { space_id: r.space_id, room_id: p_room, removed: true }); return { ok: true, messages: mids.size }; },
+  msgr2_room_set: ({ p_room, p_name, p_memory, p_archive }) => { const r = state.tables.msgr2_rooms.find((x) => x.id === p_room); if (!r) return { ok: false, code: 'forbidden' };
+    if (r.archived_at && (p_name != null || p_memory != null)) return { ok: false, code: 'archived' };
+    if (p_name != null) r.name = String(p_name).trim(); if (p_memory != null) r.memory = p_memory; if (p_archive) r.archived_at = r.archived_at ?? new Date().toISOString(); roomEvent(p_room); return { ok: true, changed: true }; },
+  msgr2_set_room_agent_policy: ({ p_room, p_policy }) => { const r = state.tables.msgr2_rooms.find((x) => x.id === p_room); if (!r) throw Object.assign(new Error('msgr2_forbidden'), { code: '42501' }); r.agent_policy = p_policy; roomEvent(p_room); return null; },
+  msgr2_set_member_role: ({ p_space, p_user, p_role }) => { const m = state.tables.msgr2_space_members.find((x) => x.space_id === p_space && x.user_id === p_user && !x.removed_at); if (!m) throw Object.assign(new Error('msgr2_forbidden'), { code: '42501' }); m.role = p_role; return null; },
+  msgr2_space_member_remove: ({ p_space, p_user }) => { const m = state.tables.msgr2_space_members.find((x) => x.space_id === p_space && x.user_id === p_user && !x.removed_at); if (!m) return false; m.removed_at = new Date().toISOString(); return true; },
+  msgr2_space_display_name_set: ({ p_space, p_name }) => { const m = state.tables.msgr2_space_members.find((x) => x.space_id === p_space && x.user_id === uid); if (!m) return { ok: false, code: 'forbidden' }; m.display_name = String(p_name ?? '').trim() || null; return { ok: true, changed: true }; },
+  msgr2_message_edit: ({ p_id, p_body }) => { const m = state.tables.msgr2_messages.find((x) => x.id === p_id); if (!m || m.author_user_id !== uid || m.deleted_at) return { ok: false, code: 'forbidden' }; m.body = p_body; m.edited_at = new Date().toISOString(); return { ok: true }; },
+  msgr2_message_delete: ({ p_id }) => { const m = state.tables.msgr2_messages.find((x) => x.id === p_id); if (!m || m.author_user_id !== uid) return { ok: false, code: 'forbidden' }; m.body = ''; m.deleted_at = m.deleted_at ?? new Date().toISOString(); return { ok: true }; },
   // 그대로 쓰는 옛 RPC(설계 1-2절)
   msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: '민지', handle: 'minji' }],
   msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => ({ user_id: id, display_name: id === uid ? '유건' : '민지' })),

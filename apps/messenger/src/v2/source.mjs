@@ -264,6 +264,64 @@ const WRITES = {
     },
   },
 };
+// F7(재공개 전 검수 2026-10-23): v2 표 직접 고치기는 권한이 없어 서버 함수로 보낸다(20261023180000 F7절). 서버 거부(ok:false)는
+// 'forbidden'이면 0행(옛 RLS 거부와 같게 — 화면이 '바꿀 수 없음'을 띄운다), 그 밖의 코드는 오류로 돌려준다.
+const rejOf = (b, x) => (x.data?.ok !== false ? null : x.data.code === 'forbidden' ? okRows(b, []) : { data: null, error: { message: x.data.code, code: x.data.code }, status: 400, count: null });
+const ROOM_SET = ['name', 'crew_memory', 'archived_at']; // msgr2_room_set
+const ROOM_NOT_IN_V2 = ['topic', 'admin_user_ids', 'excluded_user_ids', 'excluded_crew_ids']; // v2 방에 없는 열 — 다른 열과 같이 오면 버린다
+const AGENT_POLICY = { ...TABLES.msgr_channels.values.agent_policy, read_only: 'blocked' };
+Object.assign(WRITES, {
+  msgr_channels: {
+    async update(b) {
+      const room = eqOf(b.ops, 'id'); const p = b.payload ?? {};
+      if (!room || Array.isArray(p)) return unsupported();
+      const keys = Object.keys(p);
+      if (keys.some((k) => !ROOM_SET.includes(k) && k !== 'personal_crews' && !ROOM_NOT_IN_V2.includes(k))) return unsupported();
+      if (!keys.some((k) => ROOM_SET.includes(k) || k === 'personal_crews')) return unsupported(); // 주제·채널 관리자·제외 목록만 — v2에 없다
+      if ('archived_at' in p && !p.archived_at) return unsupported(); // 보관 되돌리기는 v2에 없다
+      if ('personal_crews' in p) {
+        const x = await b.ctx.rpc('msgr2_set_room_agent_policy', { p_room: room, p_policy: AGENT_POLICY[p.personal_crews] ?? 'approval' });
+        if (x.error) return x;
+      }
+      if (keys.some((k) => ROOM_SET.includes(k))) {
+        const x = await b.ctx.rpc('msgr2_room_set', { p_room: room, p_name: 'name' in p ? p.name : null, p_memory: 'crew_memory' in p ? !!p.crew_memory : null, p_archive: 'archived_at' in p ? true : null });
+        if (x.error) return x; const r = rejOf(b, x); if (r) return r;
+      }
+      return okRows(b, [{ id: room }]);
+    },
+    async delete() { return unsupported(); }, // 방 삭제는 App이 src/v2/room-delete.mjs로(파일 → 행 순서)
+  },
+  msgr_org_members: {
+    async update(b) {
+      const space = eqOf(b.ops, 'org_id'); const user = eqOf(b.ops, 'user_id'); const p = b.payload ?? {};
+      if (!space || !user || Array.isArray(p) || Object.keys(p).length !== 1) return unsupported();
+      if ('display_name' in p) { // 본인 표시 이름만
+        if (user !== await meOf(b.ctx.raw)) return okRows(b, []);
+        const x = await b.ctx.rpc('msgr2_space_display_name_set', { p_space: space, p_name: p.display_name ?? '' });
+        if (x.error) return x; const r = rejOf(b, x); if (r) return r;
+      } else if ('role' in p) {
+        const x = await b.ctx.rpc('msgr2_set_member_role', { p_space: space, p_user: user, p_role: p.role });
+        if (x.error) return x;
+      } else if ('removed_at' in p && p.removed_at) {
+        const x = await b.ctx.rpc('msgr2_space_member_remove', { p_space: space, p_user: user });
+        if (x.error) return x; if (!x.data) return okRows(b, []);
+      } else return unsupported();
+      return okRows(b, [{ user_id: user }]);
+    },
+  },
+  msgr_messages: {
+    async update(b) { // 내 글 고치기·지우기만(옛 정책 msgr_messages_update = 글쓴이만)
+      const id = eqOf(b.ops, 'id'); const p = b.payload ?? {};
+      if (id == null || Array.isArray(p)) return unsupported();
+      let x;
+      if (p.deleted_at) x = await b.ctx.rpc('msgr2_message_delete', { p_id: id });
+      else if (typeof p.body === 'string' && Object.keys(p).every((k) => k === 'body' || k === 'edited_at')) x = await b.ctx.rpc('msgr2_message_edit', { p_id: id, p_body: p.body });
+      else return unsupported();
+      if (x.error) return x; const r = rejOf(b, x); if (r) return r;
+      return okRows(b, [{ id }]);
+    },
+  },
+});
 WRITES.msgr_reads.insert = WRITES.msgr_reads.upsert; WRITES.msgr_channel_prefs.insert = WRITES.msgr_channel_prefs.upsert; WRITES.msgr_channel_members.insert = WRITES.msgr_channel_members.upsert;
 
 class WriteMapBuilder extends MapBuilder {
