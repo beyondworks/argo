@@ -800,3 +800,82 @@ begin
   perform public._msgr2_send_u(p_uid, 'spaces', jsonb_build_object('space_id', p_space, 'removed', true));
 end $$;
 
+
+-- ── I-1·자리 범위(재공개 전 검수 2차, 총괄 2026-10-23) ─────────────────────────────────────────
+-- I-1 c절에서 _msgr2_bf_agents가 자리 없는 'bot-'+12자 행을 건너뛰자, msgr2_backfill_verify의 missing.agents가 그 행을 빠진 것으로 세어
+--    런북(restart → run → verify)이 ok:false로 멈췄다(검수 PG 재현). verify의 agents 칸에 같은 조건을 넣는다. 본문은 20261020201500 그대로 + 그 한 줄.
+-- 자리 범위: 파견 해제한(removed) 에이전트의 사용 범위를 바꾸면 msgr2_set_seat upsert가 removed_at = null로 되살려 조용히 다시 파견됐다.
+--    범위만 바꾸는 함수 msgr2_seat_scope(에이전트, 공간, 범위, 명단)를 둔다: 활동 중인 자리만 고치고, 빠졌거나 없는 자리는 msgr2_seat_not_found.
+--    새 앱(#1152)의 범위 저장은 이 함수를 쓰고, 앱은 파견 안 된 에이전트에는 범위 단추를 숨긴다(두 겹).
+--    msgr2_set_seat은 바꾸지 않는다 — 이미 설치된 v2 앱은 그 함수로 다시 파견하고(되살림이 의도), 그 앱의 범위 저장은 원래 v2_unsupported로 실패했다.
+create or replace function public.msgr2_backfill_verify(p_sample int default 200) returns jsonb
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare miss jsonb; rooms_bad bigint; sample_bad bigint; ok boolean; oc jsonb;
+begin
+  if auth.uid() is not null then raise exception 'msgr2_backfill_service_only' using errcode = '42501'; end if;
+  miss := jsonb_build_object(
+    'agents', (select count(*) from public.msgr_agents a where not exists (select 1 from public.msgr2_agents v where v.id = a.id)
+                 and not (a.slug ~ '^bot-[0-9a-f]{12}$' and not exists (select 1 from public.msgr_crews c where c.agent_id = a.id))), -- c: 백필이 건너뛰는 옛 봇은 빠진 것으로 세지 않는다(_msgr2_bf_agents와 같은 조건)
+    'spaces_team', (select count(*) from public.msgr_orgs o where public._msgr2_org_in_msgr(o.id) and not exists (select 1 from public.msgr2_spaces s where s.id = o.id and s.kind = 'team')),
+    'spaces_personal', (select count(*) from (select created_by u from public.msgr_channels where org_id is null union select user_id from public.msgr_org_members where public._msgr2_org_in_msgr(org_id)) x
+                          where not exists (select 1 from public.msgr2_spaces s where s.owner_user_id = x.u and s.kind = 'personal')),
+    'space_members', (select count(*) from public.msgr_org_members m where public._msgr2_org_in_msgr(m.org_id) and not exists (select 1 from public.msgr2_space_members v
+                        where v.space_id = m.org_id and v.user_id = m.user_id and v.role = m.role and v.removed_at is not distinct from m.removed_at and v.expires_at is not distinct from m.expires_at)),
+    'seats', (select count(*) from public.msgr_crews c where c.org_id is not null and not exists (select 1 from public.msgr2_agent_seats s where s.agent_id = c.agent_id and s.space_id = c.org_id and s.removed_at is null)),
+    'rooms', (select count(*) from public.msgr_channels c where not exists (select 1 from public.msgr2_rooms r where r.id = c.id)),
+    'room_members', (select count(*) from public._msgr2_bf_room_members_src() s where not exists (select 1 from public.msgr2_room_members v
+                       where (v.room_id, v.member_kind, v.member_id) = (s.room_id, s.member_kind, s.member_id) and v.removed_at is null)),
+    'messages', (select count(*) from public.msgr_messages m where not exists (select 1 from public.msgr2_messages v where v.id = m.id)),
+    'attachments', (select count(*) from public.msgr_attachments a where not exists (select 1 from public.msgr2_attachments v where v.message_id = a.message_id and v.storage_path = 'msgr/' || a.storage_path)),
+    'reads', (select count(*) from public.msgr_reads x where not exists (select 1 from public.msgr2_reads v where v.room_id = x.channel_id and v.user_id = x.user_id and v.last_read_id >= x.last_read_id)),
+    'reactions', (select count(*) from public.msgr_reactions x where not exists (select 1 from public.msgr2_reactions v where (v.message_id, v.user_id, v.emoji) = (x.message_id, x.user_id, x.emoji))),
+    'prefs', (select count(*) from public.msgr_channel_prefs x where not exists (select 1 from public.msgr2_prefs v where v.room_id = x.channel_id and v.user_id = x.user_id and v.muted = x.muted and (v.pinned or not x.pinned))),
+    'approvals', (select count(*) from public.msgr_crew_approvals a where a.status = 'pending' and not exists (select 1 from public.msgr2_approvals v where v.id = a.id and v.state = 'expired')),
+    'identity', (select case when coalesce((select max(id) from public.msgr_messages), 0) = 0 then 0
+                     when (select last_value from pg_sequences where schemaname = 'public' and sequencename = split_part(pg_get_serial_sequence('public.msgr2_messages', 'id'), '.', 2))
+                          >= greatest(coalesce((select max(id) from public.msgr2_messages), 0), (select max(id) from public.msgr_messages)) then 0 else 1 end));
+  -- 방별 (id, md5(body)) — 옛 채널 글과 같은 방의 v2 글 중 옛 id인 것
+  select count(*) into rooms_bad from (
+    select o.channel_id, md5(string_agg(o.id::text || ':' || md5(o.body), ',' order by o.id)) h from public.msgr_messages o group by o.channel_id) old
+    full join (
+    select v.room_id, md5(string_agg(v.id::text || ':' || md5(v.body), ',' order by v.id)) h from public.msgr2_messages v
+     where exists (select 1 from public.msgr_messages o where o.id = v.id) group by v.room_id) nw on nw.room_id = old.channel_id
+   where old.h is distinct from nw.h;
+  select count(*) into sample_bad from (select * from public.msgr_messages order by random() limit greatest(1, least(coalesce(p_sample, 200), 10000))) o
+    left join public.msgr2_messages v on v.id = o.id
+   where v.id is null or (v.room_id, v.body, v.created_at, v.edited_at, v.deleted_at, coalesce(v.author_user_id, '00000000-0000-0000-0000-000000000000'))
+         is distinct from (o.channel_id, o.body, o.created_at, o.edited_at, o.deleted_at,
+                           coalesce(case when o.author_kind = 'user' then o.author_user_id end, '00000000-0000-0000-0000-000000000000'))
+      or v.reply_to is distinct from coalesce(o.reply_to, o.thread_root);
+  oc := jsonb_build_object('msgr_orgs', (select count(*) from public.msgr_orgs), 'msgr_org_members', (select count(*) from public.msgr_org_members),
+    'msgr_channels', (select count(*) from public.msgr_channels), 'msgr_channel_members', (select count(*) from public.msgr_channel_members),
+    'msgr_crews', (select count(*) from public.msgr_crews), 'msgr_agents', (select count(*) from public.msgr_agents),
+    'msgr_messages', (select count(*) from public.msgr_messages), 'msgr_attachments', (select count(*) from public.msgr_attachments),
+    'msgr_reads', (select count(*) from public.msgr_reads), 'msgr_reactions', (select count(*) from public.msgr_reactions),
+    'msgr_channel_prefs', (select count(*) from public.msgr_channel_prefs), 'msgr_target_prefs', (select count(*) from public.msgr_target_prefs),
+    'msgr_crew_approvals', (select count(*) from public.msgr_crew_approvals));
+  ok := rooms_bad = 0 and sample_bad = 0 and not exists (select 1 from jsonb_each_text(miss) e where e.value <> '0');
+  if ok then update public.msgr2_backfill_jobs set verified_at = now(), updated_at = now(); end if;
+  return jsonb_build_object('ok', ok, 'missing', miss, 'rooms_mismatch', rooms_bad, 'sample_mismatch', sample_bad, 'sample', p_sample, 'old_counts', oc);
+end $$;
+
+
+create or replace function public.msgr2_seat_scope(p_agent uuid, p_space uuid, p_allow text, p_users uuid[] default '{}') returns text
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare uid uuid := auth.uid(); cur public.msgr2_agent_seats; us uuid[];
+begin
+  if uid is null or not public._msgr2_device_ok() or not public._msgr2_device_app() then raise exception 'msgr2_app_device_required' using errcode = '42501'; end if;
+  if p_allow not in ('all', 'list', 'owner') then raise exception 'msgr2_bad_allow' using errcode = '22023'; end if;
+  if not exists (select 1 from public.msgr2_agents where id = p_agent and owner_user_id = uid)
+     or not exists (select 1 from public.msgr2_spaces where id = p_space and kind = 'team' and deleted_at is null)
+     or not exists (select 1 from public.msgr2_space_members where space_id = p_space and user_id = uid and role in ('owner', 'admin', 'member') and removed_at is null and (expires_at is null or expires_at > now())) then
+    raise exception 'msgr2_forbidden' using errcode = '42501'; end if;
+  select * into cur from public.msgr2_agent_seats where agent_id = p_agent and space_id = p_space for update;
+  if cur.agent_id is null or cur.removed_at is not null then raise exception 'msgr2_seat_not_found' using errcode = 'P0002'; end if; -- 빠진 자리는 되살리지 않는다(파견은 msgr2_seat_ensure)
+  us := case when p_allow = 'list' then coalesce((select array_agg(distinct u order by u) from unnest(coalesce(p_users, '{}')) u where u is not null), '{}') else '{}' end;
+  if (cur.allow, cur.allow_users) is not distinct from (p_allow, us) then return 'kept'; end if;
+  update public.msgr2_agent_seats set allow = p_allow, allow_users = us where agent_id = p_agent and space_id = p_space;
+  return 'saved';
+end $$;
+revoke all on function public.msgr2_seat_scope(uuid, uuid, text, uuid[]) from public, anon;
+grant execute on function public.msgr2_seat_scope(uuid, uuid, text, uuid[]) to authenticated;

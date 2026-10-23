@@ -135,3 +135,26 @@ test('되돌림: ensure가 사라지고 무료 첨부가 다시 통과 — 다�
     assert.equal(ensure(), 'kept');
   } finally { setting('msgr2_pro_gate', 'off'); }
 });
+
+test('자리 범위(검수 2차): msgr2_seat_scope는 활동 중인 자리만 고친다 — 파견 해제한 자리는 되살리지 않고 not_found, 같은 값이면 쓰기 0', { skip }, () => {
+  const scope = (allow, users = [], dev = oApp) => db.as(dev.uid, dev.sid, `select public.msgr2_seat_scope('${AG}', '${TS}', '${allow}', '{${users.join(',')}}'::uuid[])`);
+  const scopeErr = (allow, dev = oApp) => db.asErr(dev.uid, dev.sid, `select public.msgr2_seat_scope('${AG}', '${TS}', '${allow}', '{}'::uuid[])`) ?? '';
+  ensure();
+  assert.equal(scope('list', [X, X]), 'saved');
+  assert.deepEqual([seatRow().allow, seatRow().users, seatRow().removed], ['list', [X], false], '명단 중복 제거');
+  const x0 = seatRow().x;
+  assert.equal(scope('list', [X]), 'kept'); assert.equal(seatRow().x, x0, '같은 값이면 쓰기 0');
+  assert.match(scopeErr('all', mApp), /msgr2_forbidden/, '주인 아님');
+  assert.match(scopeErr('all', oRun), /msgr2_app_device_required/, '본체 기기');
+  db.as(O, oApp.sid, `select public.msgr2_set_seat('${AG}', '${TS}', 'all', '{}'::uuid[], true)`); // 파견 해제
+  assert.equal(seatRow().removed, true);
+  assert.match(scopeErr('owner'), /msgr2_seat_not_found/, '빠진 자리 범위 바꾸기');
+  assert.deepEqual([seatRow().allow, seatRow().removed], ['list', true], '되살리지 않고 범위도 그대로');
+  const other = db.sql(`insert into public.msgr2_agents (owner_user_id, ws_id, slug, display_name) values ('${O}', 'w', 'never', '안 넣음') returning id`);
+  assert.match(db.asErr(O, oApp.sid, `select public.msgr2_seat_scope('${other}', '${TS}', 'owner', '{}'::uuid[])`) ?? '', /msgr2_seat_not_found/, '자리가 없으면 만들지 않는다');
+  // 다시 파견(ensure)은 되살리고 범위는 보존 — 범위 저장은 그 뒤에 된다
+  assert.equal(ensure(), 'restored'); assert.equal(scope('owner'), 'saved'); assert.equal(seatRow().allow, 'owner');
+  // 대조: 옛 길 msgr2_set_seat은 빠진 자리를 되살린다(설치된 v2 앱의 다시 파견 — 바꾸지 않음)
+  db.as(O, oApp.sid, `select public.msgr2_set_seat('${AG}', '${TS}', 'all', '{}'::uuid[], true)`);
+  setSeat('all'); assert.equal(seatRow().removed, false, '옛 길은 종전대로 되살림');
+});

@@ -5,6 +5,7 @@
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setupFull } from './helpers/msgr2-work-pg.mjs';
 
@@ -18,6 +19,9 @@ const A = { BOT: id(10), BOT2: id(11), PLAIN: id(12), SHORT: id(13), UPPER: id(1
 let db;
 const v2 = (x) => db.sql(`select coalesce((select display_name from public.msgr2_agents where id = '${x}'), '-')`);
 const run = () => db.sql('select written from public._msgr2_bf_agents(null, 1000)');
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const migrate = (cmd) => spawnSync('bash', ['scripts/msgr2-migrate.sh', cmd], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, MSGR2_MIGRATE_DB: DB } });
+const verify = () => JSON.parse(db.sql('select public.msgr2_backfill_verify(50)'));
 
 before(() => {
   if (!DB) return;
@@ -54,4 +58,21 @@ test('되돌림 파일을 적용하면 옛 동작(옮김) — 다시 적용하�
   db.sql(`delete from public.msgr2_agents where id in ('${A.BOT}', '${A.BOT2}')`); // 시험 행 정리(시험 DB 안)
   run();
   assert.equal(v2(A.BOT), '-', '다시 적용하면 건너뛴다');
+});
+
+test('I-1 런북: 백필 전 단계(run) → verify ok — 건너뛴 옛 봇을 빠진 것으로 세지 않는다, 되돌림 판은 옛 동작(빠짐으로 셈)', { skip }, () => {
+  let r = migrate('run'); assert.equal(r.status, 0, r.stdout + r.stderr);
+  let v = verify();
+  assert.equal(v.ok, true, JSON.stringify(v));
+  assert.equal(v.missing.agents, 0, '자리 없는 bot-+12자 행은 셈에서 빠진다');
+  assert.equal(v2(A.BOT), '-', '전제: 옛 봇은 옮기지 않았다');
+  r = migrate('verify'); assert.equal(r.status, 0, r.stdout + r.stderr);
+  // 되돌림 파일: 옛 verify(빠짐으로 셈)·옛 백필(옮김)
+  db.psql(['-v', 'ON_ERROR_STOP=1', '-f', DOWN]);
+  assert.ok(verify().missing.agents >= 2, '되돌린 판 verify는 옮기지 않은 옛 봇을 빠진 것으로 센다');
+  db.psql(['-c', readFileSync(MIG, 'utf8')]);
+  // 다시 적용 → restart → run → verify ok(런북 3·4b)
+  r = migrate('restart'); assert.equal(r.status, 0, r.stdout + r.stderr);
+  r = migrate('run'); assert.equal(r.status, 0, r.stdout + r.stderr);
+  v = verify(); assert.equal(v.ok, true, JSON.stringify(v)); assert.equal(v.missing.agents, 0);
 });
