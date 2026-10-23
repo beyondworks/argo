@@ -1,8 +1,8 @@
 // 토큰 사용량 — 턴마다 usage.jsonl에 append, 대시보드용 집계를 제공한다.
 // 효율 지표(팩트 기준): ① 캐시 적중률(높을수록 같은 맥락을 싸게 재사용 — 캐시 읽기는 정가의 ~1/10)
 // ② 턴당 비용. 입력≫출력은 에이전트 작업의 정상 형태(근거를 읽고 짧게 생성)다.
-import { appendFile, readFile } from 'node:fs/promises';
-import { paths } from './workspace.mjs';
+import { appendFile } from 'node:fs/promises';
+import { ledgerAppendPath, readLedgerLines } from './ledger.mjs'; // 파일 위치(옛 usage.jsonl 또는 기기·월 조각)의 단일 관문
 
 /** SDK result 메시지의 usage를 한 줄로 기록. kind: 'chat' | 'hire' | 'delegate'(from=위임한 크루) | 'assistant'(옛 능동 비서 기록 — work: 그 일의 이름, fail: 실패 종류. 2026-10-13 기능을 지운 뒤에는 새로 쓰지 않는다). */
 export async function appendUsage(wsId, { kind, slug, from, runner, model, usage, costUsd, ms, tools, billed, work, fail }) {
@@ -29,7 +29,7 @@ export async function appendUsage(wsId, { kind, slug, from, runner, model, usage
     ...(typeof fail === 'string' && fail ? { fail } : {}),
   };
   try {
-    await appendFile(paths(wsId).usage, `${JSON.stringify(row)}\n`);
+    await appendFile(await ledgerAppendPath(wsId, 'usage', row.ts), `${JSON.stringify(row)}\n`);
   } catch { /* 기록 실패가 턴을 막으면 안 된다 */ }
 }
 
@@ -66,8 +66,7 @@ const localDay = (at) => {
 
 async function readRows(wsId) {
   try {
-    const text = await readFile(paths(wsId).usage, 'utf8');
-    return text.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    return (await readLedgerLines(wsId, 'usage')).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   } catch { return []; /* 아직 기록 없음 */ }
 }
 

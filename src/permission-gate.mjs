@@ -9,7 +9,7 @@
 // 우회 가능하다. 셸에서 하드라인은 강제가 아니라 1차 방어 + 프롬프트 지시가 계약이고, 완전 강제는
 // Read/Write/MCP 인자 판정(isForbidden)의 몫이다. 그래도 리터럴 목록은 하드라인 목록과 **정합**해야
 // 한다 — 같은 파일을 Read는 deny하고 Bash는 allow하면 도구별 판정이 갈린다(분리 검수 2026-07-30 HIGH).
-import { resolve, dirname, join, basename, sep, isAbsolute } from 'node:path';
+import { resolve, dirname, join, basename, sep, isAbsolute, win32 } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { fold, insideFold } from './pathcase.mjs';
@@ -154,6 +154,11 @@ const WS_LEDGER_FILES = new Set([
   'usage.jsonl',  // 사용액 원장(청구 근거) — appendUsage가 서버측에서 쓴다
   'events.jsonl', // 활동 원장 — 사장이 보는 활동 화면의 근거(events.mjs)
 ]);
+/* 원장 조각(ledger.mjs — `events.<기기>.<YYYY-MM>.jsonl`·`usage.…`, ARGO_LEDGER_SPLIT=1)도 같은 원장이다. 정확한 이름 목록만 보면 조각 쓰기가
+   열려 청구·월 예산 근거를 크루가 고칠 수 있다. 판정은 리더가 읽는 조각 모양 그대로다(#1149 검수 — 넓게 잡으면 배포본에서 되던 `usage.report.jsonl` 쓰기가 막힌다).
+   `myevents.jsonl`·`events-notes.md`·`events.json`·`usage.report.jsonl`은 원장이 아니다. 입력은 normName(소문자) 뒤. */
+const LEDGER_NAME_RE = /^(events|usage)\.[a-z0-9-]{1,64}\.\d{4}-\d{2}\.jsonl$/; // 리더가 읽는 조각 모양 그대로(ledger.mjs LEDGER_PIECE_RE) — 리더가 읽지 않는 이름(`usage.report.jsonl`)은 원장이 아니다
+const isLedgerName = (n) => WS_LEDGER_FILES.has(n) || LEDGER_NAME_RE.test(n);
 /* 크루 카드 = 그 크루의 시스템 프롬프트이자 러너·모델·범위(skills/mcp) 선언이다. update_profile 도구는
    자기 프로필 변경조차 사장 결재로 올리는데(chat.mjs), 파일 직접 쓰기는 그 결재를 통째로 건너뛴다 —
    자기 범위 확대와 동료 카드 오염이 결재 없이 가능해진다. 카드 내용은 이미 시스템 프롬프트로,
@@ -351,6 +356,61 @@ function globToRe(seg) {
 }
 const GUARDED_DOT = [...BASH_GUARDED.filter((n) => n.startsWith('.')), '.assistant']; // .assistant는 글자 대조에선 경계 규칙(BASH_DOT_DIR_RE)이지만 글롭 대조에는 이름으로 넣는다(`.assist*`)
 const GLOB_PROBES = GUARDED_DOT.flatMap((n) => [n, `${n}x`, `${n}-x.json`, `${n}.json`]);
+/* 원장 조각(ledger.mjs)의 셸 대조 — 회사 폴더 **직속**의 조각 이름만 막는다(#1149 검수 Important 1: 넓게 막았더니 `ls *.jsonl`·`ls e*`·`cat vault/data/events.2024.jsonl`처럼
+   배포본에서 통과하던 명령이 거절됐다). 옛 두 이름(events.jsonl·usage.jsonl)은 종전대로 BASH_GUARDED 부분 문자열 대조가 맡는다.
+   플래그와 무관하게 켠다 — 읽기가 플래그와 상관없이 조각을 합치므로 꺼짐에서도 위조 조각이 활동·월 예산에 섞인다.
+   ① 글자: 조각 이름 모양(`<events|usage>.<기기>.<YYYY-MM>.jsonl`, 리더가 읽는 모양 그대로 — 대소문자 무시)
+   ② 글롭: 글롭 문자 앞부분이 `events.`·`usage.`를 통째로 덮을 때만(`usage.*.jsonl`·`ev?nts.x.jsonl`·`[e]vents.*`). `e*`·`us*`·`*.jsonl`은 보지 않는다.
+   단어가 가리키는 폴더가 회사 폴더일 때만 본다: 경로 없는 이름·`./이름`(크루 셸의 기본 위치가 회사 폴더), 절대·`~`·`..` 경로는 실제로 풀어 회사 폴더와 같을 때.
+   하위 폴더(`data/…`)·다른 폴더·변수(`$X/…`)는 보지 않는다. 남는 한계(미룸): 변수 조립·`cd` 뒤 상대 경로·`rm *.jsonl`처럼 이름 없는 글롭(배포본부터). */
+const SHELL_PIECE_RE = /^(events|usage)\.[a-z0-9-]{1,64}\.\d{4}-\d{2}\.jsonl$/i;
+const LEDGER_HEADS = ['events.', 'usage.'];
+/** 글롭 조각의 앞부분이 head(`events.` 등)를 통째로 덮는가 — `*` 전까지의 글자·`?`·`[…]`를 한 글자씩 맞춘다. */
+function globCoversHead(seg, head) {
+  let i = 0, k = 0;
+  while (k < head.length) {
+    if (i >= seg.length) return false;
+    const c = seg[i];
+    if (c === '*') return false; // head를 다 덮기 전에 `*` — `e*`·`events*`는 다른 이름과 구별할 수 없어 보지 않는다
+    if (c === '?') { i++; k++; continue; }
+    if (c === '[') {
+      const j = seg.indexOf(']', i + 2);
+      if (j < 0) return false;
+      const re = globToRe(seg.slice(i, j + 1));
+      if (!re.test(head[k])) return false;
+      i = j + 1; k++; continue;
+    }
+    if (fold(c) !== fold(head[k])) return false;
+    i++; k++;
+  }
+  return true;
+}
+/** 단어 하나가 회사 폴더(ws) 직속의 원장 조각을 가리키는가. P = 경로 규칙(기본 = 이 OS, win32 = Windows 경로 표기). */
+function ledgerWordHit(w, ws, P) {
+  const name = w.split(/[\\/]/).pop();
+  if (!name) return false;
+  const dir = w.slice(0, w.length - name.length).replace(/[\\/]+$/, '');
+  let atRoot;
+  if (!dir || dir === '.') atRoot = true;
+  else if (dir.startsWith('$')) atRoot = false;
+  else if (dir === '~' || dir.startsWith('~/') || dir.startsWith('~\\')) atRoot = !!homeDir() && fold(P.resolve(homeDir(), dir.slice(2))) === fold(P.resolve(ws));
+  else if (P.isAbsolute(dir) || dir.split(/[\\/]/).includes('..')) atRoot = fold(P.resolve(ws, dir)) === fold(P.resolve(ws));
+  else atRoot = false; // 하위 폴더 상대 경로 — 회사 폴더 직속일 수 없다
+  if (!atRoot) return false;
+  return SHELL_PIECE_RE.test(name) || (/[*?[]/.test(name) && LEDGER_HEADS.some((h) => globCoversHead(name, h)));
+}
+// Windows 경로 표기 — 드라이브 문자(`D:\`·`D:/`)나 역슬래시가 든 단어. unquote는 역슬래시를 셸 이스케이프로 보고 지우므로(`D:\a\co` → `D:aco`)
+// 그 단어는 따옴표만 걷고 path.win32로 따로 푼다(Windows CI run 39902105589 — 절대 경로 위조가 통과했다). 맥·리눅스 판정(위 단어들)은 그대로다.
+const WIN_PATH_WORD = /^[A-Za-z]:[\\/]|\\/;
+/** 셸 명령(또는 컴퓨터 유즈 입력)이 회사 폴더 직속의 원장 조각을 가리키는가. wsRoot = 그 회사 폴더. (export: 회귀 테스트용) */
+export function shellLedgerHit(cmd, wsRoot) {
+  const ws = resolve(wsRoot);
+  const plain = unquote(String(cmd ?? ''));
+  const words = plain.split(SHELL_SEP).filter(Boolean).flatMap((w) => expandBraces(w));
+  if (words.some((w) => ledgerWordHit(w, ws, { resolve, isAbsolute }))) return true;
+  const winWords = ansiC(String(cmd ?? '')).replace(/['"]/g, '').split(SHELL_SEP).filter((w) => WIN_PATH_WORD.test(w)).flatMap((w) => expandBraces(w));
+  return winWords.some((w) => ledgerWordHit(w, wsRoot, win32));
+}
 export function shellNamesGuarded(cmd) {
   const plain = unquote(String(cmd ?? ''));
   const words = plain.split(SHELL_SEP).filter(Boolean).flatMap((w) => expandBraces(w));
@@ -372,7 +432,7 @@ export function shellNamesGuarded(cmd) {
 
 /** p가 금지 구역인가 — 판정 전 자기 워크스페이스 안(inWorkspace)이 먼저 통과됐다는 전제의 2차 검사.
     canonical(실경로) 기준 — 심링크로 금지 구역을 우회하지 못한다.
-    mode='write'면 원장(usage/events.jsonl)까지 금지에 포함한다 — 읽기는 열려 있다(WS_LEDGER_FILES).
+    mode='write'면 원장(usage/events.jsonl과 그 조각 — isLedgerName)까지 금지에 포함한다 — 읽기는 열려 있다(WS_LEDGER_FILES).
     mode='sweep'(Grep/Glob 재귀 **루트** 판정)은 읽기 금지에 더해 보호 구역의 **조상**까지 금지한다 —
     검색은 루트 아래를 재귀하므로 루트가 조상이기만 해도 하드 구역 내용이 결과로 흘러나온다(아래 주석).
     (export: 회귀 테스트용) */
@@ -460,7 +520,7 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
       const head = normName(rel[0]); // 후행 점·공백·ADS·대소문자 손질 후 비교
       if (WS_CONTROL_DIRS.has(head)) return true; // agents/** — 크루 카드는 하위까지 전부
       if (rel.length !== 1) return false;
-      return WS_CONTROL_FILES.has(head) || (mode === 'write' && WS_LEDGER_FILES.has(head));
+      return WS_CONTROL_FILES.has(head) || (mode === 'write' && isLedgerName(head));
     }
     // 하드 구역은 **렉시컬(abs)과 canonical(real) 둘 다** fail-closed로 본다(2026-07-30).
     // canonical만 보면 "보호 구역 안에 있으면서 밖을 가리키는 심링크"를 놓친다 — 실제로 조달이 만드는
@@ -639,7 +699,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 구분자(또는 ~) 동반 값은 키와 무관하게 전체 판정을 탄다.
       if (!vv.includes('/') && !vv.includes('\\') && !vv.startsWith('~')) {
         const n = normName(vv);
-        const valueHit = n.startsWith('.') || WS_CONTROL_FILES.has(n) || WS_LEDGER_FILES.has(n);
+        const valueHit = n.startsWith('.') || WS_CONTROL_FILES.has(n) || isLedgerName(n);
         if (!valueHit && !PATHY_KEY_RE.test(String(k))) continue;
       }
       if (await isForbidden(vv, 'write')) return true; // 인자는 쓰기일 수 있다 — 넓은 쪽으로 판정
@@ -678,7 +738,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 입력의 모든 문자열 잎(중첩 포함)을 훑는다 — 고정 키 목록은 다른 이름(texts·input·label)으로 우회됐다(4R). 분할 입력·조합키 한 글자씩은 못 막는다 —
       // 실효 통제는 옵트인이고 이 줄은 순진한 시도의 1차 방어다(셸 리터럴 방어와 같은 정직 표기).
       const typed = stringLeaves(input).join(' ');
-      if (typed.trim() && (bashHardLiterals.some((r) => fold(typed).includes(fold(r))) || BASH_GUARDED.some((n) => fold(typed).includes(fold(n))) || BASH_DIR_RE.test(typed) || BASH_DOT_DIR_RE.test(typed) || shellNamesGuarded(typed))) return denyHard();
+      if (typed.trim() && (bashHardLiterals.some((r) => fold(typed).includes(fold(r))) || BASH_GUARDED.some((n) => fold(typed).includes(fold(n))) || BASH_DIR_RE.test(typed) || BASH_DOT_DIR_RE.test(typed) || shellNamesGuarded(typed) || shellLedgerHit(typed, wsAbs))) return denyHard();
       return allow;
     }
 
@@ -733,7 +793,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 이게 없으면 shell 능력이 켜진 SDK 크루가 `echo '{"bypass":true}' > capabilities.json` 한 줄로
       // 게이트를 우회한다(실측). 오탐(그 이름을 언급한 정당한 명령 거절)은 fail-closed로 수용한다.
       // 폴딩은 위 줄과 동일 기준(대소문자 무시 FS에서 CAPABILITIES.JSON 우회 차단 — #145 계열).
-      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd) || BASH_DOT_DIR_RE.test(cmd) || shellNamesGuarded(cmd)) return denyHard(); // 셸 확장(글롭·중괄호·따옴표 분할)으로 숨긴 이름까지
+      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd) || BASH_DOT_DIR_RE.test(cmd) || shellNamesGuarded(cmd) || shellLedgerHit(cmd, wsAbs)) return denyHard(); // 셸 확장(글롭·중괄호·따옴표 분할)으로 숨긴 이름까지
       // 이 컴퓨터의 Argo API(루프백)를 부르는 명령 — 결재 자가 승인·루틴 삭제·주인 직접 턴 열기의 통로였다(PR #916 분리 검수 재현).
       // 모든 턴(주인 턴 포함)에서 거절한다. 주 방어는 서버의 연결 상대 판정(src/agent-peer.mjs) — 이 줄은 이유를 알려 주는 앞단이다.
       if (await shellCallsArgoApi(cmd)) return { behavior: 'deny', message: ARGO_API_SHELL_MSG[lang === 'en' ? 'en' : 'ko'] };
