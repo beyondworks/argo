@@ -741,7 +741,7 @@ grant execute on function public.msgr2_message_delete(bigint) to authenticated;
 
 -- ── S1·S3(재공개 전 검수 ① 보안, 우선순위 마지막) ──────────────────────────────────────────
 -- S1 사람 채팅 켬: 친구가 내 회의방에 자기 에이전트를 넣고 내가 둘 다 멘션하면, 회의 일이 내 본체로 가고 posts에 친구 에이전트를 글쓴이로 보내도 통과했다.
---    처방 두 겹: 회의 참가자를 대표(첫 참가자)와 같은 주인의 에이전트로 거른다(_msgr2_user_offers, 본문은 20261020201500 그대로 + 두 줄),
+--    처방 두 겹: 회의 대표는 글쓴이의 에이전트를 먼저 고르고(없으면 첫 참가자 — 종전), 참가자를 대표와 같은 주인의 에이전트로 거른다(_msgr2_user_offers, 본문은 20261020201500 그대로 + 네 줄),
 --    msgr2_link_send work.result posts의 글쓴이가 이 본체 주인의 에이전트인지 본다(위 link_send 본문). 같은 주인의 회의는 종전대로.
 -- S3 v2 팀에서 내보낸(또는 나간) 사람이 같은 id의 옛 조직 멤버 행(removed_at null)으로 옛 조직 문서(msgr_org_docs — v2도 쓰는 표)·옛 채널을 계속 읽었다.
 --    처방: _msgr2_space_drop이 옛 멤버 행도 닫는다(본문은 20261020200600 그대로 + 세 줄). 옛 표가 없는 DB(v2만)에서는 건너뛴다.
@@ -759,7 +759,9 @@ begin
        where mm.room_id = m.room_id and mm.member_kind = 'agent' and mm.removed_at is null
          and (cardinality(m.mentions) = 0 or mm.member_id = any (m.mentions))
        order by mm.added_at, mm.member_id limit public._msgr2_clamp('msgr2_meeting_agents', 5, 5)) q;
-    if cardinality(parts) > 0 then -- S1: 참가자는 대표(첫 참가자)와 같은 주인의 에이전트만 — 대표 주인의 본체가 남의 에이전트 이름으로 글을 쓰지 않게
+    if cardinality(parts) > 0 then -- S1: 대표는 글쓴이의 에이전트를 먼저(없으면 첫 참가자), 참가자는 대표와 같은 주인의 에이전트만 — 대표 주인의 본체가 남의 에이전트 이름으로 글을 쓰지 않게
+      parts := array(select x from unnest(parts) with ordinality u(x, o)
+                      order by (select g.owner_user_id from public.msgr2_agents g where g.id = x) is distinct from m.author_user_id, o);
       parts := array(select x from unnest(parts) with ordinality u(x, o)
                       where (select g.owner_user_id from public.msgr2_agents g where g.id = x) = (select g.owner_user_id from public.msgr2_agents g where g.id = parts[1]) order by o);
       w := public._msgr2_make_offer_x(m.room_id, m.topic_id, parts[1], 'user', m.author_user_id, m.author_user_id, m.body, m.id, null, 0, parts);

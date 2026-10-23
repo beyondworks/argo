@@ -45,14 +45,16 @@ before(() => {
 
 test('S1 사람 채팅 켬: 친구 에이전트가 들어온 내 회의방 — 참가자는 대표와 같은 주인의 에이전트만, 남의 에이전트 글쓴이 posts는 post_denied', { skip }, () => {
   const mr = db.sql(`insert into public.msgr2_rooms (space_id, kind, name, meeting) values ('${PS}', 'private', '회의', true) returning id`);
-  db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${mr}', 'user', '${P}'), ('${mr}', 'user', '${F}'), ('${mr}', 'agent', '${A1}'), ('${mr}', 'agent', '${FA}'), ('${mr}', 'agent', '${A2}')`);
+  // 친구 에이전트를 가장 먼저 넣는다(added_at 순서 고정) — 그래도 대표는 글쓴이(P)의 에이전트
+  db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id, added_at) values ('${mr}', 'user', '${P}', now() - interval '10 minutes'), ('${mr}', 'user', '${F}', now() - interval '9 minutes'),
+          ('${mr}', 'agent', '${FA}', now() - interval '8 minutes'), ('${mr}', 'agent', '${A1}', now() - interval '7 minutes'), ('${mr}', 'agent', '${A2}', now() - interval '6 minutes')`);
   const sync = send(pRun, env('agent.sync', { dev: pRun, data: { agents: [{ ws: 'w', slug: 'a1', name: 'a1', role: '', face_hash: null }, { ws: 'w', slug: 'a2', name: 'a2', role: '', face_hash: null }], features: ['meeting', 'bot'] } }));
   assert.equal(sync.ok, true, JSON.stringify(sync));
   setting('msgr2_people', 'on');
   try {
     say(pApp, mr, '회의하자', [A1, FA, A2]);
     const w = lastWork(mr);
-    assert.equal(w.agent_id, A1, '대표 = 첫 참가자');
+    assert.equal(w.agent_id, A1, '대표 = 글쓴이의 에이전트 가운데 첫 참가자(친구 에이전트가 먼저 들어왔어도)');
     assert.deepEqual(w.meeting_agents, [A1, A2], '남의 에이전트(FA)는 참가자에서 빠진다');
     assert.equal(send(pRun, env('work.accept', { work: w.id, dev: pRun })).ok, true);
     const before = db.sql(`select count(*) from public.msgr2_messages where room_id = '${mr}'`);
