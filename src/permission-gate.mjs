@@ -9,7 +9,7 @@
 // 우회 가능하다. 셸에서 하드라인은 강제가 아니라 1차 방어 + 프롬프트 지시가 계약이고, 완전 강제는
 // Read/Write/MCP 인자 판정(isForbidden)의 몫이다. 그래도 리터럴 목록은 하드라인 목록과 **정합**해야
 // 한다 — 같은 파일을 Read는 deny하고 Bash는 allow하면 도구별 판정이 갈린다(분리 검수 2026-07-30 HIGH).
-import { resolve, dirname, join, basename, sep, isAbsolute } from 'node:path';
+import { resolve, dirname, join, basename, sep, isAbsolute, win32 } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { fold, insideFold } from './pathcase.mjs';
@@ -385,26 +385,31 @@ function globCoversHead(seg, head) {
   }
   return true;
 }
+/** 단어 하나가 회사 폴더(ws) 직속의 원장 조각을 가리키는가. P = 경로 규칙(기본 = 이 OS, win32 = Windows 경로 표기). */
+function ledgerWordHit(w, ws, P) {
+  const name = w.split(/[\\/]/).pop();
+  if (!name) return false;
+  const dir = w.slice(0, w.length - name.length).replace(/[\\/]+$/, '');
+  let atRoot;
+  if (!dir || dir === '.') atRoot = true;
+  else if (dir.startsWith('$')) atRoot = false;
+  else if (dir === '~' || dir.startsWith('~/') || dir.startsWith('~\\')) atRoot = !!homeDir() && fold(P.resolve(homeDir(), dir.slice(2))) === fold(P.resolve(ws));
+  else if (P.isAbsolute(dir) || dir.split(/[\\/]/).includes('..')) atRoot = fold(P.resolve(ws, dir)) === fold(P.resolve(ws));
+  else atRoot = false; // 하위 폴더 상대 경로 — 회사 폴더 직속일 수 없다
+  if (!atRoot) return false;
+  return SHELL_PIECE_RE.test(name) || (/[*?[]/.test(name) && LEDGER_HEADS.some((h) => globCoversHead(name, h)));
+}
+// Windows 경로 표기 — 드라이브 문자(`D:\`·`D:/`)나 역슬래시가 든 단어. unquote는 역슬래시를 셸 이스케이프로 보고 지우므로(`D:\a\co` → `D:aco`)
+// 그 단어는 따옴표만 걷고 path.win32로 따로 푼다(Windows CI run 39902105589 — 절대 경로 위조가 통과했다). 맥·리눅스 판정(위 단어들)은 그대로다.
+const WIN_PATH_WORD = /^[A-Za-z]:[\\/]|\\/;
 /** 셸 명령(또는 컴퓨터 유즈 입력)이 회사 폴더 직속의 원장 조각을 가리키는가. wsRoot = 그 회사 폴더. (export: 회귀 테스트용) */
 export function shellLedgerHit(cmd, wsRoot) {
   const ws = resolve(wsRoot);
   const plain = unquote(String(cmd ?? ''));
   const words = plain.split(SHELL_SEP).filter(Boolean).flatMap((w) => expandBraces(w));
-  for (const w of words) {
-    const name = w.split(/[\\/]/).pop();
-    if (!name) continue;
-    const dir = w.slice(0, w.length - name.length).replace(/[\\/]+$/, '');
-    let atRoot;
-    if (!dir || dir === '.') atRoot = true;
-    else if (dir.startsWith('$')) atRoot = false;
-    else if (dir === '~' || dir.startsWith('~/')) atRoot = !!homeDir() && fold(resolve(homeDir(), dir.slice(2))) === fold(ws);
-    else if (isAbsolute(dir) || dir.split(/[\\/]/).includes('..')) atRoot = fold(resolve(ws, dir)) === fold(ws);
-    else atRoot = false; // 하위 폴더 상대 경로 — 회사 폴더 직속일 수 없다
-    if (!atRoot) continue;
-    if (SHELL_PIECE_RE.test(name)) return true;
-    if (/[*?[]/.test(name) && LEDGER_HEADS.some((h) => globCoversHead(name, h))) return true;
-  }
-  return false;
+  if (words.some((w) => ledgerWordHit(w, ws, { resolve, isAbsolute }))) return true;
+  const winWords = ansiC(String(cmd ?? '')).replace(/['"]/g, '').split(SHELL_SEP).filter((w) => WIN_PATH_WORD.test(w)).flatMap((w) => expandBraces(w));
+  return winWords.some((w) => ledgerWordHit(w, wsRoot, win32));
 }
 export function shellNamesGuarded(cmd) {
   const plain = unquote(String(cmd ?? ''));

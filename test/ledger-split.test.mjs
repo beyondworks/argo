@@ -16,7 +16,7 @@ const DEV = 'mac-two-1a2b3c4d';
 const { paths } = await import('../src/workspace.mjs');
 const { appendEvent, readEvents } = await import('../src/events.mjs');
 const { appendUsage, monthCost, readUsageSummary, readActivity } = await import('../src/usage.mjs');
-const { makePermissionGate, makeIsForbidden } = await import('../src/permission-gate.mjs');
+const { makePermissionGate, makeIsForbidden, shellLedgerHit } = await import('../src/permission-gate.mjs');
 
 const { ledgerAppendPath, deviceSlug } = await import('../src/ledger.mjs');
 afterEach(() => { delete process.env.ARGO_LEDGER_SPLIT; });
@@ -204,6 +204,7 @@ test('G2b 위조 조각은 계속 막는다 — 회사 폴더 직속을 가리�
     `rm ${join(root, 'usage.*.jsonl')}`, `cp /dev/null ${join(root, 'usage.d.2026-10.jsonl')}`, 'rm ../gate-block/usage.[a-z]*.jsonl',
     'echo x > USAGE.DEV.2026-10.JSONL',
     `rm ${viaHome}/events.*`,
+    `rm ${root.replace(/[\\/]/g, '/')}\\usage.*.jsonl`, // 구분자 섞임(/ + \\) — Windows CI run 39902105589에서 절대 경로 위조가 통과했다
   ];
   try {
     for (const cmd of cmds) {
@@ -211,4 +212,17 @@ test('G2b 위조 조각은 계속 막는다 — 회사 폴더 직속을 가리�
       assert.equal((await gate('computer_type', { text: cmd })).behavior, 'deny', `computer_type: ${cmd}`);
     }
   } finally { process.env.HOME = savedHome; }
+});
+
+test('G2w Windows 경로 표기(드라이브 문자·역슬래시) — 어느 OS에서 돌아도 path.win32로 풀어 회사 폴더 직속이면 막고, 그 밖은 통과', () => {
+  const W = 'D:\\a\\_temp\\argo-ledger\\co';
+  for (const cmd of [
+    'rm D:\\a\\_temp\\argo-ledger\\co\\usage.*.jsonl', 'cp /dev/null D:\\a\\_temp\\argo-ledger\\co\\usage.d.2026-10.jsonl',
+    'rm D:/a/_temp/argo-ledger/co\\events.dev-a.2026-10.jsonl', 'rm d:\\A\\_TEMP\\ARGO-LEDGER\\CO\\usage.*', 'rm D:\\a\\_temp\\argo-ledger\\co\\x\\..\\usage.*',
+    'Remove-Item "D:\\a\\_temp\\argo-ledger\\co\\events.dev-a.2026-10.jsonl"',
+  ]) assert.equal(shellLedgerHit(cmd, W), true, cmd);
+  for (const cmd of [
+    'cat D:\\a\\_temp\\argo-ledger\\co\\data\\usage.dev-a.2026-10.jsonl', 'ls D:\\a\\_temp\\argo-ledger\\co\\*.jsonl', 'rm D:\\other\\usage.*',
+    'ls D:\\a\\_temp\\argo-ledger\\co\\e*', 'type D:\\a\\_temp\\argo-ledger\\co\\usage.report.jsonl',
+  ]) assert.equal(shellLedgerHit(cmd, W), false, cmd);
 });
