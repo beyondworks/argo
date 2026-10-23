@@ -174,12 +174,19 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
     }),
   };
 
+  // supabase-js(realtime-js 2.114 RealtimeClient.channel)와 같이 같은 토픽의 채널이 이미 있으면 그것을 돌려주고,
+  // 가입 중·가입한 채널에 presence·postgres_changes 콜백을 붙이면 던진다(RealtimeChannel.on) — 2026-10-23 '모두에게' 멘션 화면 깨짐의 원인을 시험이 보게
   s.channel = (topic, opts) => {
+    const had = [...s.channels].find((c) => c.topic === topic);
+    if (had) return had;
     const ch = {
-      topic, opts, handlers: [], joined: false, cb: null,
-      on(type, filter, fn) { this.handlers.push({ type, filter, fn }); return this; },
+      topic, opts, handlers: [], joined: false, joining: false, cb: null,
+      on(type, filter, fn) {
+        if ((this.joined || this.joining) && (type === 'presence' || type === 'postgres_changes')) throw new Error(`cannot add \`${type}\` callbacks for realtime:${topic} after \`subscribe()\`.`);
+        this.handlers.push({ type, filter, fn }); return this;
+      },
       subscribe(cb) {
-        this.cb = cb; s.joins.push(topic);
+        this.cb = cb; this.joining = true; s.joins.push(topic);
         const go = () => {
           if (!s.channels.has(ch)) return;
           if (s.net.down || s.denyJoin.has(topic)) { this.cb?.('CHANNEL_ERROR'); return; } // 권한 없는 토픽(팀에서 빠진 공간 등)
@@ -198,7 +205,8 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
   // Realtime(phoenix)는 오류 난 채널을 닫지 않으면 rejoinTimer로 계속 다시 가입한다 — 그 한 번을 흉내 낸다
   s.tickRejoin = () => { for (const ch of [...s.channels]) if (!ch.joined && ch.cb) ch.subscribe(ch.cb); };
   s.release = (topic) => { const f = s.held.get(topic); s.held.delete(topic); s.holdJoin.delete(topic); f?.(); };
-  s.removeChannel = (ch) => { const was = s.channels.delete(ch); ch.joined = false; if (was) ch.cb?.('CLOSED'); return Promise.resolve('ok'); };
+  s.removeChannel = (ch) => { const was = s.channels.delete(ch); ch.joined = false; ch.joining = false; if (was) ch.cb?.('CLOSED'); return Promise.resolve('ok'); };
+  s.presenceSync = (topic) => { for (const ch of [...s.channels]) if (ch.topic === topic && ch.joined) for (const h of ch.handlers) if (h.type === 'presence') h.fn({}); };
   return s;
 }
 
@@ -584,7 +592,41 @@ test('일 화면: 볼 때만 wk:<일>·pr:<주인>을 구독하고, 뒤로 가�
   await m.setForeground(false); assert.deepEqual(fake.liveTopics(), []);
   await m.setForeground(true); await flush();
   assert.deepEqual(fake.liveTopics(), [`v2:pr:${OTHER}`, `v2:u:${UID}`, 'v2:wk:w-1'].sort());
-  off(); assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`]);
+  off(); await flush(); assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`]); // 접속 표시 채널은 한 박자 뒤에 닫는다(곧바로 다시 잡을 수 있게)
+});
+
+test('같은 주인의 일 여러 개(팀 방 \'모두에게\' 멘션): 접속 표시 채널 pr:<주인>을 하나로 함께 쓴다 — 두 번째 일에서 던지지 않고, 하나를 닫아도 나머지는 접속 표시를 계속 받는다(2026-10-23 화면 깨짐)', async () => {
+  const { m, fake } = setup();
+  const pres = []; m.on('presence', (p) => pres.push(p.owner));
+  await m.start(); await flush();
+  const off1 = m.watchWork('w-1', { owner: OTHER }); await flush();
+  let off2;
+  assert.doesNotThrow(() => { off2 = m.watchWork('w-2', { owner: OTHER }); }, '같은 주인의 두 번째 일 — supabase-js는 같은 토픽의 채널을 돌려주고 가입 뒤 presence 콜백을 붙이면 던진다');
+  const off3 = m.watchWork('w-3', { owner: OTHER }); await flush();
+  assert.equal([...fake.channels].filter((c) => c.topic === `v2:pr:${OTHER}`).length, 1, '주인당 접속 표시 채널 1개');
+  assert.equal([...fake.channels].find((c) => c.topic === `v2:pr:${OTHER}`).handlers.filter((h) => h.type === 'presence').length, 1, '콜백도 1개(일마다 겹쳐 붙이지 않는다)');
+  fake.presenceSync(`v2:pr:${OTHER}`); await flush();
+  assert.deepEqual(pres, [OTHER], '알림은 주인마다 1번');
+  off1(); await flush();
+  assert.ok(fake.liveTopics().includes(`v2:pr:${OTHER}`), '다른 일이 쓰는 동안 닫지 않는다');
+  fake.presenceSync(`v2:pr:${OTHER}`); await flush();
+  assert.equal(pres.length, 2, '남은 일은 접속 표시를 계속 받는다');
+  off2(); off3(); await flush();
+  assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`], '마지막 일을 닫으면 접속 표시 채널도 닫는다');
+  // 화면이 진행 중인 일 목록이 바뀔 때처럼 모두 놓고 곧바로 다시 잡으면 채널을 닫았다 열지 않는다(닫히는 중인 옛 채널을 돌려받아 접속 표시가 끊기지 않게)
+  const x1 = m.watchWork('w-7', { owner: OTHER }); await flush();
+  const before = [...fake.channels].find((c) => c.topic === `v2:pr:${OTHER}`);
+  x1(); const x2 = m.watchWork('w-8', { owner: OTHER }); await flush();
+  assert.equal([...fake.channels].find((c) => c.topic === `v2:pr:${OTHER}`), before, '같은 채널을 그대로 쓴다(닫고 다시 열지 않는다)');
+  x2(); await flush();
+  assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`]);
+  // 뒤로 갔다 오면(채널 전부 닫힘 → 다시 가입) 다시 하나로 만든다
+  const a = m.watchWork('w-4', { owner: OTHER }); const b = m.watchWork('w-5', { owner: OTHER }); await flush();
+  await m.setForeground(false); await m.setForeground(true); await flush();
+  assert.equal([...fake.channels].filter((c) => c.topic === `v2:pr:${OTHER}`).length, 1, '다시 붙어도 주인당 1개');
+  assert.doesNotThrow(() => m.watchWork('w-6', { owner: OTHER }));
+  a(); b(); await flush();
+  assert.ok(fake.liveTopics().includes(`v2:pr:${OTHER}`), 'w-6이 아직 본다');
 });
 
 // ── 분리 검수 지적 반영(1~5) ─────────────────────────────────────────────────
