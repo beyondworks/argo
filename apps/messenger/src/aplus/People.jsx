@@ -3,6 +3,7 @@
 // 사람 채팅도 Pro 전용 — 최종 판정은 서버 거부 코드(msgr2_pro_required)다. 읽기는 탭·방을 열 때와 공간·방·초대 사건 때만(주기 조회 없음).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { I } from '../icons.jsx';
+import { openExternalUrl } from '../media-io.js'; // 결제 링크 — Tauri 웹뷰는 target=_blank를 무시한다(재공개 전 검수 F3)
 import { peopleErrorKey, peopleGate, nameProblem, roomRows, memberRows, canInvite, canCreateRoom, NAME_MAX } from './people.mjs';
 import { inviteLeft } from '../v2/invite-box.mjs';
 import { inviteShareText, parseInviteCode } from '../invite.mjs';
@@ -48,7 +49,7 @@ export function usePeople({ source, active }) {
 /** 사람 탭 목록(왼쪽 레일 또는 휴대폰 한 칸). */
 export function PeopleList({ t, p, openId, onOpen, onSheet, purchase }) {
   if (p.gate === 'loading') return <p className="ap-note ap-muted">{t('aplus.loading')}</p>;
-  if (p.gate === 'pro') return <div className="ap-note ap-pro"><span className="ap-tag">Pro</span><strong>{t('people.pro.title')}</strong><p>{t('people.pro.body')}</p><div className="ap-row">{purchase?.url ? <a className="btn sm btn-primary" href={purchase.url} target="_blank" rel="noreferrer">{t('aplus.free.upgrade')}</a> : null}<button type="button" className="btn sm" onClick={p.retry}>{t('aplus.plan.recheck')}</button></div></div>;
+  if (p.gate === 'pro') return <div className="ap-note ap-pro"><span className="ap-tag">Pro</span><strong>{t('people.pro.title')}</strong><p>{t('people.pro.body')}</p><div className="ap-row">{purchase?.url ? <a className="btn sm btn-primary" href={purchase.url} target="_blank" rel="noreferrer" onClick={(e) => { e.preventDefault(); openExternalUrl(purchase.url); }}>{t('aplus.free.upgrade')}</a> : null}<button type="button" className="btn sm" onClick={p.retry}>{t('aplus.plan.recheck')}</button></div></div>;
   if (p.gate === 'closed') return <div className="ap-note"><strong>{t('aplus.closed.title')}</strong><p>{t('people.closed')}</p></div>;
   if (p.gate === 'error') return <div className="ap-note"><p>{t('aplus.load.failed')}</p><button type="button" className="btn sm" onClick={p.retry}><I name="retry" size={14} />{t('aplus.retry')}</button></div>;
   const { channels, dms } = p.rows;

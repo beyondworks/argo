@@ -15,6 +15,7 @@ import { WorkPanel, missingSchema } from './work-panel.jsx';
 import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
 import { supabase as rawSupabase, configured, q } from './supabase.js';
 import { v2Enabled } from './v2/flag.mjs';
+import { seatEnsure, seatRecall, seatSaveScope } from './v2/seat.mjs'; // 에이전트 자리 — 방에 넣기는 범위 보존(재공개 전 검수 F1)
 import { createV2ClientFor, createV2Runtime, currentV2 } from './v2/runtime.mjs';
 import { bindLifecycle } from './link/lifecycle.mjs';
 import { v2ComposerTransport } from './v2/composer.mjs';
@@ -1423,8 +1424,8 @@ function Shell({ session }) {
   }, [uid, t]);
   useEffect(() => { if (!victimPick) return undefined; const on = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); setVictimPick(null); } }; window.addEventListener('keydown', on, true); return () => window.removeEventListener('keydown', on, true); }, [victimPick]); // 먼저 잡아(캡처) 뒤의 에이전트 카드까지 닫히지 않게
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
-    if (V2) { // v2: 팀 공간에 자리(seat)를 만든 뒤(msgr2_set_seat, 앱 기기·내 에이전트·그 공간 멤버만) 그 방에 넣는다(msgr_crew_join → 어댑터가 msgr2_room_members_add, U6c-2b)
-      await q(rawSupabase.rpc('msgr2_set_seat', { p_agent: crew.id, p_space: orgId, p_allow: 'all' }));
+    if (V2) { // v2: 팀 공간에 자리(seat)를 둔 뒤(msgr2_seat_ensure — 없을 때만 'all', 있으면 주인이 정한 범위 그대로, 재공개 전 검수 F1) 그 방에 넣는다(msgr_crew_join → 어댑터가 msgr2_room_members_add, U6c-2b)
+      await q(seatEnsure(rawSupabase.rpc.bind(rawSupabase), crew.id, orgId));
       let joined = null;
       if (channelId) { const res = await supabase.rpc('msgr_crew_join', { ch: channelId, crew: crew.id }); if (res.error) throw new Error(joinErr(res.error.message, t)); joined = res.data; }
       await loadOrg(orgId);
@@ -3829,8 +3830,9 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
   const dispatched = crew.status !== 'available'; const [confirmRecall, setConfirmRecall] = useState(false);
   const setDispatch = async (next) => {
     setBusy(true); setConfirmRecall(false);
-    if (V2) { // v2: 파견·회수 = 이 팀 공간의 자리(msgr2_set_seat — 내 에이전트·그 공간 멤버만, 같은 값이면 쓰지 않음)
-      const r = org?.id ? await rawSupabase.rpc('msgr2_set_seat', { p_agent: crew.id, p_space: org.id, p_allow: 'all', p_remove: !next }) : { error: { message: 'v2_unsupported' } };
+    if (V2) { // v2: 파견·회수 = 이 팀 공간의 자리(seat.mjs — 파견은 범위 보존, 회수는 범위를 건드리지 않음. 내 에이전트·그 공간 멤버만, 같은 값이면 쓰지 않음)
+      const rpc2 = rawSupabase.rpc.bind(rawSupabase);
+      const r = org?.id ? await (next ? seatEnsure(rpc2, crew.id, org.id) : seatRecall(rpc2, crew.id, org.id)) : { error: { message: 'v2_unsupported' } };
       setBusy(false);
       if (r.error) return onError(friendlyErr(r.error.message, t));
       onNote(t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged(); return;
@@ -3854,6 +3856,12 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
   };
   const save = async (nextAllow, nextList) => {
     setBusy(true);
+    if (V2) { // v2: 사용 범위 = 이 팀 공간 자리의 allow·allow_users(msgr2_set_seat — 주인만). 옛 msgr_crews 저장은 v2 어댑터에 없어 v2_unsupported였다(재공개 전 검수 F1)
+      const r = org?.id ? await seatSaveScope(rawSupabase.rpc.bind(rawSupabase), crew.id, org.id, nextAllow, nextList) : { error: { message: 'v2_unsupported' } };
+      setBusy(false);
+      if (r.error) return onError(friendlyErr(r.error.message, t));
+      onNote(t('crew.allow.saved')); onChanged(); return;
+    }
     const res = await supabase.from('msgr_crews').update({ allow: nextAllow, allow_users: nextAllow === 'list' ? nextList : [] }).eq('id', crew.id).select('id');
     setBusy(false);
     if (res.error) return onError(/msgr_policy_locked/.test(res.error.message) ? t('err.policyLocked') : res.error.message);
