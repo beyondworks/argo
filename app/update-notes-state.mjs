@@ -50,6 +50,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.114': Object.freeze(['updates.note.freeLocal', 'updates.note.proQuota']),
   // 0.1.115 — msgr2Ready: 새 메신저(v2)와 연결할 준비 — 메신저가 열리면 이 버전 그대로 씀(#1128, 공개 전에는 운영 스위치로 멈춤) · freeNoMsgrServer: 무료 계정은 메신저 서버에 아무것도 저장하지 않음(#1128·201700) · connStability: 연결 안정성과 보안 개선(#1107·#1036·#1111)
   '0.1.115': Object.freeze(['updates.note.msgr2Ready', 'updates.note.freeNoMsgrServer', 'updates.note.connStability']),
+  // 0.1.116 — orgMemorySplit: 조직 방 대화를 개인 기억에 섞지 않고 조직 칸에, 조직을 나가면 이 PC에서 회수(#1145·#1144)
+  '0.1.116': Object.freeze(['updates.note.orgMemorySplit']),
 });
 
 export function stableVersion(value) {
