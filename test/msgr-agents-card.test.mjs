@@ -32,13 +32,13 @@ test('봇 = 개인 등급(클라이언트 crewTier, 2026-09-24 — Argo 에이�
   assert.doesNotMatch(app, /<RailSection id="agents"/, '에이전트 절은 하나(유건 제보 2026-09-12: 디렉터리 절과 내 에이전트 절이 같은 크루를 두 번 보였다)');
   assert.match(app, /<RailSection id="mine" label=\{`\$\{t\('rail\.agents'\)\} · \$\{railVisible\.length\}`\}/, '절 제목 = 에이전트 · **보이는** 수(다른 멤버의 크루는 빼고 센다 — 유건 2026-09-16)');
   assert.match(app, /\['mine\.company', 'rail\.agents\.company', railCompany\]\]/, '묶음은 내 에이전트·내 외부 에이전트·회사 크루 — 다른 멤버의 에이전트(봇 포함) 묶음은 없다(유건 2026-09-24)');
-  assert.match(app, /function RailFold\(\{ id, label, count, children \}\)/, '묶음마다 접었다 편다(유건 2026-09-16) — 접힘은 구역과 같은 저장소');
+  assert.match(app, /function RailFold\(\{ id, label, count, children(, defaultClosed = false)? \}\)/, '묶음마다 접었다 편다(유건 2026-09-16) — 접힘은 구역과 같은 저장소(기본 접힘 옵션 defaultClosed: 옛 봇 묶음, 재공개 전 검수 c)');
   assert.match(app, /const railVisible = crews\.filter\(\(c\) => c\.owner_user_id === uid \|\| crewTier\(c, org\) === 'company'\);/, '다른 멤버의 에이전트(봇 포함)는 레일에서 제외');
   for (const k of ['rail.src.argo', 'rail.src.hermes', 'rail.src.openclaw', 'rail.src.custom']) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-node-cmd code \{[^}]*white-space: pre-wrap;/, '설정 두 줄이 줄바꿈으로 보인다(실측: 한 줄로 붙어 보였다)');
   assert.match(app, /crew\.hosting === 'resident' \? 'resident' : crew\.hosting === 'bot' \? 'bot' : 'local'/, '시트 hosting 표기');
   assert.match(app, /htmlFor=\{`role-\$\{crew\.id\}`\}\>\{t\('crew\.role'\)\}<\/label>[\s\S]*?crew\.hosting === 'bot' \? await supabase\.rpc\('msgr_bot_set_role', \{ bot_crew: crew\.id, new_role_text: v \}\)/, '봇 역할 변경은 잠금·권한을 검증하는 RPC를 지난다');
-  assert.match(app, /<OrgCard part="node"[^\n]*\n\s*\{isAdmin && <OrgCard part="agents"/, '크루 탭에서 노드 카드 다음에 에이전트 카드(관리자만)');
+  assert.match(app, /<OrgCard part="node"[^\n]*\n\s*\{\(isAdmin \|\| V2\) && <OrgCard part="agents"/, '크루 탭에서 노드 카드 다음에 에이전트 카드(관리자만, v2는 누구나 — VPS 준비 중 안내, 재공개 전 검수)');
 });
 
 test('카드: 생성·회전은 RPC(토큰은 응답에서 setup 상태로만) · 설정 두 줄 = URL+토큰 · 해제는 인라인 확인 · 표는 폐기 제외', () => {

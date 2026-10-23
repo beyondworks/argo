@@ -252,7 +252,7 @@ test('셸: #1085에서 숨긴 단추를 켰다(신고·친구 요청·새 채널
   assert.doesNotMatch(src, /\.\.\.\(V2 \? \[\] : \[\{ key: 'new'/);
   assert.doesNotMatch(src, /!V2 && <button type="button" className="btn msgr-chbrowse"/);
   assert.doesNotMatch(src, /onOrgTab && !orgBlocked && !V2 &&/);
-  for (const keep of [/isPhone && !isPersonal && !V2 && \{ icon: 'folder'/, /if \(V2 && \(props\.part === 'node' \|\| props\.part === 'agents'\)\) return null;/, /\{!V2 && <>\{!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button"/, /const canMuteCrew = !V2 &&/]) assert.match(src, keep);
+  for (const keep of [/isPhone && !isPersonal && !V2 && \{ icon: 'folder'/, /if \(V2 && \(props\.part === 'node' \|\| props\.part === 'agents'\)\) return props\.part === 'agents' \|\| props\.solo \? <V2VpsSoonCard \/> : null;/, /\{!V2 && <>\{!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button"/, /const canMuteCrew = !V2 &&/]) assert.match(src, keep);
 });
 
 test('두 계정(#1088 검수 1): 친구(민지)가 새 1:1을 열면 방은 친구 개인 공간에 있어도 내 개인 목록·안 읽음·합계·찾기·방 사건에 보인다(픽스처 대역)', async () => {

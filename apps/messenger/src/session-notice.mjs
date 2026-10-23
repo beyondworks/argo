@@ -16,3 +16,8 @@ export function sessionTransition(store, next, { pending = false, deleting = fal
   try { store?.removeItem(SIGNED_IN_MARK); } catch { /* 저장 불가 */ }
   return had && !pending && !deleting ? 'expired' : null;
 }
+
+/** 다시 로그인했을 때 남길 안내(순수). 로그인 화면에 이유를 적은 안내 — 세션 만료(auth.sessionExpired)와 signOutNotice로 띄운 것
+    (v2 '보안을 위해 다시 로그인'·기기 폐기·모든 기기 로그아웃, screenKey) — 는 지운다: 로그인한 뒤 빨간 토스트로 남았다(유건 사용 검수 2026-10-23 F8).
+    로그아웃 중에 생긴 실패 안내(push.logout.* — 로그인이 남아 있을 때 띄운다)는 그대로 둔다. */
+export const noticeAfterSignIn = (cur, screenKey = null) => (cur === 'auth.sessionExpired' || (screenKey && cur === screenKey) ? '' : cur);

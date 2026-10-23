@@ -25,12 +25,14 @@ export function oneListOrgs(rows) {
   return [...m.values()].sort((a, b) => a.name.localeCompare(b.name, 'ko') || a.id.localeCompare(b.id));
 }
 
-/** 거르개. filter: all | unread(음소거 제외 안 읽음) | agents(에이전트가 있는 방), org: 조직 id(그 조직 방만) 또는 null */
+/** 거르개. filter: all | unread(음소거 제외 안 읽음) | agents(에이전트와의 대화), org: 조직 id(그 조직 방만) 또는 null
+    agents = 에이전트 1:1(peer_kind agent) 또는 사람은 나뿐이고 에이전트가 있는 방(내 에이전트 회의방·팀 공간 에이전트 1:1).
+    사람이 둘 이상인 방은 에이전트가 들어 있어도 빼낸다 — 에이전트가 파견된 팀 채널·사람 방이 다 나와 칩이 '전체'와 다르지 않았다(유건 사용 검수 2026-10-23). */
 export function oneListView(rows, { filter = 'all', org = null, q = '' } = {}) {
   const needle = String(q ?? '').trim().toLowerCase();
   return (rows ?? []).filter((r) => (!org || (r.space_kind === 'team' && r.space_id === org))
     && (filter !== 'unread' || (r.unread > 0 && !r.muted))
-    && (filter !== 'agents' || r.peer_kind === 'agent' || r.agents > 0)
+    && (filter !== 'agents' || r.peer_kind === 'agent' || (r.agents > 0 && (r.users ?? 0) <= 1))
     && (!needle || String(r._title ?? r.room_name ?? '').toLowerCase().includes(needle) || String(r.space_name ?? '').toLowerCase().includes(needle)));
 }
 

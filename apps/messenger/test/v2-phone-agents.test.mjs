@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { splitLegacyBots } from '../src/v2/legacy-bots.mjs';
 import { v2MyAgents, groupAgents, ownRowsReader } from '../src/agent-groups.mjs';
 import { stampFetched } from '../src/presence-clock.mjs';
 import { withoutCopies } from '../src/mention-candidates.mjs';
@@ -27,7 +28,7 @@ test('폰 에이전트 탭 묶음: v2 행은 에이전트마다 한 줄(외부 �
 test('App 배선: v2는 loadMyAgents가 readOwnCrews 행으로 목록을 만든다(옛 개인 행·쌍둥이 행 조합은 v2 끔에서만)', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   const fn = app.slice(app.indexOf('  const loadMyAgents = useCallback('), app.indexOf('}, [uid]); // eslint-disable-line react-hooks/exhaustive-deps -- readOwnCrews는 uid로만 바뀐다'));
-  const v2 = fn.indexOf('if (V2) { setMyAgents(stampFetched(v2MyAgents(own.rows, uid))); return; }'), old = fn.indexOf('withoutCopies(personal ?? [])');
+  const v2 = fn.indexOf("if (V2) { const { agents, legacy } = splitLegacyBots(v2MyAgents(own.rows, uid)); setLegacyBots(legacy); setMyAgents(stampFetched(agents)); return; }"), old = fn.indexOf('withoutCopies(personal ?? [])');
   assert.ok(v2 > 0 && old > v2, 'v2 갈래가 옛 조합보다 먼저');
   assert.ok(fn.indexOf('setOwnCrews(newerOwn(own));') < v2, 'ownCrews(온보딩 hasAgent 재료)는 v2에서도 그대로 채운다');
 });
@@ -37,21 +38,23 @@ test('loadMyAgents(실제 본문, v2 모양 자료): v2면 내 에이전트 2명
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   const start = app.indexOf('const loadMyAgents = useCallback(') + 'const loadMyAgents = useCallback('.length;
   const end = app.indexOf('\n  }, [uid]);', start) + 4;
-  const own = [row('ag-1', { display_name: '리서치' }), row('ag-2', { display_name: '정리봇' })]; // v2 CrewBuilder: org_id null
+  const own = [row('ag-1', { display_name: '리서치' }), row('ag-2', { display_name: '정리봇' }), row('ag-3', { slug: 'bot-0804ccfb168c', display_name: 'bot-0804ccfb168c', _legacy_bot: true })]; // v2 CrewBuilder: org_id null. ag-3 = 이름 없는 옛 봇(CrewBuilder 표지)
   const supabase = {
     from() { return { select() { return this; }, eq() { return this; }, in() { return this; }, then(res, rej) { return Promise.resolve(own).then(res, rej); } }; },
     rpc() { return Promise.resolve([]); }, // msgr_personal_room_crews — v2 'none'
   };
   const run = async (V2) => {
     let mine = null; let ownState = null;
-    const deps = { V2, v2MyAgents, uid: ME, faceCol: { missingAt: Date.now() }, q: async (x) => await x, supabase, stampFetched, withoutCopies, setAgentPins: () => {}, setMyAgents: (v) => { mine = v; },
+    let legacyState = null;
+    const deps = { V2, v2MyAgents, splitLegacyBots, setLegacyBots: (v) => { legacyState = v; }, uid: ME, faceCol: { missingAt: Date.now() }, q: async (x) => await x, supabase, stampFetched, withoutCopies, setAgentPins: () => {}, setMyAgents: (v) => { mine = v; },
       readOwnCrews: ownRowsReader(async () => own), syncEpochRef: { current: 0 }, newerOwn: (o) => (cur) => (cur && cur.at >= o.at ? cur : o), setOwnCrews: (f) => { ownState = typeof f === 'function' ? f(ownState) : f; } };
     await new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps))();
-    return { mine, ownState };
+    return { mine, ownState, legacyState };
   };
   const v2 = await run(true);
-  assert.deepEqual(v2.mine.map((c) => c.display_name).sort(), ['리서치', '정리봇']);
-  assert.equal(v2.ownState.rows.length, 2, '온보딩 hasAgent 재료(ownCrews.rows)도 2');
+  assert.deepEqual(v2.mine.map((c) => c.display_name).sort(), ['리서치', '정리봇'], '이름 없는 옛 봇은 기본 목록 밖');
+  assert.deepEqual(v2.legacyState.map((c) => c.id), ['ag-3'], '옛 봇은 접힌 기타로');
+  assert.equal(v2.ownState.rows.length, 3, '온보딩 hasAgent 재료(ownCrews.rows)는 그대로');
   const legacy = await run(false);
   assert.deepEqual(legacy.mine, [], '옛 조합은 v2 자료에서 0명(고치기 전 결함)');
 });

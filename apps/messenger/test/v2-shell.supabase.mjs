@@ -100,13 +100,16 @@ function query(table) {
 
 const rpcs = {
   argo_min_app_version: () => null, msgr2_service_pause: () => null,
-  msgr2_device_register: () => { if (state.free) throw Object.assign(new Error('msgr2_pro_required'), { code: '42501' }); /* ?free=1 — 무료 계정(새 기기 등록은 Pro만, #1133 검수) */ if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
+  msgr2_device_register: () => { if (state.free) throw Object.assign(new Error('msgr2_pro_required'), { code: '42501' }); /* ?free=1 — 무료 계정(새 기기 등록은 Pro만, #1133 검수) */ if (state.loginReq) { state.loginReq -= 1; throw Object.assign(new Error('device_login_required'), { code: '42501' }); } /* ?loginreq=N — 처음 N번 '다시 로그인 필요'(10분 규칙, F8 재로그인 안내 화면) */ if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
   msgr2_catch_up: () => ({ rooms: [], next_since: 202 }),
   msgr2_my_personal_space: () => P,
   msgr2_work_status: ({ p_work }) => ({ work: p_work, effects: [] }),
   msgr2_approval_decide: ({ p_approval, p_decision }) => { const a = state.tables.msgr2_approvals.find((x) => x.id === p_approval); a.state = p_decision === 'approve' ? 'approved' : 'rejected'; const w = state.tables.msgr2_works.find((x) => x.id === a.work_id); w.state = 'running'; fire(`v2:u:${uid}`, 'work', { work: w }); return a.state; },
   msgr2_work_cancel: ({ p_work }) => { const w = state.tables.msgr2_works.find((x) => x.id === p_work); w.state = 'cancelled'; fire(`v2:u:${uid}`, 'work', { work: w }); return 'cancelled'; },
-  msgr2_set_seat: ({ p_agent, p_space, p_remove }) => { const s = state.tables.msgr2_agent_seats; const row = s.find((x) => x.agent_id === p_agent && x.space_id === p_space); if (p_remove) { if (row) row.removed_at = new Date().toISOString(); } else if (row) row.removed_at = null; else s.push({ agent_id: p_agent, space_id: p_space, allow: 'all', allow_users: [], removed_at: null }); return null; },
+  // 실제 서버(20261020200000 msgr2_set_seat·20261023180000 msgr2_seat_ensure)와 같은 의미 — 종전 가짜는 p_allow를 무시해 'all' 덮어쓰기 결함(재공개 전 검수 F1)을 못 잡았다
+  msgr2_set_seat: ({ p_agent, p_space, p_allow = 'all', p_users = [], p_remove = false }) => { const s = state.tables.msgr2_agent_seats; const row = s.find((x) => x.agent_id === p_agent && x.space_id === p_space); if (p_remove) { if (row && !row.removed_at) row.removed_at = new Date().toISOString(); return null; } if (row) Object.assign(row, { allow: p_allow, allow_users: [...(p_users ?? [])], removed_at: null }); else s.push({ agent_id: p_agent, space_id: p_space, allow: p_allow, allow_users: [...(p_users ?? [])], removed_at: null }); return null; },
+  msgr2_seat_scope: ({ p_agent, p_space, p_allow, p_users = [] }) => { const row = state.tables.msgr2_agent_seats.find((x) => x.agent_id === p_agent && x.space_id === p_space); if (!row || row.removed_at) throw Object.assign(new Error('msgr2_seat_not_found'), { code: 'P0002' }); row.allow = p_allow; row.allow_users = p_allow === 'list' ? [...new Set(p_users)] : []; return 'saved'; }, // 서버(20261023180000 msgr2_seat_scope)와 같이 빠진 자리는 되살리지 않는다
+  msgr2_seat_ensure: ({ p_agent, p_space }) => { const s = state.tables.msgr2_agent_seats; const row = s.find((x) => x.agent_id === p_agent && x.space_id === p_space); if (!row) { s.push({ agent_id: p_agent, space_id: p_space, allow: 'all', allow_users: [], removed_at: null }); return 'created'; } if (row.removed_at) { row.removed_at = null; return 'restored'; } return 'kept'; },
   msgr2_devices_list: () => state.devices.map((d) => ({ ...d })),
   msgr2_device_revoke: ({ p_device }) => { const d = state.devices.find((x) => x.id === p_device); if (!d || d.revoked_at) return false; d.revoked_at = new Date().toISOString(); d.state = 'revoked'; if (d.is_current) setTimeout(() => fire(`v2:u:${uid}`, 'device_revoked', { device_id: d.id }), 50); return true; },
   // U6d(방·공간·초대·안 읽음·찾기·신고) 대역 — 메모리 표를 바꾸고 v2:u: 방 사건을 보낸다
@@ -168,6 +171,23 @@ const rpcs = {
     if (state.failDecline) throw new Error('msgr2_app_device_required'); // state.failDecline = true면 실패(미리보기 안 오류 확인)
     const had = state.myInvites.some((i) => i.code === p_code && Date.parse(i.expires_at) > Date.now()); state.myInvites = state.myInvites.filter((i) => i.code !== p_code); return had; }, // 서버처럼: 이미 정해졌으면(만료·취소) false
   msgr2_invite_accept: ({ p_code }) => { const mine = state.myInvites.find((i) => i.code === p_code); if (mine) { state.myInvites = state.myInvites.filter((i) => i.code !== p_code); fire(`v2:u:${uid}`, 'spaces', { space_id: mine.space_id }); } return { space_id: T, role: 'member', rooms: [GEN], already_member: true }; },
+  // 재공개 전 검수 b·F7(서버 20261023180000)과 같은 의미의 대역 — 거부 코드는 {ok:false, code}
+  msgr2_room_delete_files: ({ p_room }) => { const T_ = state.tables; if (T_.msgr2_works.some((w) => w.room_id === p_room && ['offered', 'accepted', 'running', 'awaiting_approval'].includes(w.state))) return { ok: false, code: 'work_active' };
+    return { ok: true, paths: T_.msgr2_attachments.filter((a) => a.room_id === p_room).map((a) => a.storage_path.replace(/^msgr\//, '')) }; },
+  msgr2_room_delete: ({ p_room }) => { const T_ = state.tables; const r = T_.msgr2_rooms.find((x) => x.id === p_room); if (!r) return { ok: false, code: 'forbidden' };
+    const mids = new Set(T_.msgr2_messages.filter((m) => m.room_id === p_room).map((m) => m.id));
+    T_.msgr2_rooms = T_.msgr2_rooms.filter((x) => x.id !== p_room); T_.msgr2_room_members = T_.msgr2_room_members.filter((x) => x.room_id !== p_room);
+    T_.msgr2_messages = T_.msgr2_messages.filter((m) => m.room_id !== p_room); T_.msgr2_attachments = T_.msgr2_attachments.filter((a) => !mids.has(a.message_id) && a.room_id !== p_room);
+    state.deletedRooms = [...(state.deletedRooms ?? []), p_room]; fire(`v2:u:${uid}`, 'rooms', { space_id: r.space_id, room_id: p_room, removed: true }); return { ok: true, messages: mids.size }; },
+  msgr2_room_set: ({ p_room, p_name, p_memory, p_archive }) => { const r = state.tables.msgr2_rooms.find((x) => x.id === p_room); if (!r) return { ok: false, code: 'forbidden' };
+    if (r.archived_at && (p_name != null || p_memory != null)) return { ok: false, code: 'archived' };
+    if (p_name != null) r.name = String(p_name).trim(); if (p_memory != null) r.memory = p_memory; if (p_archive) r.archived_at = r.archived_at ?? new Date().toISOString(); roomEvent(p_room); return { ok: true, changed: true }; },
+  msgr2_set_room_agent_policy: ({ p_room, p_policy }) => { const r = state.tables.msgr2_rooms.find((x) => x.id === p_room); if (!r) throw Object.assign(new Error('msgr2_forbidden'), { code: '42501' }); r.agent_policy = p_policy; roomEvent(p_room); return null; },
+  msgr2_set_member_role: ({ p_space, p_user, p_role }) => { const m = state.tables.msgr2_space_members.find((x) => x.space_id === p_space && x.user_id === p_user && !x.removed_at); if (!m) throw Object.assign(new Error('msgr2_forbidden'), { code: '42501' }); m.role = p_role; return null; },
+  msgr2_space_member_remove: ({ p_space, p_user }) => { const m = state.tables.msgr2_space_members.find((x) => x.space_id === p_space && x.user_id === p_user && !x.removed_at); if (!m) return false; m.removed_at = new Date().toISOString(); return true; },
+  msgr2_space_display_name_set: ({ p_space, p_name }) => { const m = state.tables.msgr2_space_members.find((x) => x.space_id === p_space && x.user_id === uid); if (!m) return { ok: false, code: 'forbidden' }; m.display_name = String(p_name ?? '').trim() || null; return { ok: true, changed: true }; },
+  msgr2_message_edit: ({ p_id, p_body }) => { const m = state.tables.msgr2_messages.find((x) => x.id === p_id); if (!m || m.author_user_id !== uid || m.deleted_at) return { ok: false, code: 'forbidden' }; m.body = p_body; m.edited_at = new Date().toISOString(); return { ok: true }; },
+  msgr2_message_delete: ({ p_id }) => { const m = state.tables.msgr2_messages.find((x) => x.id === p_id); if (!m || m.author_user_id !== uid) return { ok: false, code: 'forbidden' }; m.body = ''; m.deleted_at = m.deleted_at ?? new Date().toISOString(); return { ok: true }; },
   // 그대로 쓰는 옛 RPC(설계 1-2절)
   msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: '민지', handle: 'minji' }],
   msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => ({ user_id: id, display_name: id === uid ? '유건' : '민지' })),
@@ -216,6 +236,8 @@ state.devices = [
   { id: 'd0000000-0000-4000-8000-000000000004', kind: 'app', app: 'messenger', app_version: '0.1.5', registered_at: at(60000), created_at: at(90000), state: 'expired', is_current: false },
 ];
 state.failRegister = Number(new URLSearchParams(globalThis.location?.search ?? '').get('failreg') || 0);
+state.loginReq = Number(new URLSearchParams(globalThis.location?.search ?? '').get('loginreq') || 0);
+state.signInAgain = () => { state.signedIn = true; const sess = { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' }; for (const cb of state.authCbs) cb('SIGNED_IN', sess); }; // 화면 시험: 다시 로그인한 것처럼
 state.free = new URLSearchParams(globalThis.location?.search ?? '').get('free') === '1';
 // 한 목록 시험 자료(메신저 단순화 2단계): 두 번째 조직(Lumen 연구)의 채널, 개인 여러 명 방(주말 모임), 친구가 연 1:1(친구 개인 공간)
 { const T2 = '7e000000-0000-4000-8000-0000000000ee', LAB = '7f000000-0000-4000-8000-000000000005', GROUP = '7f000000-0000-4000-8000-000000000006', FDM = '7f000000-0000-4000-8000-000000000007';
@@ -233,6 +255,8 @@ state.free = new URLSearchParams(globalThis.location?.search ?? '').get('free') 
     { id: 303, room_id: FDM, author_kind: 'user', author_user_id: mate, kind: 'text', body: '내일 점심 같이 해요', meta: {}, mentions: [], created_at: at(90) });
   T_.msgr2_prefs.push({ room_id: GEN, user_id: uid, muted: false, pinned: true }); }
 
+if (new URLSearchParams(globalThis.location?.search ?? '').get('admin') === '1') { const me = state.tables.msgr2_space_members.find((m) => m.space_id === T && m.user_id === uid); if (me) me.role = 'admin'; } // ?admin=1 — 나를 이 팀의 관리자로(관리자 전용 설정 화면)
+{ const n = Number(new URLSearchParams(globalThis.location?.search ?? '').get('legacybots') || 0); for (let i = 0; i < n; i++) { const slug = `bot-${(0x0804ccfb1680 + i).toString(16).padStart(12, '0')}`; state.tables.msgr2_agents.push({ id: `b0000000-0000-4000-8000-${String(i).padStart(12, '0')}`, owner_user_id: uid, display_name: i % 2 ? slug : '', slug, role_text: null, hosting: 'bot', status: 'active', created_at: at(100 + i) }); } } // ?legacybots=N — 이름 없는 옛 봇 N개(자리 없음, 유건 계정 45개 모양)
 if (new URLSearchParams(globalThis.location?.search ?? '').get('noagents') === '1') { state.tables.msgr2_agents = state.tables.msgr2_agents.filter((a) => a.owner_user_id !== uid); state.tables.msgr2_room_members = state.tables.msgr2_room_members.filter((m) => !(m.member_kind === 'agent' && [A, C].includes(m.member_id))); state.tables.msgr2_agent_seats = state.tables.msgr2_agent_seats.filter((x) => x.agent_id !== A); } // ?noagents=1 — 내 에이전트 0명 계정(빈 안내)
 // 두 번째 계정(민지)이 나에게 새 1:1을 연다 — 서버처럼 방을 민지의 개인 공간(PM)에 두고, 나에게 rooms 사건과 글 방송을 보낸다(#1088 검수 1: 받는 쪽에 보여야 한다)
 state.friendOpens = (body = '안녕하세요, 민지예요') => {

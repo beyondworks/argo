@@ -14,13 +14,15 @@ const rows = [
   row({ id: 'dm-agent', room_kind: 'direct', peer_kind: 'agent', peer_id: 'a1', unread: 2 }),
   row({ id: 'dm-friend', room_kind: 'direct', peer_kind: 'user', peer_id: 'u2' }),
   row({ id: 'group', room_kind: 'private', room_name: 'dm:주말 모임', agents: 1 }),
+  row({ id: 'crew', space_id: T1, space_kind: 'team', space_name: 'Beyond 팀', room_name: 'Lean Crew', users: 5, agents: 3 }), // 에이전트가 파견된 사람 채널
+  row({ id: 'meet', room_kind: 'private', room_name: '회의방', users: 1, agents: 3 }), // 나 + 내 에이전트들
 ];
 
 test('목록 읽기: msgr2_inbox 한 번(상한 200), 무료·Pro 끝난 계정은 pro 오류(FreeGate)', async () => {
   const calls = []; const ok = { rpc: async (fn, a) => { calls.push([fn, a]); return { data: rows, error: null }; } };
   const r = await loadOneList(ok);
   assert.deepEqual(calls, [['msgr2_inbox', { p_limit: ONE_LIST_LIMIT }]]);
-  assert.equal(r.rows.length, 5); assert.equal(r.more, false); assert.equal(r.error, null);
+  assert.equal(r.rows.length, 7); assert.equal(r.more, false); assert.equal(r.error, null);
   const full = await loadOneList({ rpc: async () => ({ data: Array.from({ length: 200 }, (_, i) => row({ id: `r${i}` })), error: null }) });
   assert.equal(full.more, true, '상한만큼 왔으면 더 있을 수 있다(검색 안내)');
   const pro = await loadOneList({ rpc: async () => ({ data: null, error: { message: 'msgr2_pro_required' } }) });
@@ -29,11 +31,11 @@ test('목록 읽기: msgr2_inbox 한 번(상한 200), 무료·Pro 끝난 계정�
   assert.equal(other.error.pro, false, '다른 오류는 Pro 안내로 바꾸지 않는다');
 });
 
-test('거르개: 전체·안 읽음(음소거 제외)·에이전트(1:1 상대 또는 방에 에이전트)·조직(그 조직 방만)·검색어(방·조직 이름)', () => {
+test('거르개: 전체·안 읽음(음소거 제외)·에이전트(에이전트 1:1 또는 사람은 나뿐인 에이전트 방)·조직(그 조직 방만)·검색어(방·조직 이름)', () => {
   const ids = (v) => v.map((r) => r.room_id);
-  assert.deepEqual(ids(oneListView(rows)), ['gen', 'lab', 'dm-agent', 'dm-friend', 'group']);
+  assert.deepEqual(ids(oneListView(rows)), ['gen', 'lab', 'dm-agent', 'dm-friend', 'group', 'crew', 'meet']);
   assert.deepEqual(ids(oneListView(rows, { filter: 'unread' })), ['gen', 'dm-agent'], '음소거 방(lab)은 안 읽음 거르개에 안 나온다');
-  assert.deepEqual(ids(oneListView(rows, { filter: 'agents' })), ['dm-agent', 'group']);
+  assert.deepEqual(ids(oneListView(rows, { filter: 'agents' })), ['dm-agent', 'meet'], '에이전트와의 대화만 — 사람이 둘 이상인 방(주말 모임·Lean Crew)은 에이전트가 있어도 빠진다(유건 사용 검수 2026-10-23)');
   assert.deepEqual(ids(oneListView(rows, { org: T2 })), ['lab']);
   assert.deepEqual(ids(oneListView(rows, { q: 'lumen' })), ['lab'], '조직 이름으로도 찾는다');
   assert.equal(oneListUnread(rows), 5, '탭 숫자 = 음소거 뺀 안 읽음 합');

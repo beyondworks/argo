@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLang } from '@argo/i18n';
 import { t as tm } from '../i18n.js';
 import { I } from '../icons.jsx';
+import { openExternalUrl } from '../media-io.js'; // 결제 링크 — Tauri 웹뷰는 target=_blank를 무시한다(재공개 전 검수 F3)
 import { watchLinkState, accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, meetingPickable, deriveRun, errorKey, limitKey, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_MIN, MEETING_ROUNDS, TITLE_MAX, BOT_KINDS } from './model.mjs';
 import { usePeople, PeopleList, PeopleActions, PeopleSheets } from './People.jsx';
 import { addFiles, canSend, toUpload, formatBytes, fileIcon, isImage, legacyRoom, peopleErrorKey, createReadMarker } from './people.mjs';
@@ -40,7 +41,7 @@ export function FreeGate({ t, purchase, onRecheck, onSignOut }) {
       <h1>{t('aplus.free.title')}</h1>
       <p>{t('aplus.free.body')}</p>
       <ul className="ap-list-plain"><li>{t('aplus.free.f1')}</li><li>{t('aplus.free.f2')}</li><li>{t('people.free.f4')}</li><li>{t('aplus.free.f3')}</li></ul>
-      {purchase?.url ? <a className="btn btn-primary" href={purchase.url} target="_blank" rel="noreferrer">{t('aplus.free.upgrade')}</a> : <p className="ap-muted">{t('aplus.free.auto')}</p>}
+      {purchase?.url ? <a className="btn btn-primary" href={purchase.url} target="_blank" rel="noreferrer" onClick={(e) => { e.preventDefault(); openExternalUrl(purchase.url); }}>{t('aplus.free.upgrade')}</a> : <p className="ap-muted">{t('aplus.free.auto')}</p>}
       <div className="ap-row"><button type="button" className="btn" onClick={onRecheck}>{t('aplus.plan.recheck')}</button><button type="button" className="btn ap-ghost" onClick={onSignOut}>{t('aplus.me.signOut')}</button></div>
     </div></div>
   );
