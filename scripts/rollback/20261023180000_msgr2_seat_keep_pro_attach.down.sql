@@ -449,4 +449,9 @@ end $$;
 drop function if exists public._msgr2_storage_delete(text);
 drop function if exists public._msgr2_room_delete_check(uuid, uuid);
 drop function if exists public._msgr2_room_deletable(uuid, uuid);
+-- F7: 새 함수만 지운다(표·행은 바꾸지 않았다)
+drop function if exists public.msgr2_room_set(uuid, text, boolean, boolean);
+drop function if exists public.msgr2_space_display_name_set(uuid, text);
+drop function if exists public.msgr2_message_edit(bigint, text);
+drop function if exists public.msgr2_message_delete(bigint);
 commit;

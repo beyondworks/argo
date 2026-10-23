@@ -652,3 +652,88 @@ end $$;
 drop policy if exists msgr2_files_delete on storage.objects;
 create policy msgr2_files_delete on storage.objects for delete to authenticated
   using (bucket_id = 'msgr' and public._msgr2_storage_delete(name));
+
+-- ── F7. v2에서 직접 쓰기가 거부되던 화면 동작의 서버 함수(재공개 전 검수 F7, 총괄 결정 2026-10-23 "전부 결함으로 고친다") ─────────
+-- 원인: 앱 v2 어댑터가 옛 표 쓰기(msgr_channels·msgr_org_members·msgr_messages update)를 v2 표 직접 쓰기로 보냈고, v2 표에는 고치기 권한이 없다(20261020200000~).
+--   화면에서 보관·설정 저장·방 기억·내 표시 이름·내 글 고치기/지우기가 모두 permission denied로 끝났다(조사: 공유 노트 f7-v2-direct-writes.md).
+-- 처방: 주인·권한을 확인하는 최소 정의자 RPC. 멤버 역할·내보내기는 이미 있는 msgr2_set_member_role·msgr2_space_member_remove를 앱이 부른다(서버 변경 없음).
+--   권한(v1과 같거나 더 좁게):
+--     방 보관·기억 켜기/끄기: 1:1 = 방에 있는 참가자, 그 밖 = 방 삭제와 같은 판정(관리 또는 만든 사람이면서 방에 있음 — _msgr2_room_deletable)
+--     방 이름: 1:1이 아닌 방만, 같은 판정. 주제(topic)·채널 관리자·제외 목록은 v2에 없다(앱이 보내지 않는다)
+--     내 표시 이름: 그 공간의 활동 멤버 본인 행만(1~40자, 빈 값 = 지움)
+--     글 고치기: 내가 쓴 사람 글(text)이고 지워지지 않았고 그 방에 쓸 수 있을 때. 글 지우기: 내가 쓴 사람 글이고 그 방을 읽을 수 있을 때(v1 msgr_messages_update = 글쓴이만)
+--   모두 앱 기기만(_msgr2_need_app). 값이 같으면 쓰지 않는다(쓰기 0). 보관 속도 제한은 기존 트리거(msgr2_rate_guard archived_at)가 그대로 센다.
+-- 부하: 사용자가 누를 때만. 주기 작업 없음.
+
+create or replace function public.msgr2_room_set(p_room uuid, p_name text default null, p_memory boolean default null, p_archive boolean default null) returns jsonb
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare uid uuid := public._msgr2_need_app(); r public.msgr2_rooms; nm text := btrim(p_name); ok boolean; n int;
+begin
+  select * into r from public.msgr2_rooms where id = p_room;
+  if not found then return public._msgr2_rej('forbidden'); end if;
+  ok := case when r.kind = 'direct'
+             then exists (select 1 from public.msgr2_room_members m where m.room_id = r.id and m.member_kind = 'user' and m.member_id = uid and m.removed_at is null)
+                  and coalesce((public._msgr2_access_for(r.id, uid)).read, false)
+             else public._msgr2_room_deletable(r.id, uid) end;
+  if not ok then return public._msgr2_rej('forbidden'); end if;
+  if p_archive is not null and p_archive is distinct from true then return public._msgr2_rej('bad_request'); end if; -- 보관 되돌리기는 앱에 없다
+  if p_name is not null and (r.kind = 'direct' or char_length(nm) not between 1 and 80) then return public._msgr2_rej('bad_request'); end if;
+  if r.archived_at is not null and (p_name is not null or p_memory is not null) then return public._msgr2_rej('archived'); end if;
+  update public.msgr2_rooms set name = coalesce(nm, name), memory = coalesce(p_memory, memory),
+         archived_at = case when p_archive then coalesce(archived_at, now()) else archived_at end
+   where id = r.id
+     and (name, memory, archived_at is not null) is distinct from (coalesce(nm, name), coalesce(p_memory, memory), coalesce(p_archive, archived_at is not null));
+  get diagnostics n = row_count;
+  if n > 0 then
+    perform public._msgr2_send_u(x, 'rooms', jsonb_build_object('space_id', r.space_id, 'room_id', r.id)) from public._msgr2_room_humans(r.id) x;
+  end if;
+  return jsonb_build_object('ok', true, 'changed', n > 0);
+end $$;
+revoke all on function public.msgr2_room_set(uuid, text, boolean, boolean) from public, anon;
+grant execute on function public.msgr2_room_set(uuid, text, boolean, boolean) to authenticated;
+
+create or replace function public.msgr2_space_display_name_set(p_space uuid, p_name text) returns jsonb
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare uid uuid := public._msgr2_need_app(); nm text := nullif(btrim(coalesce(p_name, '')), ''); n int;
+begin
+  if nm is not null and char_length(nm) > 40 then return public._msgr2_rej('bad_request'); end if;
+  if not exists (select 1 from public.msgr2_space_members m where m.space_id = p_space and m.user_id = uid and m.removed_at is null and (m.expires_at is null or m.expires_at > now())) then
+    return public._msgr2_rej('forbidden'); end if;
+  update public.msgr2_space_members set display_name = nm where space_id = p_space and user_id = uid and display_name is distinct from nm;
+  get diagnostics n = row_count;
+  return jsonb_build_object('ok', true, 'changed', n > 0);
+end $$;
+revoke all on function public.msgr2_space_display_name_set(uuid, text) from public, anon;
+grant execute on function public.msgr2_space_display_name_set(uuid, text) to authenticated;
+
+create or replace function public.msgr2_message_edit(p_id bigint, p_body text) returns jsonb
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare uid uuid := public._msgr2_need_app(); m public.msgr2_messages;
+begin
+  select * into m from public.msgr2_messages where id = p_id for update;
+  if not found or m.author_kind <> 'user' or m.author_user_id is distinct from uid or m.kind <> 'text' or m.deleted_at is not null
+     or not coalesce((public._msgr2_access_for(m.room_id, uid)).write, false) then return public._msgr2_rej('forbidden'); end if;
+  if p_body is null or btrim(p_body) = '' then return public._msgr2_rej('bad_request'); end if;
+  if p_body is distinct from m.body then
+    update public.msgr2_messages set body = p_body, edited_at = now() where id = m.id;
+  end if;
+  return jsonb_build_object('ok', true);
+end $$;
+revoke all on function public.msgr2_message_edit(bigint, text) from public, anon;
+grant execute on function public.msgr2_message_edit(bigint, text) to authenticated;
+
+create or replace function public.msgr2_message_delete(p_id bigint) returns jsonb
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare uid uuid := public._msgr2_need_app(); m public.msgr2_messages;
+begin
+  select * into m from public.msgr2_messages where id = p_id for update;
+  if not found or m.author_kind <> 'user' or m.author_user_id is distinct from uid
+     or not coalesce((public._msgr2_access_for(m.room_id, uid)).read, false) then return public._msgr2_rej('forbidden'); end if;
+  if m.deleted_at is null then
+    update public.msgr2_messages set body = '', deleted_at = now() where id = m.id; -- 행은 남긴다(v1과 같다 — 지운 표시만)
+  end if;
+  return jsonb_build_object('ok', true);
+end $$;
+revoke all on function public.msgr2_message_delete(bigint) from public, anon;
+grant execute on function public.msgr2_message_delete(bigint) to authenticated;
+
