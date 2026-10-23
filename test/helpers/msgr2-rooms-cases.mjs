@@ -38,7 +38,8 @@ export function snapshot(db) {
 export const NEEDS_ROOMS = ['20261020201200_msgr2_invite_revoke_signal.sql', // test/msgr2-invite-revoke-pg.test.mjs
   '20261020201400_msgr2_aplus.sql', // test/msgr2-aplus-pg.test.mjs(A+ — 1:1 밖 막기 트리거가 초대 표에 걸린다)
   '20261020201500_msgr2_people.sql', // test/msgr2-people-pg.test.mjs(사람 채팅 — 관문이 초대 표를 센다)
-  '20261020201600_msgr2_rate.sql']; // test/msgr2-people-pg.test.mjs(속도 상한 — 사람 채팅 판정 _msgr2_people에 기댄다)
+  '20261020201600_msgr2_rate.sql', // test/msgr2-people-pg.test.mjs(속도 상한 — 사람 채팅 판정 _msgr2_people에 기댄다)
+  '20261023180000_msgr2_seat_keep_pro_attach.sql']; // test/msgr2-relaunch-security-pg 등 setupFull(재공개 전 검수 — msgr2_lite_guard 다시 정의가 초대 표에 걸린다)
 
 // msgr2 파일을 버전 순서로 적용하되 U6d(이 파일)만 뺀다 — 적용 전·후를 비교하려고(setup()은 U2b 뒤 파일을 모두 적용한다)
 function setupWithoutRooms(DB) {
@@ -514,13 +515,16 @@ export function run(mode) {
       } finally { db.sql(`delete from public.msgr_settings where key in ('msgr2_enabled', 'msgr2_paused')`); }
     });
 
-    test('옛 FK → 두 표 중 하나 — 신고·일지에 v2 글·방을 넣을 수 있고(조직 문서 FK는 그대로), 둘 다 없는 값은 23503, 옛 값은 그대로 된다', { skip }, () => {
+    test('옛 FK → 두 표 중 하나 — 신고·일지에 v2 글·방을 넣을 수 있고(조직 문서는 FK 대신 ref_check 트리거), 둘 다 없는 값은 23503, 옛 값은 그대로 된다', { skip }, () => {
       const mid = db.sql(`select id from public.msgr2_messages where room_id = '${PRIV}' order by id desc limit 1`);
       db.sql(`insert into public.msgr_reports (message_id, channel_id, reporter_user_id) values (${mid}, '${PRIV}', '${U.O}')`);
       db.sql(`insert into public.msgr_journal_entries (org_id, channel_id, day, line, source_msg_id) values ('${TEAM}', '${PRIV}', '2026-10-18', 'x', ${mid})`);
       const bad = (q) => { const r = db.raw(['-A', '-t', '-c', q]); return r.status === 0 ? '' : r.stderr; };
-      // 조직 문서 channel_id FK는 그대로(옛 본체 docsByIds의 msgr_channels 끼워 읽기) — v2 방 문서는 문서 단위로 미룸(PR 본문). 팀 공간 문서(channel_id null)는 된다
-      assert.equal(db.sql(`select count(*) from pg_constraint where conname = 'msgr_org_docs_channel_id_fkey'`), '1');
+      // 조직 문서 channel_id: 옛 FK(cascade)를 떼고 ref_check 트리거(20261023180000 — 방 삭제가 채널 기억 문서를 지우지 않게, 총괄 결정 2026-10-23 (a)).
+      // 그 대가: 옛 본체 docsByIds(src/gateway/msgr.mjs:439)의 msgr_channels 끼워 읽기는 FK가 없어 PGRST200 — v1 중단(msgr_paused) 동안은 돌지 않는다.
+      // v1 중단을 풀기 전에 그 조회를 수동 조인으로 바꿔야 한다(PR 본문 Risk). 팀 공간 문서(channel_id null)는 된다
+      assert.equal(db.sql(`select count(*) from pg_constraint where conname = 'msgr_org_docs_channel_id_fkey'`), '0', '옛 FK 없음');
+      assert.equal(db.sql(`select count(*) from pg_trigger where tgrelid = 'public.msgr_org_docs'::regclass and tgname = 'msgr2_ref_channel_id'`), '1', 'ref_check 트리거');
       assert.match(bad(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${TEAM}', '${PRIV}', 'rules/v2.md', 't', 'x', '${U.O}', '${U.O}')`), /msgr_doc_channel_missing/);
       db.sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${TEAM}', null, 'rules/v2-team.md', 't', 'x', '${U.O}', '${U.O}')`); // 팀 공간 문서(옛 조직 행 = v2 팀 id)
       assert.match(bad(`insert into public.msgr_reports (message_id, reporter_user_id) values (999999999, '${U.O}')`), /violates foreign key/);

@@ -64,11 +64,12 @@ before(() => {
   FA = agentRow('w', 'fa', F); XA = agentRow('w', 'xa', X);
 });
 
-test('④ Pro 전용 — 무료 주인의 1:1 글은 일을 만들지 않고 안내 1줄, 무료 본체의 agent.sync는 pro_required, Pro는 된다, 스위치 off면 통과', { skip }, () => {
+test('④ Pro 전용 — 무료 주인의 1:1 글은 msgr2_pro_required(글·일·안내 글 0), 무료 본체의 agent.sync는 pro_required, Pro는 된다, 스위치 off면 통과', { skip }, () => {
   const fr = room([FA], { owner: F });
-  say(fApp, fr, '안녕');
+  // 재공개 전 검수(2026-10-23, 20261023180000 lite절): lite에서도 Pro가 아닌 계정의 사람 글은 서버가 거부한다 — 종전 "글 + Pro 안내 1줄"에서 바뀜. A+ 앱은 거부 코드를 Pro 안내로 보인다
+  assert.match(db.asErr(F, fApp.sid, `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${fr}', 'user', '${F}', '안녕')`) ?? '', /msgr2_pro_required/);
   assert.equal(works(fr).length, 0);
-  assert.equal(JSON.parse(lastSys(fr)).limit, 'pro');
+  assert.equal(db.sql(`select count(*) from public.msgr2_messages where room_id = '${fr}'`), '0', '글·안내 글 모두 남지 않는다');
   const r = sync(fRun, [{ ws: 'w', slug: 'fa', name: 'fa', role: '', face_hash: null }], ['meeting', 'bot']);
   assert.deepEqual(r, { ok: false, code: 'pro_required', retry: false });
   assert.equal(db.sql(`select features::text from public.msgr2_devices where id = '${fRun.dev}'`), '{}', '거부된 봉투는 기능도 기록하지 않는다');
