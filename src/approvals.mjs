@@ -1,11 +1,22 @@
 // 결재함 — 되돌리기 어렵거나 외부로 나가는 행동은 크루가 실행 전 사장 승인을 받는다.
 // 크루는 request_approval 도구로 요청만 등록하고 대기, 사장이 승인하면 후속 턴이 실행을 잇는다.
-import { paths } from './workspace.mjs';
+import { paths, loadCompany } from './workspace.mjs';
 import { emitNotify } from './notify.mjs';
 import { appendEvent } from './events.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { codedError } from './coded-error.mjs'; // 화면 문구 코드(F11)
+import { linkEventScrub } from './link-memory.mjs';
+
+/** 결재 이벤트(활동 기록 events.jsonl — 개인 클라우드로 동기화, 행 합집합이라 회수할 수 없다)에 실을 action.
+    메신저 v2 링크 범위 결재는 턴 행과 같은 판정(linkEventScrub, #1150)으로 개인 공간이 확인된 방만 원문, 팀·모름·기억 안 남김은 고정 라벨(재공개 전 검수 F5).
+    결재 항목(approvals.json의 action·reason·plain)은 그대로다 — 카드가 무엇을 승인하는지 보여 줘야 한다. */
+async function eventAction(wsId, item) {
+  if (item.scope?.kind !== 'link') return { action: item.action };
+  const lang = ((await loadCompany(wsId).catch(() => null)) ?? {}).lang ?? 'ko';
+  const s = linkEventScrub({ kind: 'scope', scope: item.scope }, lang);
+  return s ? { action: s.gist, scrubbed: true } : { action: item.action };
+}
 
 const lockKey = (wsId) => `approvals:${wsId}`;
 const lockApprovals = (wsId, fn) => withLock(lockKey(wsId), fn, { file: paths(wsId).approvals }); // 프로세스 간 잠금 포함(M-b)
@@ -67,7 +78,7 @@ export async function addApproval(wsId, { slug, from, action, reason, kind = 'ac
     return it;
   });
   emitNotify({ type: 'approval', wsId, item }); // 메신저로 결재 버튼 푸시
-  await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, action: item.action, status: 'pending' });
+  await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, ...await eventAction(wsId, item), status: 'pending' });
   return item;
 }
 
@@ -120,7 +131,7 @@ export async function resolveApproval(wsId, id, approve, { resolvedBy = null } =
     await save(wsId, list);
     return it;
   });
-  await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, action: item.action, status: item.status });
+  await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, ...await eventAction(wsId, item), status: item.status });
   // 어느 창구(웹·대화창·텔레그램·슬랙)에서 확정됐든 메신저 카드의 버튼을 걷어내게 알린다(결재 UX).
   // item에 push 때 저장된 tg:{chatId,messageId}가 있으면 게이트웨이가 그 카드를 결과로 편집한다.
   emitNotify({ type: 'approval_resolved', wsId, item });
@@ -153,7 +164,7 @@ export async function expireApproval(wsId, id) {
     return it;
   });
   if (item) {
-    await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, action: item.action, status: 'expired' });
+    await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, ...await eventAction(wsId, item), status: 'expired' });
     emitNotify({ type: 'approval_resolved', wsId, item }); // 만료된 죽은 버튼도 메신저에서 정리
   }
   return item;
