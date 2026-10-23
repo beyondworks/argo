@@ -16,7 +16,8 @@ import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './pa
 import { supabase as rawSupabase, configured, q } from './supabase.js';
 import { v2Enabled } from './v2/flag.mjs';
 import { seatEnsure, seatRecall, seatSaveScope } from './v2/seat.mjs';
-import { deleteRoomV2, roomDeleteErrKey } from './v2/room-delete.mjs'; // v2 대화 삭제(재공개 전 검수 b)
+import { deleteRoomV2, roomDeleteErrKey } from './v2/room-delete.mjs';
+import { actionRoomName } from './v2/room-title.mjs'; // 확인 창·완료 안내의 방 제목 = 목록 제목(재공개 전 마지막 재검수) // v2 대화 삭제(재공개 전 검수 b)
 import { splitLegacyBots } from './v2/legacy-bots.mjs'; // 이름 없는 옛 봇은 기본 목록 밖(유건 사용 검수 2026-10-23) // 에이전트 자리 — 방에 넣기는 범위 보존(재공개 전 검수 F1)
 import { createV2ClientFor, createV2Runtime, currentV2 } from './v2/runtime.mjs';
 import { bindLifecycle } from './link/lifecycle.mjs';
@@ -2255,7 +2256,7 @@ function Shell({ session }) {
     if (c.kind === 'dm') {
       const left = await q(supabase.rpc('msgr_leave_dm', { ch: c.id }));
       if (!left) throw new Error(t('err.denied'));
-      await finishChannelAction(c, t('dm.leave.done', { name: dmName(c) }));
+      await finishChannelAction(c, t('dm.leave.done', { name: roomTitle(c) }));
       return;
     }
     const mine = crews.filter((cr) => cr.owner_user_id === uid).map((cr) => cr.id);
@@ -2272,14 +2273,14 @@ function Shell({ session }) {
     const res = await supabase.from('msgr_channel_members').delete().eq('channel_id', c.id).eq('member_kind', 'user').eq('member_id', uid).select('member_id');
     if (res.error) throw new Error(friendlyErr(res.error.message, t));
     if (!res.data?.length) throw new Error(t('err.denied'));
-    await finishChannelAction(c, t(c.kind === 'dm' ? 'dm.leave.done' : 'ch.leave.done', { name: c.kind === 'dm' ? dmName(c) : c.name }));
+    await finishChannelAction(c, t(c.kind === 'dm' ? 'dm.leave.done' : 'ch.leave.done', { name: roomTitle(c) }));
   };
   const deleteChannel = async (c) => { // 영구 삭제 — 메시지·구성원·첨부 행은 FK cascade, 저장소 객체는 Storage API
     if (V2) { // v2: 서버가 지울 수 있는지 보고 파일 목록을 준다 → Storage API로 파일 → 방 행 삭제(재공개 전 검수 b, src/v2/room-delete.mjs)
       const r = await deleteRoomV2(rawSupabase.rpc.bind(rawSupabase), rawSupabase.storage.from('msgr'), c.id);
       if (r.error) throw new Error(friendlyErr(r.error.message, t));
       if (!r.ok) throw new Error(t(roomDeleteErrKey(r.code)));
-      await finishChannelAction(c, t(c.kind === 'dm' ? 'dm.delete.done' : 'ch.delete.done', { name: c.kind === 'dm' ? dmName(c) : c.name }));
+      await finishChannelAction(c, t(c.kind === 'dm' ? 'dm.delete.done' : 'ch.delete.done', { name: roomTitle(c) }));
       return;
     }
     try { // 첨부 객체는 Storage API로 먼저(조직 관리자 권한 — 아니면 남되 채널이 사라져 열람 불가). 실패해도 채널 삭제는 진행.
@@ -2290,13 +2291,13 @@ function Shell({ session }) {
     const res = await supabase.from('msgr_channels').delete().eq('id', c.id).select('id');
     if (res.error) throw new Error(friendlyErr(res.error.message, t));
     if (!res.data?.length) throw new Error(t('ch.noEdit'));
-    await finishChannelAction(c, t(c.kind === 'dm' ? 'dm.delete.done' : 'ch.delete.done', { name: c.kind === 'dm' ? dmName(c) : c.name }));
+    await finishChannelAction(c, t(c.kind === 'dm' ? 'dm.delete.done' : 'ch.delete.done', { name: roomTitle(c) }));
   };
   const archiveDm = async (c) => { // 1:1 대화 보관 = 보관(양쪽 목록에서 사라지고 대화는 남는다) — DM은 두 참가자 누구나(RLS msgr_can_manage_channel)
     const res = await supabase.from('msgr_channels').update({ archived_at: new Date().toISOString() }).eq('id', c.id).select('id');
     if (res.error) throw new Error(friendlyErr(res.error.message, t));
     if (!res.data?.length) throw new Error(t('ch.noEdit'));
-    await finishChannelAction(c, t('dm.end.done', { name: dmName(c) }));
+    await finishChannelAction(c, t('dm.end.done', { name: roomTitle(c) }));
   };
   const archiveChannel = async (c) => {
     const res = await supabase.from('msgr_channels').update({ archived_at: new Date().toISOString() }).eq('id', c.id).select('id');
@@ -2740,6 +2741,7 @@ function Shell({ session }) {
   const traitsOf = (c) => roomTraits({ c, members: dmMembers[c.id] ?? [], uid, ownerOf: (id) => crewShown(id)?.owner_user_id ?? null }); // 그룹·에이전트 방 판정 정본(phone-shell.mjs — 단위 테스트 대상)
   const dmIsGroup = (c) => traitsOf(c).group;
   const dmName = (c) => dmBaseName(c);
+  const roomTitle = (c) => actionRoomName(c, { v2: V2, dmName });
   const dmBaseName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewShown(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
     const people = ms.filter((m) => m.member_kind === 'user' && m.member_id !== uid); const crewsIn = ms.filter((m) => m.member_kind === 'crew');
     if (c.org_id == null && c._personal_other && !c._personal_group && !c._personal_crew && other) return nameOfUser(other.member_id); // 개인 1:1은 에이전트가 들어와도 친구 이름(2026-09-30 — 에이전트 이름이 앞에 붙던 것)
@@ -3577,7 +3579,7 @@ function Shell({ session }) {
         {ctx && <CtxMenu at={ctx} items={ctx.items} onClose={() => setCtx(null)} />}
         {railAction && createPortal(<div ref={actionDialog} onKeyDown={trapActionFocus} className="shell msgr-action-dialog" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(railActionKey)}>
           {railAction.kind === 'delete'
-            ? <DangerModal title={t(railActionKey)} description={<>{t(railActionKey === 'ch.leave' && railAction.channel.kind === 'public' ? 'ch.leave.confirm.note.public' : `${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} requireText={railAction.channel.kind === 'dm' ? dmName(railAction.channel) : railAction.channel.name} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />
+            ? <DangerModal title={t(railActionKey)} description={<>{t(railActionKey === 'ch.leave' && railAction.channel.kind === 'public' ? 'ch.leave.confirm.note.public' : `${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} requireText={roomTitle(railAction.channel)} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />
             : <ConfirmModal title={t(railActionKey)} description={<>{t(railActionKey === 'ch.leave' && railAction.channel.kind === 'public' ? 'ch.leave.confirm.note.public' : `${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />}
         </div>, document.body)}
         {!isPhone && <div className={`msgr-foot${deskAp ? ' has-ap' : ''}`}>
