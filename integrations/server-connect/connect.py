@@ -449,10 +449,11 @@ def main(argv):
     if not agents:
         say("헤르메스·오픈클로 에이전트를 찾지 못했습니다. 게이트웨이를 실행하는 사용자 계정으로 다시 실행해 주세요.",
             "No Hermes or OpenClaw agents found. Run this again as the user that runs the gateway."); return 3
-    tokens = {(a["kind"], a["id"]): "argo_bot_" + secrets.token_hex(24) for a in agents}
+    # v2 토큰 접두(2026-10-23): 엣지 함수가 DB 없이 v2 봇과 멈춘 옛 v1 연결 도구(argo_bot_ + hex)를 가른다(supabase/functions/msgr-bot/v2.js).
+    tokens = {(a["kind"], a["id"]): "argo_bot_v2" + secrets.token_hex(24) for a in agents}
     host = re.sub(r"[^A-Za-z0-9.-]", "-", socket.gethostname()).strip("-.")[:253] or "server"
     report = [{"kind": a["kind"], "id": a["id"], "name": a["name"][:80], "default": a["default"],
-               "token_hash": hashlib.sha256(tokens[(a["kind"], a["id"])].encode()).hexdigest(), "token_hint": tokens[(a["kind"], a["id"])][:12]} for a in agents]
+               "token_hash": hashlib.sha256(tokens[(a["kind"], a["id"])].encode()).hexdigest(), "token_hint": tokens[(a["kind"], a["id"])][:14]} for a in agents]
     try:
         post("link/report", {"code": code, "host": host, "agents": report})
     except RuntimeError as e:

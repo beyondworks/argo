@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { handleLink, parseLinkPath, connectScript } from '../supabase/functions/msgr-bot/core.js';
+import { linkRpcV2 } from '../supabase/functions/msgr-bot/v2.js';
 import { CONNECT_PY } from '../supabase/functions/msgr-bot/connect-bundle.js';
 import { buildConnectScript } from '../scripts/build-server-connect.mjs';
 
@@ -68,15 +69,15 @@ exit 0
   const st = { agents: null, host: null, approved: null, results: null };
   const rpc = async (fn, a) => {
     if (a.code !== CODE) throw new Error('msgr_link_invalid');
-    if (fn === 'msgr_server_link_report') { st.agents = a.agents; st.host = a.host; st.approved = [{ kind: 'hermes', id: 'default' }, { kind: 'openclaw', id: 'main' }]; return null; }
-    if (fn === 'msgr_server_link_status') return { status: st.approved ? 'approved' : 'waiting', approved: st.approved ?? [] };
-    if (fn === 'msgr_server_link_done') { st.results = a.results; return null; }
+    if (fn === 'msgr2_server_link_report') { st.agents = a.agents; st.host = a.host; st.approved = [{ kind: 'hermes', id: 'default' }, { kind: 'openclaw', id: 'main' }]; return null; }
+    if (fn === 'msgr2_server_link_status') return { status: st.approved ? 'approved' : 'waiting', approved: st.approved ?? [] };
+    if (fn === 'msgr2_server_link_done') { st.results = a.results; return null; }
     throw new Error(`unexpected ${fn}`);
   };
   const bodies = [];
   const srv = createServer(async (req, res) => {
     let raw = ''; for await (const c of req) raw += c; bodies.push(raw);
-    const { status, body } = await handleLink(parseLinkPath(`http://x${req.url}`), JSON.parse(raw || '{}'), rpc);
+    const { status, body } = await handleLink(parseLinkPath(`http://x${req.url}`), JSON.parse(raw || '{}'), linkRpcV2(rpc)); // 엣지 함수와 같이 v2 RPC 이름으로(v2.js linkRpcV2)
     res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body));
   });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -89,8 +90,9 @@ exit 0
       p.stdin.end(connectScript(CONNECT_PY, 'http://kong:8000/functions/v1/msgr-bot')); // 배포본 그대로(주소는 인자가 정본)
     });
     assert.equal(out.code, 0, out.so);
-    assert.doesNotMatch(out.so, /argo_bot_[0-9a-f]/, '화면에 토큰 원문이 없다');
-    assert.ok(bodies.every((b) => !/argo_bot_[0-9a-f]{4}/.test(b)), '네트워크로 토큰 원문이 나가지 않는다(힌트 12자만)');
+    assert.doesNotMatch(out.so, /argo_bot_v2[0-9a-f]/, '화면에 토큰 원문이 없다');
+    assert.ok(bodies.every((b) => !/argo_bot_v2[0-9a-f]{4}/.test(b)), '네트워크로 토큰 원문이 나가지 않는다(힌트 14자 = 접두 + 3자만)');
+    assert.ok(st.agents.every((a) => /^argo_bot_v2[0-9a-f]{3}$/.test(a.token_hint)), 'v2 토큰 힌트(DB 보고 검사와 같은 모양)');
 
     assert.deepEqual(st.agents.map((a) => `${a.kind}:${a.id}:${a.name}:${a.default}`), ['hermes:default:Hermes:true', 'hermes:research:research:false', 'openclaw:main:OpenClaw:true']);
     const hashOf = (kind, id) => st.agents.find((a) => a.kind === kind && a.id === id).token_hash;
@@ -98,7 +100,7 @@ exit 0
     // 헤르메스 default: 플러그인·.env(0600, 보고한 해시와 맞는 토큰)·enable·install+start(HERMES_HOME)
     const env = await readFile(join(home, '.hermes/.env'), 'utf8');
     assert.match(env, new RegExp(`^ARGO_MSGR_URL=${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
-    const tok = env.match(/^ARGO_MSGR_BOT_TOKEN=(argo_bot_[0-9a-f]{48})$/m)?.[1];
+    const tok = env.match(/^ARGO_MSGR_BOT_TOKEN=(argo_bot_v2[0-9a-f]{48})$/m)?.[1];
     assert.ok(tok); assert.equal(sha(tok), hashOf('hermes', 'default'));
     assert.equal((await stat(join(home, '.hermes/.env'))).mode & 0o777, 0o600);
     assert.ok(existsSync(join(home, '.hermes/plugins/argo-msgr/adapter.py')));
