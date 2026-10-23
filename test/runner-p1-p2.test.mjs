@@ -26,7 +26,7 @@ const connectSrc = await readFile(new URL('../app/runner-connect.jsx', import.me
 // ── P1-1: SDK evBase runner 비대칭 봉합 ──────────────────────────────────
 test('SDK 턴 이벤트에 runner가 실린다 — CLI 갈래와 대칭(연결 카드 마지막 턴 상태의 원천)', () => {
   // SDK evBase 구간: 두 evBase 중 msg를 싣는 쪽(SDK). runner 부재가 이 기능의 결함이었다.
-  const sdkEv = chatSrc.match(/const evBase = \{\n[\s\S]{0,600}?gist, runner, msg: userMsg\.slice\(0, 2000\),\n  \};/);
+  const sdkEv = chatSrc.match(/const evBase = \{\n[\s\S]{0,600}?gist, runner, \.\.\.\(evScrub \? \{\} : \{ msg: userMsg\.slice\(0, 2000\) \}\),\n  \};/); // msg는 링크 팀·모름 방이면 빠진다(link-turn-events 시험)
   assert.ok(sdkEv, 'SDK evBase에 runner 포함(제거 변이는 여기서 red)');
 });
 test('lastTurnByRunner(순수): 최신 우선·ok 판정·중단 필드/레거시 문자열 (검수 관점5 — 소스 핀은 판정 두 필드에 fail-open이었다)', async () => {

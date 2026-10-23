@@ -99,11 +99,20 @@ function otherDeviceAdds(f, ws, rel, body) {
   f.setManifest(ws, files);
 }
 
-test('M11 플래그 꺼짐(기본) — 로컬만 바뀐 주기는 배포본처럼 매니페스트를 두 번 받는다(시작 읽기 + 쓰기 직전 재읽기)', async () => {
+test('M11 끄는 스위치(ARGO_SYNC_MANIFEST_REUSE=0) — 로컬만 바뀐 주기는 배포본(0.1.116)처럼 매니페스트를 두 번 받는다(시작 읽기 + 쓰기 직전 재읽기)', async () => {
+  process.env.ARGO_SYNC_MANIFEST_REUSE = '0';
   const f = storage(); const ws = 'mr-off'; const dir = await company(ws, f);
   const r = await localChange(ws, dir, f, 'a');
   assert.equal(r.failed, 0);
   assert.equal(f.count('GET', ws), 2, '배포본과 같은 GET 2번');
+  assert.equal(f.count('PUT', ws), 1);
+});
+
+test('M20 기본값(설정 없음)은 켜짐 — 로컬만 바뀐 주기 매니페스트 GET 0(2026-10-23 승격, 전송량)', async () => {
+  const f = storage(); const ws = 'mr-default'; const dir = await company(ws, f);
+  const r = await localChange(ws, dir, f, 'd');
+  assert.equal(r.failed, 0);
+  assert.equal(f.count('GET', ws), 0, '설정이 없어도 보관본을 쓴다');
   assert.equal(f.count('PUT', ws), 1);
 });
 
@@ -189,7 +198,7 @@ test('M10 만료 토큰 — info가 실패하면 GET으로 떨어지고, GET이 
 
 /** 응답이 끊긴 주기 뒤 다음 주기의 결과 — 플래그 켜짐·꺼짐을 같은 상황으로 돌려 비교한다(배포본 동작이 기준). */
 async function lostResponseRun(ws, on) {
-  if (on) process.env.ARGO_SYNC_MANIFEST_REUSE = '1'; else delete process.env.ARGO_SYNC_MANIFEST_REUSE;
+  process.env.ARGO_SYNC_MANIFEST_REUSE = on ? '1' : '0'; // 꺼짐 = 배포본 경로(기본값은 2026-10-23부터 켜짐)
   const f = storage(); const dir = await company(ws, f);
   f.state.lostResponse = (k) => k === MKEY(ws); // 저장은 되고 응답만 실패(네트워크 끊김)
   await localChange(ws, dir, f, 'u').catch(() => {});
@@ -240,7 +249,7 @@ test('M13 유휴 — 켜져 있어도 로컬·원격이 그대로인 반복 사�
 
 /* ── 부하 측정(가짜 저장소): 파일 2,000개 회사 — 로컬만 바뀐 주기 10번·다른 기기 변경 3번·유휴 10번을 꺼짐/켜짐으로 나란히 ── */
 async function loadRun(ws, on) {
-  if (on) process.env.ARGO_SYNC_MANIFEST_REUSE = '1'; else delete process.env.ARGO_SYNC_MANIFEST_REUSE;
+  process.env.ARGO_SYNC_MANIFEST_REUSE = on ? '1' : '0';
   const f = storage(); const dir = await company(ws, f, 2000);
   const mbytes = f.store.get(MKEY(ws)).length;
   const tally = () => ({ get: f.count('GET', ws), info: f.count('INFO', ws), put: f.count('PUT', ws), bytes: f.log.bytes });
@@ -276,7 +285,8 @@ test('M17 info가 옛 판의 etag를 주는 CDN — cacheNonce가 원본을 준�
   assert.equal(await readFile(join(dir, 'other-stale.md'), 'utf8'), '# 옛 info 뒤 다른 기기 노트\n', '이 기기에 받았다');
 });
 
-test('M17b 꺼짐 — 매니페스트 info에 cacheNonce 쿼리를 붙이지 않는다(배포본과 같은 요청)', async () => {
+test('M17b 꺼짐(=0) — 매니페스트 info에 cacheNonce 쿼리를 붙이지 않는다(배포본과 같은 요청)', async () => {
+  process.env.ARGO_SYNC_MANIFEST_REUSE = '0';
   const f = storage(); const ws = 'mr-off-nonce'; const dir = await company(ws, f);
   await localChange(ws, dir, f, 'n');
   assert.equal(f.log.nonceInfo || 0, 0);

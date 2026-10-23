@@ -123,6 +123,7 @@ test('V2 쓰기 직전 재읽기 GET이 옛 판(사이클 도중 다른 기기�
 });
 
 test('V3 정상 경합 — info와 GET 사이에 다른 기기가 쓰면 한 번 더 확인해 새 판을 그대로 쓴다(보류 아님)', async () => {
+  process.env.ARGO_SYNC_MANIFEST_REUSE = '0'; // 검증 경로 자체(시작 읽기가 GET) — 재사용 기본값에서의 같은 경합은 아래 V3r
   const f = storage(); const ws = 'mv-race-ok'; const dir = await company(ws, f);
   let fired = false;
   f.state.afterInfo = (k) => { if (!fired && k === MKEY(ws)) { fired = true; otherDeviceAdds(f, ws, 'vault/notes/between.md', '# 사이\n'); } };
@@ -131,6 +132,30 @@ test('V3 정상 경합 — info와 GET 사이에 다른 기기가 쓰면 한 번
   assert.notEqual(r.skipped, 'manifest-stale', '정상 경합은 보류하지 않는다');
   assert.equal(r.failed, 0);
   assert.equal(await readFile(join(dir, 'between.md'), 'utf8'), '# 사이\n', '새 판을 받았다');
+});
+
+/** 쓰기 직전 재읽기 구간에 다른 기기가 항목을 더한 사이클 → 유휴 사이클 → 로컬이 바뀐 전체 사이클. 재사용 켬/끔을 같은 상황으로 돌려 비교한다. */
+async function rereadMergeRun(ws, reuse) {
+  process.env.ARGO_SYNC_MANIFEST_REUSE = reuse;
+  const f = storage(); const dir = await company(ws, f);
+  let fired = false;
+  f.state.afterUpload = (k) => { if (!fired && k.endsWith('/n0.md')) { fired = true; otherDeviceAdds(f, ws, 'vault/notes/mid.md', '# 중간\n'); } };
+  const r1 = await localChange(ws, dir, f, 'a');
+  const read = () => readFile(join(dir, 'mid.md'), 'utf8').catch(() => null);
+  const c1 = { failed: r1.failed, inManifest: 'vault/notes/mid.md' in f.manifest(ws).files, file: await read() };
+  await syncCompany(ws, OWNER, false);
+  const c2 = { file: await read() };
+  await localChange(ws, dir, f, 'bb');
+  const c3 = { inManifest: 'vault/notes/mid.md' in f.manifest(ws).files, blob: f.store.has(`${OWNER}/${ws}/vault/notes/mid.md`), file: await read(), dels: f.log.ops.filter((x) => x.startsWith('DEL')).length };
+  return { fired, c1, c2, c3 };
+}
+test('V3r 재사용 기본값에서 사이클 도중 다른 기기 추가 — 재읽기가 병합해 잃지 않고(항목·객체 유지, 삭제 0), 다음 전체 사이클에 받는다 — 재사용 끔(배포본)과 결과가 같다', async () => {
+  const on = await rereadMergeRun('mv-merge-on', '1');
+  const off = await rereadMergeRun('mv-merge-off', '0');
+  assert.ok(on.fired && off.fired);
+  assert.deepEqual(on.c1, { failed: 0, inManifest: true, file: null }, '병합 — 항목은 원격에 남는다');
+  assert.deepEqual(on.c3, { inManifest: true, blob: true, file: '# 중간\n', dels: 0 }, '다음 전체 사이클에 받는다 — 지우지 않는다');
+  assert.deepEqual({ c1: on.c1, c2: on.c2, c3: on.c3 }, { c1: off.c1, c2: off.c2, c3: off.c3 }, '재사용 켬과 끔(배포본)의 결과가 같다(유휴 사이클은 둘 다 받지 않는다 — 배포본부터 있던 지연)');
 });
 
 test('V4 삭제 전파 뒤 옛 판 — 이 기기가 지운 항목을 옛 판이 되살리지 않는다', async () => {
@@ -187,8 +212,8 @@ test('V9·V10 판정할 수 없으면(MD5 꼴 아닌 etag / info 5xx) 배포본�
   }
 });
 
-test('V11 끄는 스위치(ARGO_SYNC_MANIFEST_VERIFY=0) — 배포본과 같은 요청(로컬만 바뀐 주기 INFO 1·GET 2·PUT 1)', async () => {
-  process.env.ARGO_SYNC_MANIFEST_VERIFY = '0';
+test('V11 끄는 스위치(ARGO_SYNC_MANIFEST_VERIFY=0, 재사용도 =0) — 배포본과 같은 요청(로컬만 바뀐 주기 INFO 1·GET 2·PUT 1)', async () => {
+  process.env.ARGO_SYNC_MANIFEST_VERIFY = '0'; process.env.ARGO_SYNC_MANIFEST_REUSE = '0';
   const f = storage(); const ws = 'mv-off'; const dir = await company(ws, f);
   await localChange(ws, dir, f, 'j');
   assert.deepEqual([f.count('INFO', ws), f.count('GET', ws), f.count('PUT', ws)], [1, 2, 1]);
@@ -229,7 +254,7 @@ test('V1b 시작 읽기만 옛 판이고 재읽기는 원본 — 다른 기기�
 /* ── 부하 측정(가짜 저장소, 파일 2,000개): 검증 꺼짐(배포본 경로) / 켜짐 / 켜짐 + #1068 재사용 ── */
 async function loadRun(ws, mode) {
   if (mode === 'off') process.env.ARGO_SYNC_MANIFEST_VERIFY = '0'; else delete process.env.ARGO_SYNC_MANIFEST_VERIFY;
-  if (mode === 'reuse') process.env.ARGO_SYNC_MANIFEST_REUSE = '1'; else delete process.env.ARGO_SYNC_MANIFEST_REUSE;
+  process.env.ARGO_SYNC_MANIFEST_REUSE = mode === 'reuse' ? '1' : '0'; // off·on = 재사용 꺼짐(검증 켬/끔 비교), reuse = 켜짐(기본값)
   const f = storage(); const dir = await company(ws, f, 2000);
   const tally = () => ({ get: f.count('GET', ws), info: f.count('INFO', ws), put: f.count('PUT', ws), bytes: f.log.bytes });
   const local = { get: 0, info: 0, put: 0, bytes: 0 }, prop = { ...local }, idle = { ...local };

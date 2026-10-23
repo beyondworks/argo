@@ -35,6 +35,19 @@ export function linkJournal(ctx, journal = null, { relayed = false } = {}) {
   return tag ? { tag } : { off: true };
 }
 
+/** 링크 범위 턴의 활동 기록(events.jsonl — 개인 클라우드로 동기화된다)에 지시 원문을 남기지 않을 때의 대체값. 남겨도 되면 null.
+    판정은 linkJournal과 같다: 개인 공간으로 **확인된** 방만 원문(gist·msg·steps)을 남긴다. 팀 공간·모름(옛 범위·조회 실패)·기억 안 남김(memoryOff)은 고정 라벨만.
+    링크 범위가 아닌 턴(로컬·옛 채널·위임 등)은 null — 종전 그대로. 원장은 행 합집합 병합이라 나중에 회수로 지울 수 없어 쓰지 않는 쪽으로 막는다(검수 2026-10-23).
+    gist 라벨에 방 id 앞 8자를 붙여 활동 화면에서 어느 방의 일인지만 알 수 있게 한다. */
+export function linkEventScrub(ctx, lang = 'ko') {
+  const s = linkScopeOf(ctx);
+  if (!s || (s.spaceKind === 'personal' && s.memoryOff !== true)) return null;
+  const team = s.spaceKind === 'team';
+  const room = String(s.room ?? '').slice(0, 8);
+  const label = lang === 'en' ? (team ? 'Org room request' : 'Messenger room request') : (team ? '조직 방 지시' : '메신저 방 지시');
+  return { gist: room ? `${label} (${room})` : label };
+}
+
 /** 회수 대상 방 — 팀 공간이라고 **명시된** 링크 범위 줄의 방 id(소문자). 개인 공간·모름(옛 범위·조회 실패)은 회수하지 않는다(D3 현행 유지, 분리 검수 I-2 —
     서버는 내 에이전트가 없는 방의 공간을 알려 주지 않아 모름 줄이 개인 1:1인지 가릴 수 없다). */
 export function linkRecallRoom(scope) {

@@ -52,6 +52,7 @@ const state = window.__v2Fixture = { calls: [], topics: new Map(), signedIn: tru
 } };
 
 const call = (c) => state.calls.push(c);
+let workSeq = 0;
 function query(table) {
   let op = 'select', values, one = false, desc = false, orderKey = null, lim = null, head = false;
   const filters = []; const embeds = [];
@@ -76,7 +77,7 @@ function query(table) {
         if (table === 'msgr2_messages') for (const m of rows) {
           fire(`v2:u:${uid}`, 'msg', { message: m }); // 서버 글 방송 대역
           for (const agent of m.mentions ?? []) { // 서버(U2)가 멘션으로 일을 만들고(U6c-1a) 일 표지를 보낸다
-            const w = { id: `b1000000-0000-4000-8000-${String(Date.now()).slice(-12)}`, room_id: m.room_id, agent_id: agent, owner_user_id: state.tables.msgr2_agents.find((a) => a.id === agent)?.owner_user_id, root_user_id: uid, source_message_id: m.id, state: 'offered', has_result: false, late: false, expires_at: later(30), created_at: new Date().toISOString() };
+            const w = { id: `b1000000-0000-4000-8000-${String(Date.now() * 10 + (workSeq = (workSeq + 1) % 10)).slice(-12)}`, /* 한 글의 멘션 여럿('모두에게')이 같은 id가 되지 않게 */ room_id: m.room_id, agent_id: agent, owner_user_id: state.tables.msgr2_agents.find((a) => a.id === agent)?.owner_user_id, root_user_id: uid, source_message_id: m.id, state: 'offered', has_result: false, late: false, expires_at: later(30), created_at: new Date().toISOString() };
             state.tables.msgr2_works.push(w); setTimeout(() => fire(`v2:u:${uid}`, 'work', { work: w }), 50);
           }
         }
@@ -186,8 +187,10 @@ export const supabase = {
   rpc: async (name, args = {}) => { call({ rpc: name }); try { return { data: rpcs[name] ? await rpcs[name](args) : [], error: null, status: 200 }; } catch (e) { return { data: null, error: { message: String(e.message), code: e.code }, status: 400 }; } },
   realtime: { setAuth: async () => {}, isConnected: () => true },
   functions: { invoke: async () => ({ data: null, error: null }) },
+  // supabase-js(realtime-js RealtimeClient.channel)처럼 같은 토픽의 채널이 있으면 그것을 돌려주고, 가입한 채널에 presence 콜백을 붙이면 던진다(2026-10-23 '모두에게' 화면 깨짐 재현)
   channel: (topic) => {
-    const c = { topic, handlers: [], on(kind, filter, cb) { c.handlers.push({ kind, filter, cb }); return c; }, subscribe(cb) { queueMicrotask(() => cb?.('SUBSCRIBED')); return c; }, presenceState: () => ({}), send: async () => 'ok', unsubscribe: async () => {} };
+    const had = state.topics.get(topic)?.values().next().value; if (had) return had;
+    const c = { topic, handlers: [], joined: false, on(kind, filter, cb) { if (c.joined && (kind === 'presence' || kind === 'postgres_changes')) throw new Error(`cannot add \`${kind}\` callbacks for realtime:${topic} after \`subscribe()\`.`); c.handlers.push({ kind, filter, cb }); return c; }, subscribe(cb) { c.joined = true; queueMicrotask(() => cb?.('SUBSCRIBED')); return c; }, presenceState: () => ({}), send: async () => 'ok', unsubscribe: async () => {} };
     if (!state.topics.has(topic)) state.topics.set(topic, new Set()); state.topics.get(topic).add(c); return c;
   },
   removeChannel: async (c) => { state.topics.get(c.topic)?.delete(c); return 'ok'; }, removeAllChannels: async () => { state.topics.clear(); }, getChannels: () => [...state.topics.values()].flatMap((s) => [...s]),

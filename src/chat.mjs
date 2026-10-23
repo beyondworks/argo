@@ -53,7 +53,7 @@ import { buildThreadContext, contextSection, contextLimits, fitContextSection, i
 import { leaseRole } from './lease-role.mjs'; // 예비 실행 기기(argo run --standby)의 턴 — 주 컴퓨터 파일이 없다는 한 줄(commonDirectives)
 import { item } from './record-block.mjs'; import { msgrAuthorBody } from './inbound-marks.mjs'; // 메신저 줄은 글쓴이 본문만 항목에(5차 검수 MEDIUM-1) // 스레드 맥락 한 줄 = 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
 import { runOneShot } from './oneshot.mjs';
-import { linkJournal, linkScopeOf } from './link-memory.mjs'; // 메신저 v2 링크 범위 턴의 기억 칸(조직 방 = 조직 칸, 모르면 일지 0)
+import { linkJournal, linkScopeOf, linkEventScrub } from './link-memory.mjs'; // 메신저 v2 링크 범위 턴의 기억 칸(조직 방 = 조직 칸, 모르면 일지 0)
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
@@ -1500,6 +1500,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
   // 문구를 뺐다. 사라진 화면을 가리키면 막다른 길이 된다. 값은 회사 파일·API로만 바뀐다.
   const { budgetUsd, lang = 'ko', computerUse = false, fullAuto: companyFullAuto = false } = await loadCompany(wsId).catch(() => ({}));
+  // 활동 기록(events.jsonl)의 지시 원문 — 개인 공간으로 확인되지 않은 링크 범위 턴(팀 방·모름·기억 안 남김)은 gist를 고정 라벨로, msg·steps는 싣지 않는다(link-memory linkEventScrub)
+  const evScrub = linkEventScrub(mirrorCtx, lang);
   // 컴퓨터 유즈는 회사 명시 옵트인(computerUse:true)만 — 기본 꺼짐(분리 검수 CRITICAL-2: 화면 채널은 권한 게이트 하드라인을 우회한다)
   const computerOn = computerUse === true;
   // 풀 오토 모드(회사 단위 스위치, 유건 확정 2026-09-26) — 기본 꺼짐 + **주인이 직접 지시한 턴에만**(요구사항 2).
@@ -1524,7 +1526,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const handover = await journalWrite(reply, meta.name || agentSlug);
       await appendEvent(wsId, {
         type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}),
-        gist: userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), ok: true, ms: 0, budgetBlocked: true,
+        gist: evScrub?.gist ?? userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), ok: true, ms: 0, budgetBlocked: true,
         ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}),
       });
       // 모델을 부르지 않은 턴 — 산출물 diff 없음(여기서 artBefore를 참조하면 TDZ로 예산 턴 전체가
@@ -1542,7 +1544,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const failBeforeRun = async (e, { flags = {}, ev = from ? { from } : {} } = {}) => {
     if (!retryFrame) {
       const cls = classifyRunnerError(e?.message, { flags });
-      await appendEvent(wsId, { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...ev, gist: userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), msg: userMsg.slice(0, 2000),
+      await appendEvent(wsId, { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...ev, gist: evScrub?.gist ?? userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), ...(evScrub ? {} : { msg: userMsg.slice(0, 2000) }),
         ok: false, ms: 0, preRun: true, error: String(e?.message ?? e).slice(0, 400), failCode: cls.code, failOrigin: cls.origin })
         .catch((err) => console.error('[argo] 러너 실행 전 실패를 활동에 남기지 못함:', err?.message ?? err));
     }
@@ -1720,7 +1722,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     // 열리는 경로는 SDK·네이티브뿐이다(파일·셸·웹이 게이트의 guest 분기를 지난다). 러너가 새로 생겨도 CLI면 여기서 막힌다.
     if (guest) return { reply: guestCliRefusal(meta.name || agentSlug, lang), sessionId: null, handover: null };
     const t0 = Date.now();
-    const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
+    const gist = evScrub?.gist ?? userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
     const evBase = { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...evFrom, ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
     await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name, undefined, turnSource, undefined, undefined, traceRec.id); // 코드+러너명(detail) — 클라가 번역
     // 작업 과정 — codex(exec --json·app-server)는 항목마다 단계(명령·파일·MCP·검색·추론 요약), 텍스트 모드 러너(gemini·antigravity)는 '실행' 한 단계.
@@ -2203,12 +2205,12 @@ ${lang === 'en'
   let sid = resumeId; // 새 세션이면 null에서 시작 — 외래 sessionId를 내 것으로 재스탬프하지 않는다
   const toolCounts = {}; // 이 턴의 도구 사용 횟수 — 크루 프로필 "많이 쓴 도구"의 원천
   const t0 = Date.now();
-  const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
+  const gist = evScrub?.gist ?? userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
   // msg = 원 지시 전문(재실행의 원천), steps = 단계 궤적(활동 드릴다운의 원천 — 실행 이력)
   const evBase = {
     type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'),
     // runner — 설정 연결 카드의 "마지막 턴 상태" 원천(P1-1). CLI 갈래 evBase에는 이미 있었다(비대칭 봉합).
-    ...evFrom, ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner, msg: userMsg.slice(0, 2000),
+    ...evFrom, ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner, ...(evScrub ? {} : { msg: userMsg.slice(0, 2000) }),
   };
   // 단계 궤적 — 작업 과정 기록(turn-trace)이 정본이다. 상태 파일·활동 이벤트에는 마지막 40개만 싣고 전체 수(stepsTotal)를 함께 둔다.
   // 옛 step()은 40개째부터 기록을 멈춰 긴 턴의 진행 표시가 40번째 도구에서 굳었다(2026-10-09 수정).
@@ -2576,7 +2578,7 @@ ${lang === 'en'
     if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
     // 실패도 회사의 사건이다 — 활동 화면의 "오류" 필터가 이 기록을 먹는다
     await appendEvent(wsId, {
-      ...evBase, ok: false, ms: Date.now() - t0, steps: stepsNow(), stepsTotal: traceRec.toolCount,
+      ...evBase, ok: false, ms: Date.now() - t0, ...(evScrub ? {} : { steps: stepsNow() }), stepsTotal: traceRec.toolCount, // 단계 궤적(명령 앞부분·파일 이름)도 원문이다 — evScrub이면 개수만
       error: e?.cancellationIncomplete ? '자동 재개 차단됨; 일부 자식 작업 종료 확인 불가' : aborted ? USER_ABORT_ERROR : String(e.message || e).slice(0, 400), // 진단 상세(errors[]/stderr 꼬리)까지 실리도록 400
       ...(aborted ? { aborted: true } : {}), ...(e?.cancellationIncomplete ? { cancellationIncomplete: true } : {}), // 중단 판정은 필드로(사유 문자열 동등 비교는 다국어화에 fail-open — 검수 관점3, thread aborted 필드 선례)
       ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}), ...(e?.authFailedRunner ? { authFailedRunner: e.authFailedRunner } : {}), // 실패 코드 표·출처(vendor/argo/probe)
@@ -2635,7 +2637,7 @@ ${lang === 'en'
   // 이 세션에 건넨 1:1 줄 — 세션과 짝으로 남긴다(바뀐 게 없으면 쓰지 않는다). 기록 실패는 턴을 막지 않는다(다음 턴이 같은 줄을 다시 건넬 뿐)
   if (soloSeenNext && sid && !sessionless) await noteSoloSeen(wsId, agentSlug, sid, soloSeenNext, soloLine).catch((e) => console.warn(`[argo] 1:1 건넴 기록 실패(${wsId}/${agentSlug}): ${String(e?.message ?? e).slice(0, 120)}`));
   await appendEvent(wsId, {
-    ...evBase, ok: true, ms: Date.now() - t0, steps: stepsNow(), stepsTotal: traceRec.toolCount, ...(__downgradedFrom ? { downgradedFrom: __downgradedFrom } : {}),
+    ...evBase, ok: true, ms: Date.now() - t0, ...(evScrub ? {} : { steps: stepsNow() }), stepsTotal: traceRec.toolCount, ...(__downgradedFrom ? { downgradedFrom: __downgradedFrom } : {}),
     ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
   });
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
