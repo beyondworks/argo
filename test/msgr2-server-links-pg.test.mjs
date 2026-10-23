@@ -233,13 +233,20 @@ test('#1154 검수 I-1·I-2: 주인이 팀 방에서 빠지면 그 방 일을 �
     assert.match(finish(tok, ua.message.execution_attempt, '답').err, /msgr_execution_forbidden/, '이미 잡은 일도 답이 방에 들어가지 않는다');
     assert.equal(db.sql(`select count(*) from public.msgr2_messages where room_id = '${R}'`), n);
   } finally { setting('msgr2_lite', null); }
-  // 리스가 지난 일: 다시 주지 않고 답도 받지 않는다
+  // 오래 걸린 작업(재검수 ⓐ): 16분 뒤 답은 받는다(리스는 다시 주기에만), 만들어진 지 25시간 지난 답은 거부
   const room = dm(pApp, ag);
-  say(pApp, room, '오래된 질문');
+  say(pApp, room, '긴 작업');
   const [uc] = updates(tok);
-  db.sql(`update public.msgr2_works set lease_until = now() - interval '2 days' where id = '${uc.message.execution_attempt}'`);
+  const wc = uc.message.execution_attempt;
+  db.sql(`update public.msgr2_works set lease_until = now() - interval '1 minute', created_at = now() - interval '16 minutes' where id = '${wc}'`);
   assert.deepEqual(updates(tok, 0), [], '리스가 지난 일은 다시 주지 않는다');
-  assert.match(finish(tok, uc.message.execution_attempt, '늦은 답').err, /msgr_execution_not_owner/);
+  const late = finish(tok, wc, '16분 걸린 답');
+  assert.equal(late.err, undefined, '16분 뒤 답은 받는다');
+  assert.equal(db.sql(`select body || '|' || (select state from public.msgr2_works where id = '${wc}') from public.msgr2_messages where id = ${late.out}`), '16분 걸린 답|done', '방에 올라가고 일이 끝난다');
+  say(pApp, room, '아주 오래된 질문');
+  const [ue] = updates(tok);
+  db.sql(`update public.msgr2_works set lease_until = now() - interval '24 hours', created_at = now() - interval '25 hours' where id = '${ue.message.execution_attempt}'`);
+  assert.match(finish(tok, ue.message.execution_attempt, '25시간 뒤 답').err, /msgr_execution_not_owner/, '만들어진 지 24시간이 지난 답은 거부');
   // I-2: 남의 봇은 내 offered 일을 가져가지 못한다
   say(pApp, room, '새 질문');
   const wd = db.sql(`select id from public.msgr2_works where room_id = '${room}' and state = 'offered'`);

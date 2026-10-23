@@ -330,7 +330,8 @@ revoke all on function public.msgr2_bot_updates(text, bigint, int) from public;
 grant execute on function public.msgr2_bot_updates(text, bigint, int) to anon, authenticated;
 
 -- 최종 답: 이 봇이 잡은 일에 한 번. 같은 일을 다시 보내면(봇의 보관함 재시도) 쓰기 없이 첫 글 id를 돌려준다.
--- 리스(15분)가 지났거나 주인이 그 방을 더는 읽을 수 없으면 받지 않는다(방에서 빠진 뒤 답이 방에 들어가던 결함, #1154 검수 I-1).
+-- 주인이 그 방을 더는 읽을 수 없으면 받지 않는다(방에서 빠진 뒤 답이 방에 들어가던 결함, #1154 검수 I-1). 리스(15분)는 다시 주기에만 쓴다 —
+-- 봇 쪽에서 연장할 길이 없어 15분 넘는 작업의 답을 버리게 된다(재검수). 대신 일이 만들어진 지 24시간이 지난 답만 거부한다.
 -- 글 모양은 본체 경로(msgr2_link_send work.result 비회의 갈래, 20261020201400 425~426행)와 같다: agent 글 + meta.work, 일 done·has_result, 연속 답장 +1.
 create or replace function public.msgr2_bot_finish(p_token text, p_attempt uuid, p_text text) returns bigint
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
@@ -342,7 +343,7 @@ begin
     select id into mid from public.msgr2_messages where work_id = w.id and author_kind = 'agent' order by id limit 1;
     return mid;
   end if;
-  if w.state not in ('accepted', 'running') or w.lease_device is distinct from b.id or not (w.lease_until > now()) then raise exception 'msgr_execution_not_owner'; end if;
+  if w.state not in ('accepted', 'running') or w.lease_device is distinct from b.id or w.created_at <= now() - interval '24 hours' then raise exception 'msgr_execution_not_owner'; end if;
   if not coalesce((public._msgr2_access_for(w.room_id, w.owner_user_id)).read, false) then raise exception 'msgr_execution_forbidden'; end if;
   if length(coalesce(p_text, '')) not between 1 and 20000 then raise exception 'msgr_bot_bad_body'; end if;
   if public._msgr2_paused() then raise exception 'service_paused'; end if;
