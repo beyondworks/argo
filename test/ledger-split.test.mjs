@@ -156,7 +156,7 @@ test('G1~G3 권한 — 조각도 원장이다(파일 도구 쓰기·MCP·셸 거
   const root = await fresh('gate-split');
   const piece = `events.${DEV}.2026-10.jsonl`;
   const f = makeIsForbidden(root);
-  for (const n of [piece, `usage.${DEV}.2026-10.jsonl`, 'USAGE.X.2026-10.JSONL', 'events.backup.jsonl', `${piece}.`]) {
+  for (const n of [piece, `usage.${DEV}.2026-10.jsonl`, 'USAGE.X.2026-10.JSONL', `${piece}.`]) {
     assert.equal(await f(join(root, n), 'write'), true, `${n} 쓰기 거부`);
   }
   assert.equal(await f(join(root, piece)), false, '파일 도구 읽기는 연다(옛 원장과 같다)');
@@ -165,14 +165,50 @@ test('G1~G3 권한 — 조각도 원장이다(파일 도구 쓰기·MCP·셸 거
   assert.equal((await gate('Edit', { file_path: join(root, piece), old_string: 'a', new_string: 'b' })).behavior, 'deny');
   assert.equal((await gate('mcp__fs__write_file', { to: piece, content: 'x' })).behavior, 'deny', 'MCP 비경로 키에 조각 이름 하나');
   for (const cmd of [
-    `echo '{}' >> ${piece}`, `rm usage.*.jsonl`, `rm usage.*`, `cat events*`, `truncate -s0 ./events.dev-x.2026-10.jsonl`,
+    `echo '{}' >> ${piece}`, `rm usage.*.jsonl`, `rm usage.*`, `truncate -s0 ./events.dev-x.2026-10.jsonl`,
     `rm events.{${DEV},x}.2026-10.jsonl`, `rm "events".dev.2026-10.jsonl`, `rm ev\ents.d.2026-10.jsonl`, `rm ../gate-split/usage.[a-z]*.jsonl`,
-    `cp /dev/null ${join(root, 'usage.d.2026-10.jsonl')}`, `rm ~/x/usage.d*`, `rm us*`, `cat *.jsonl`,
+    `cp /dev/null ${join(root, 'usage.d.2026-10.jsonl')}`,
   ]) assert.equal((await gate('Bash', { command: cmd })).behavior, 'deny', cmd);
   for (const cmd of ['cat data/*.jsonl', 'ls vault/notes', 'cat events-notes.md', 'ls *.md', 'rm build/*.tmp', 'grep -r usage src']) {
     assert.equal((await gate('Bash', { command: cmd })).behavior, 'allow', cmd);
   }
-  for (const n of ['myevents.jsonl', 'events-notes.md', 'events.json', 'usage', 'eventsx.jsonl']) {
+  for (const n of ['myevents.jsonl', 'events-notes.md', 'events.json', 'usage', 'eventsx.jsonl', 'events.backup.jsonl', 'usage.report.jsonl', 'events.2024.jsonl']) { // 리더가 읽지 않는 이름은 원장이 아니다(#1149 검수)
     assert.equal(await f(join(root, n), 'write'), false, `${n}는 원장이 아니다`);
   }
+});
+
+/* ─── #1149 검수 Important 1: 셸 원장 대조는 회사 폴더 직속 조각만(배포본에서 통과하던 명령은 그대로 통과) ─── */
+test('G3b 핀: 배포본에서 통과하던 셸 명령은 그대로 통과한다(검수 목록 전부, 파일 도구 입력 포함)', async () => {
+  const root = await fresh('gate-pass');
+  const gate = makePermissionGate('gate-pass', 'crew-a', root, null, 'ko', [], { computerUse: true });
+  const cmds = [
+    'ls *.jsonl', 'find vault -name "*.jsonl"', 'wc -l *.jsonl', 'rg -g "*.jsonl" foo', 'ls ~/x/*.jsonl', 'cat ../*.jsonl',
+    'ls e*', 'ls us*', 'ls *s*', 'cat vault/data/events.2024.jsonl', 'python3 x.py --out usage.report.jsonl',
+    'cat events*', 'cat data/usage.dev-a.2026-10.jsonl', 'ls /tmp/elsewhere/usage.*.jsonl', 'cat ~/x/events.dev-a.2026-10.jsonl',
+  ];
+  for (const cmd of cmds) {
+    assert.equal((await gate('Bash', { command: cmd })).behavior, 'allow', `Bash: ${cmd}`);
+    assert.equal((await gate('computer_type', { text: cmd })).behavior, 'allow', `computer_type: ${cmd}`);
+  }
+});
+
+test('G2b 위조 조각은 계속 막는다 — 회사 폴더 직속을 가리키는 글자·글롭(상대·./·절대·~·..)', async () => {
+  const root = await fresh('gate-block');
+  const gate = makePermissionGate('gate-block', 'crew-a', root, null, 'ko', [], { computerUse: true });
+  const savedHome = process.env.HOME;
+  process.env.HOME = join(root, '..', '..'); // ~ 칸: 회사 폴더가 HOME 아래인 모양(게이트는 HOME을 부를 때마다 읽는다)
+  const viaHome = `~/${root.split(/[\\/]/).slice(-2).join('/')}`;
+  const cmds = [
+    'echo x >> events.dev-a.2026-10.jsonl', 'rm usage.*.jsonl', 'rm usage.*', 'rm ev?nts.x.jsonl', 'rm [e]vents.*', 'truncate -s0 ./events.dev-x.2026-10.jsonl',
+    'rm events.{dev-a,x}.2026-10.jsonl', 'rm "events".dev.2026-10.jsonl', 'rm ev\\ents.d.2026-10.jsonl',
+    `rm ${join(root, 'usage.*.jsonl')}`, `cp /dev/null ${join(root, 'usage.d.2026-10.jsonl')}`, 'rm ../gate-block/usage.[a-z]*.jsonl',
+    'echo x > USAGE.DEV.2026-10.JSONL',
+    `rm ${viaHome}/events.*`,
+  ];
+  try {
+    for (const cmd of cmds) {
+      assert.equal((await gate('Bash', { command: cmd })).behavior, 'deny', `Bash: ${cmd}`);
+      assert.equal((await gate('computer_type', { text: cmd })).behavior, 'deny', `computer_type: ${cmd}`);
+    }
+  } finally { process.env.HOME = savedHome; }
 });

@@ -155,9 +155,9 @@ const WS_LEDGER_FILES = new Set([
   'events.jsonl', // 활동 원장 — 사장이 보는 활동 화면의 근거(events.mjs)
 ]);
 /* 원장 조각(ledger.mjs — `events.<기기>.<YYYY-MM>.jsonl`·`usage.…`, ARGO_LEDGER_SPLIT=1)도 같은 원장이다. 정확한 이름 목록만 보면 조각 쓰기가
-   열려 청구·월 예산 근거를 크루가 고칠 수 있다. 판정은 조각 정규식보다 넓게 — `events.`·`usage.`로 시작해 `.jsonl`로 끝나면 원장으로 본다
-   (리더가 읽지 않는 변종 이름도 막는 쪽이 안전하다). `myevents.jsonl`·`events-notes.md`·`events.json`은 원장이 아니다. 입력은 normName(소문자) 뒤. */
-const LEDGER_NAME_RE = /^(events|usage)\.(.+\.)?jsonl$/;
+   열려 청구·월 예산 근거를 크루가 고칠 수 있다. 판정은 리더가 읽는 조각 모양 그대로다(#1149 검수 — 넓게 잡으면 배포본에서 되던 `usage.report.jsonl` 쓰기가 막힌다).
+   `myevents.jsonl`·`events-notes.md`·`events.json`·`usage.report.jsonl`은 원장이 아니다. 입력은 normName(소문자) 뒤. */
+const LEDGER_NAME_RE = /^(events|usage)\.[a-z0-9-]{1,64}\.\d{4}-\d{2}\.jsonl$/; // 리더가 읽는 조각 모양 그대로(ledger.mjs LEDGER_PIECE_RE) — 리더가 읽지 않는 이름(`usage.report.jsonl`)은 원장이 아니다
 const isLedgerName = (n) => WS_LEDGER_FILES.has(n) || LEDGER_NAME_RE.test(n);
 /* 크루 카드 = 그 크루의 시스템 프롬프트이자 러너·모델·범위(skills/mcp) 선언이다. update_profile 도구는
    자기 프로필 변경조차 사장 결재로 올리는데(chat.mjs), 파일 직접 쓰기는 그 결재를 통째로 건너뛴다 —
@@ -356,30 +356,61 @@ function globToRe(seg) {
 }
 const GUARDED_DOT = [...BASH_GUARDED.filter((n) => n.startsWith('.')), '.assistant']; // .assistant는 글자 대조에선 경계 규칙(BASH_DOT_DIR_RE)이지만 글롭 대조에는 이름으로 넣는다(`.assist*`)
 const GLOB_PROBES = GUARDED_DOT.flatMap((n) => [n, `${n}x`, `${n}-x.json`, `${n}.json`]);
-/* 원장 조각 이름(isLedgerName 주석)의 셸 대조. 셸은 원장을 읽기·쓰기 구분 없이 이름만 나와도 막는다(옛 두 이름과 같다 — BASH_GUARDED).
-   ① 글자: `events.<무엇>.jsonl`·`usage.<무엇>.jsonl`. 앞이 이름 글자면 다른 이름(`myevents.x.jsonl`은 옛 부분 문자열 대조가 따로 본다).
-   ② 글롭: `rm usage.*.jsonl`·`cat events*`처럼 원장과 맞을 수 있는 조각. 크루 셸의 기본 위치는 회사 폴더라 **회사 폴더 바로 아래를 가리킬 수 있는
-      단어**만 본다 — 경로가 없는 단어, `./`, 절대·`~`·`$`·`..` 경로(어디를 가리킬지 모른다)의 마지막 조각. `data/*.jsonl`처럼 하위 폴더 상대 경로는
-      원장일 수 없어 보지 않는다(과잉 차단 방지). 글자가 하나도 없는 글롭(`*`·`*.*`·`?`)은 보지 않는다 — 회사 폴더 통째 지우기는 머리말의 셸 한계와 같은 범위다. */
-const BASH_LEDGER_RE = /(?<![A-Za-z0-9_-])(events|usage)\.([^\s/\\'"]*\.)?jsonl(?![A-Za-z0-9_-])/i;
-const LEDGER_PROBES = ['events.jsonl', 'usage.jsonl', 'events.host-1a2b3c4d.2026-10.jsonl', 'usage.host-1a2b3c4d.2026-10.jsonl'];
-const ledgerGlobHit = (w) => {
-  const segs = w.split(/[\\/]/);
-  const last = segs[segs.length - 1];
-  const relSub = !/^([\\/]|~|\$)/.test(w) && !segs.includes('..') && segs.filter((x) => x && x !== '.').length > 1;
-  if (relSub || !/[*?[]/.test(last) || !/[a-z]/i.test(last.replace(/\[[^\]]*\]/g, ''))) return false;
-  // 글롭 앞 글자가 `events.`·`usage.`로 시작하거나 그 앞부분이면 거절 — 기기 조각 이름은 정해져 있지 않아(`usage.d*` → `usage.dev-…`) 견본 대조만으로는 놓친다
-  const lit = fold(last.slice(0, last.search(/[*?[]/)));
-  if (lit.length >= 2 && ['events.', 'usage.'].some((k) => lit.startsWith(k) || k.startsWith(lit))) return true;
-  const re = globToRe(last);
-  return LEDGER_PROBES.some((p) => re.test(p));
-};
+/* 원장 조각(ledger.mjs)의 셸 대조 — 회사 폴더 **직속**의 조각 이름만 막는다(#1149 검수 Important 1: 넓게 막았더니 `ls *.jsonl`·`ls e*`·`cat vault/data/events.2024.jsonl`처럼
+   배포본에서 통과하던 명령이 거절됐다). 옛 두 이름(events.jsonl·usage.jsonl)은 종전대로 BASH_GUARDED 부분 문자열 대조가 맡는다.
+   플래그와 무관하게 켠다 — 읽기가 플래그와 상관없이 조각을 합치므로 꺼짐에서도 위조 조각이 활동·월 예산에 섞인다.
+   ① 글자: 조각 이름 모양(`<events|usage>.<기기>.<YYYY-MM>.jsonl`, 리더가 읽는 모양 그대로 — 대소문자 무시)
+   ② 글롭: 글롭 문자 앞부분이 `events.`·`usage.`를 통째로 덮을 때만(`usage.*.jsonl`·`ev?nts.x.jsonl`·`[e]vents.*`). `e*`·`us*`·`*.jsonl`은 보지 않는다.
+   단어가 가리키는 폴더가 회사 폴더일 때만 본다: 경로 없는 이름·`./이름`(크루 셸의 기본 위치가 회사 폴더), 절대·`~`·`..` 경로는 실제로 풀어 회사 폴더와 같을 때.
+   하위 폴더(`data/…`)·다른 폴더·변수(`$X/…`)는 보지 않는다. 남는 한계(미룸): 변수 조립·`cd` 뒤 상대 경로·`rm *.jsonl`처럼 이름 없는 글롭(배포본부터). */
+const SHELL_PIECE_RE = /^(events|usage)\.[a-z0-9-]{1,64}\.\d{4}-\d{2}\.jsonl$/i;
+const LEDGER_HEADS = ['events.', 'usage.'];
+/** 글롭 조각의 앞부분이 head(`events.` 등)를 통째로 덮는가 — `*` 전까지의 글자·`?`·`[…]`를 한 글자씩 맞춘다. */
+function globCoversHead(seg, head) {
+  let i = 0, k = 0;
+  while (k < head.length) {
+    if (i >= seg.length) return false;
+    const c = seg[i];
+    if (c === '*') return false; // head를 다 덮기 전에 `*` — `e*`·`events*`는 다른 이름과 구별할 수 없어 보지 않는다
+    if (c === '?') { i++; k++; continue; }
+    if (c === '[') {
+      const j = seg.indexOf(']', i + 2);
+      if (j < 0) return false;
+      const re = globToRe(seg.slice(i, j + 1));
+      if (!re.test(head[k])) return false;
+      i = j + 1; k++; continue;
+    }
+    if (fold(c) !== fold(head[k])) return false;
+    i++; k++;
+  }
+  return true;
+}
+/** 셸 명령(또는 컴퓨터 유즈 입력)이 회사 폴더 직속의 원장 조각을 가리키는가. wsRoot = 그 회사 폴더. (export: 회귀 테스트용) */
+export function shellLedgerHit(cmd, wsRoot) {
+  const ws = resolve(wsRoot);
+  const plain = unquote(String(cmd ?? ''));
+  const words = plain.split(SHELL_SEP).filter(Boolean).flatMap((w) => expandBraces(w));
+  for (const w of words) {
+    const name = w.split(/[\\/]/).pop();
+    if (!name) continue;
+    const dir = w.slice(0, w.length - name.length).replace(/[\\/]+$/, '');
+    let atRoot;
+    if (!dir || dir === '.') atRoot = true;
+    else if (dir.startsWith('$')) atRoot = false;
+    else if (dir === '~' || dir.startsWith('~/')) atRoot = !!homeDir() && fold(resolve(homeDir(), dir.slice(2))) === fold(ws);
+    else if (isAbsolute(dir) || dir.split(/[\\/]/).includes('..')) atRoot = fold(resolve(ws, dir)) === fold(ws);
+    else atRoot = false; // 하위 폴더 상대 경로 — 회사 폴더 직속일 수 없다
+    if (!atRoot) continue;
+    if (SHELL_PIECE_RE.test(name)) return true;
+    if (/[*?[]/.test(name) && LEDGER_HEADS.some((h) => globCoversHead(name, h))) return true;
+  }
+  return false;
+}
 export function shellNamesGuarded(cmd) {
   const plain = unquote(String(cmd ?? ''));
   const words = plain.split(SHELL_SEP).filter(Boolean).flatMap((w) => expandBraces(w));
-  const literalHit = (t) => BASH_GUARDED.some((n) => fold(t).includes(fold(n))) || BASH_DIR_RE.test(` ${t}`) || BASH_DOT_DIR_RE.test(t) || BASH_LEDGER_RE.test(t);
+  const literalHit = (t) => BASH_GUARDED.some((n) => fold(t).includes(fold(n))) || BASH_DIR_RE.test(` ${t}`) || BASH_DOT_DIR_RE.test(t);
   if (literalHit(plain) || words.some(literalHit)) return true;
-  if (words.some(ledgerGlobHit)) return true;
   for (const w of words) {
     for (const seg of w.split('/')) {
       if (!seg.startsWith('.') || !/[*?[]/.test(seg)) continue;
@@ -702,7 +733,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 입력의 모든 문자열 잎(중첩 포함)을 훑는다 — 고정 키 목록은 다른 이름(texts·input·label)으로 우회됐다(4R). 분할 입력·조합키 한 글자씩은 못 막는다 —
       // 실효 통제는 옵트인이고 이 줄은 순진한 시도의 1차 방어다(셸 리터럴 방어와 같은 정직 표기).
       const typed = stringLeaves(input).join(' ');
-      if (typed.trim() && (bashHardLiterals.some((r) => fold(typed).includes(fold(r))) || BASH_GUARDED.some((n) => fold(typed).includes(fold(n))) || BASH_DIR_RE.test(typed) || BASH_DOT_DIR_RE.test(typed) || shellNamesGuarded(typed))) return denyHard();
+      if (typed.trim() && (bashHardLiterals.some((r) => fold(typed).includes(fold(r))) || BASH_GUARDED.some((n) => fold(typed).includes(fold(n))) || BASH_DIR_RE.test(typed) || BASH_DOT_DIR_RE.test(typed) || shellNamesGuarded(typed) || shellLedgerHit(typed, wsAbs))) return denyHard();
       return allow;
     }
 
@@ -757,7 +788,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 이게 없으면 shell 능력이 켜진 SDK 크루가 `echo '{"bypass":true}' > capabilities.json` 한 줄로
       // 게이트를 우회한다(실측). 오탐(그 이름을 언급한 정당한 명령 거절)은 fail-closed로 수용한다.
       // 폴딩은 위 줄과 동일 기준(대소문자 무시 FS에서 CAPABILITIES.JSON 우회 차단 — #145 계열).
-      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd) || BASH_DOT_DIR_RE.test(cmd) || shellNamesGuarded(cmd)) return denyHard(); // 셸 확장(글롭·중괄호·따옴표 분할)으로 숨긴 이름까지
+      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd) || BASH_DOT_DIR_RE.test(cmd) || shellNamesGuarded(cmd) || shellLedgerHit(cmd, wsAbs)) return denyHard(); // 셸 확장(글롭·중괄호·따옴표 분할)으로 숨긴 이름까지
       // 이 컴퓨터의 Argo API(루프백)를 부르는 명령 — 결재 자가 승인·루틴 삭제·주인 직접 턴 열기의 통로였다(PR #916 분리 검수 재현).
       // 모든 턴(주인 턴 포함)에서 거절한다. 주 방어는 서버의 연결 상대 판정(src/agent-peer.mjs) — 이 줄은 이유를 알려 주는 앞단이다.
       if (await shellCallsArgoApi(cmd)) return { behavior: 'deny', message: ARGO_API_SHELL_MSG[lang === 'en' ? 'en' : 'ko'] };
