@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths } from '../workspace.mjs';
 import { readJson } from '../jsonstore.mjs';
-import { threadChannelIds, forgetThreadChannels, takeChannelSessions, channelSessionIds } from '../thread.mjs';
+import { threadChannelIds, forgetThreadChannels, takeChannelSessions, channelSessionIds, threadLinkRoomIds, linkSessionRoomIds } from '../thread.mjs';
 import { sessionFile } from '../engine/session.mjs';
 import { appendEvent } from '../events.mjs';
 import { CHANNEL_ID } from '../departed.mjs';
@@ -15,6 +15,7 @@ import { CHANNEL_ID } from '../departed.mjs';
 const HOME_DIR = () => process.env.HOME || process.env.USERPROFILE || ''; // homedir() 금지 — Next 파일 추적이 홈 전체를 훑는다(nft-homedir-guard)
 export const PRESENCE_MAX = 500; // msgr_crew_presence 입력 상한과 같다
 const JOURNAL = /^\d{4}-\d{2}-\d{2}-(.+)\.org-[0-9a-f-]{36}-ch-([0-9a-f-]{36})\.md$/i;
+const LINK_JOURNAL = /^\d{4}-\d{2}-\d{2}-(.+)\.org-[0-9a-f-]{36}-rm-([0-9a-f-]{36})\.md$/i; // 메신저 v2 링크 조직 칸(link-memory.mjs linkOrgTag) — 옛 회수는 이 이름을 묻지 않는다
 
 /** SDK 세션 전사가 놓이는 설정 폴더 후보 — 호스트(CLAUDE_CONFIG_DIR 또는 ~/.claude)와 호환 러너 격리 폴더(~/.argo/claude-config-*). */
 export async function sdkConfigDirs() {
@@ -55,7 +56,7 @@ export async function dropTranscripts(wsId, slug, sessionIds, { configDirs } = {
 async function journalNames(wsId) {
   try { return await readdir(join(paths(wsId).root, '.msgr-journal')); } catch { return []; }
 }
-const journalOf = (name, slug) => { const m = name.match(JOURNAL); return m && m[1] === slug ? m[2].toLowerCase() : null; };
+const journalOf = (name, slug, re = JOURNAL) => { const m = name.match(re); return m && m[1] === slug ? m[2].toLowerCase() : null; };
 
 /** 회수 한 바퀴 — slugs = 이 회사에서 메신저에 나간 에이전트. presence(pairs[{slug, id}]) → Map(`slug:channelId` → 소속 여부) | null.
     회사당 한 번에 묻는다(설계 검수 M8). 로컬에 채널 기록이 없으면 묻지 않는다(호출 0). */
@@ -88,6 +89,46 @@ export async function recallDeparted(wsId, slugs, presence, { configDirs } = {})
     for (const n of names) if (goneSet.has(journalOf(n, slug))) { await rm(join(paths(wsId).root, '.msgr-journal', n), { force: true }); journals++; }
     sum.removed += r.removed; sum.transcripts += transcripts; sum.journals += journals; sum.channels += gone.length;
     await appendEvent(wsId, { type: 'memory', op: 'recall', agent: slug, channels: gone.length, removed: r.removed, transcripts, journals }); // 본문 없이 개수만
+  }
+  return sum;
+}
+
+/** 메신저 v2 회수 한 바퀴(2026-10-22 유건 지시 — 조직을 나가면 PC의 조직 기억도 거둔다). 판정은 서버 msgr2_agent_rooms가 **명시한** 방만:
+    presence(pairs[{slug, id}]) → Map(`slug:방` → 그 에이전트가 그 방에서 지금 일할 수 있나, `*:방` → 주인의 에이전트가 그 방에 하나라도 있나) | null.
+    조회 실패·옛 서버(함수 없음)·답에 없는 방은 아무것도 지우지 않는다. 직접 받은 링크 기록(link:<방> — 줄·세션·조직 칸)은 `slug:방`으로, 전해 받은 링크 기록(linkr:<방>)은 `*:방`으로 판정한다.
+    묻는 방: 대화 기록의 링크 범위 줄(팀·모름 공간 — 개인 공간은 묻지 않는다, D3), 장부의 링크 세션(<slug>:link:<방>), 링크 조직 칸 일지(.msgr-journal의 org-…-rm-<방>).
+    옛 메신저 채널 줄·장부 키·옛 채널 일지(org-…-ch-…)는 묻지 않는다 — 옛 회수 recallDeparted 몫이다(옛 1:1 방 id가 v2와 다를 수 있어 개인 기억을 지우지 않게, 옛 일지는 옛 서버 판정).
+    지우는 것: 그 방의 대화 줄(각인)·링크 세션의 모델 전사·조직 칸 일지. 로컬에 링크 방 기록이 없으면 묻지 않는다(호출 0). */
+export async function recallLinkRooms(wsId, slugs, presence, { configDirs } = {}) {
+  const sum = { removed: 0, transcripts: 0, journals: 0, channels: 0 };
+  const names = await journalNames(wsId);
+  const want = new Map(); // slug → Set(각인 키 link:<방>·linkr:<방>)
+  const KEY = /^(linkr?):([0-9a-f-]{36})$/i;
+  for (const slug of new Set(slugs)) {
+    const keys = new Set(await threadLinkRoomIds(wsId, slug).catch(() => []));
+    for (const k of await linkSessionRoomIds(wsId, slug)) if (KEY.test(k) && CHANNEL_ID.test(k.split(':')[1])) keys.add(k);
+    for (const n of names) { const c = journalOf(n, slug, LINK_JOURNAL); if (c) keys.add(`link:${c}`); }
+    if (keys.size) want.set(slug, keys);
+  }
+  const pairs = [...want].flatMap(([slug, keys]) => [...new Set([...keys].map((k) => k.split(':')[1]))].map((id) => ({ slug, id })));
+  if (!pairs.length) return sum;
+  const ans = new Map();
+  for (let i = 0; i < pairs.length; i += PRESENCE_MAX) {
+    const part = await presence(pairs.slice(i, i + PRESENCE_MAX)).catch(() => null);
+    if (!(part instanceof Map)) return sum; // 조회 실패·옛 서버 — 아무것도 지우지 않는다
+    for (const [k, v] of part) ans.set(k, v);
+  }
+  for (const [slug, keys] of want) {
+    const gone = [...keys].filter((k) => { const [kind, id] = k.split(':'); return ans.get(kind === 'linkr' ? `*:${id}` : `${slug}:${id}`) === false; });
+    if (!gone.length) continue;
+    const r = await forgetThreadChannels(wsId, slug, gone);
+    const sids = [...new Set([...r.sessionIds, ...await takeChannelSessions(wsId, slug, gone)])];
+    const transcripts = await dropTranscripts(wsId, slug, sids, { configDirs });
+    let journals = 0;
+    const goneRooms = new Set(gone.filter((k) => k.startsWith('link:')).map((k) => k.slice(5)));
+    for (const n of names) if (goneRooms.has(journalOf(n, slug, LINK_JOURNAL))) { await rm(join(paths(wsId).root, '.msgr-journal', n), { force: true }); journals++; }
+    sum.removed += r.removed; sum.transcripts += transcripts; sum.journals += journals; sum.channels += gone.length;
+    await appendEvent(wsId, { type: 'memory', op: 'recall', agent: slug, channels: gone.length, removed: r.removed, transcripts, journals, via: 'msgr2' }); // 본문 없이 개수만
   }
   return sum;
 }

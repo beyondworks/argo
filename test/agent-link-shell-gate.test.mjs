@@ -66,7 +66,7 @@ test('D28 실제 게이트 → 실제 알림 버스 → 연결부 → approval_r
   await until(() => server.log.some((x) => x.args?.p_env?.type === 'work.approval_request'));
   assert.equal(gateResult?.behavior, 'deny', '실제 게이트가 막고 결재를 올렸다');
   const local = (await loadApprovals(ws)).find((a) => a.payload?.shell);
-  assert.deepEqual(local.scope, { kind: 'link', work: o.work, room: o.data.room, owner: true });
+  assert.deepEqual(local.scope, { kind: 'link', work: o.work, room: o.data.room, owner: true, space: 'p0000000-0000-4000-8000-000000000000', spaceKind: 'personal' }); // 방의 공간(가짜 서버 기본 = 개인) — 결재 후속 턴의 일지 칸(link-memory.mjs)
   const req = server.log.find((x) => x.args?.p_env?.type === 'work.approval_request').args.p_env;
   assert.equal(req.data.risk, 'high');
   assert.equal(req.data.effect_key, `approval:${local.id}`);

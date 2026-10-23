@@ -357,13 +357,20 @@ test('D28: v2 owner link 턴의 고위험 셸(rm -rf ~/Documents/x)은 옛 메�
 const { readdir } = await import('node:fs/promises');
 const { _followUpForTest } = await import('../src/approval-actions.mjs');
 const journalFiles = async (ws, slug) => (await readdir(paths(ws).journal).catch(() => [])).filter((f) => f.endsWith(`-${slug}.md`));
-test('기억 안 남김 방(memoryOff)의 link 쪽지 → 배달 턴은 PC 일지를 쓰지 않는다 — 기억 남김 방은 종전대로 쓴다', async () => {
+test('link 쪽지 → 배달 턴의 PC 일지: 개인 공간 기억 남김 방은 종전대로 쓰고, 기억 안 남김·팀 공간(전해 받은 일)·공간 모름은 쓰지 않는다(2026-10-22 조직 기억)', async () => {
   runner = 'claude'; process.env.ARGO_NATIVE_RUNNERS = 'off';
-  for (const memoryOff of [false, true]) {
+  const TEAM = 'a7000000-0000-4000-8000-0000000000ad', ROOM = 'b7000000-0000-4000-8000-0000000000ad';
+  for (const [name, extra, want] of [
+    ['개인 공간 기억 남김', { space: 'a7000000-0000-4000-8000-0000000000ae', spaceKind: 'personal' }, 1],
+    ['개인 공간 기억 안 남김', { space: 'a7000000-0000-4000-8000-0000000000ae', spaceKind: 'personal', memoryOff: true }, 0],
+    ['팀 공간(전해 받은 일 — 조직 칸에도 쓰지 않음)', { room: ROOM, space: TEAM, spaceKind: 'team' }, 0],
+    ['공간 모름(fail-closed)', {}, 0],
+  ]) {
     const ws = await setup('claude'); await withBeta(ws, 'claude');
-    const ctx = linkCtx(true); if (memoryOff) ctx.scope.memoryOff = true;
+    const ctx = linkCtx(true); Object.assign(ctx.scope, extra);
     await deliveredGate(ws, ctx);
-    assert.equal((await journalFiles(ws, 'beta')).length, memoryOff ? 0 : 1, memoryOff ? '기억 안 남김: 일지 없음' : '기억 남김: 일지 있음');
+    assert.equal((await journalFiles(ws, 'beta')).length, want, name);
+    assert.equal((await readdir(join(paths(ws).root, '.msgr-journal')).catch(() => [])).length, 0, `${name}: 조직 칸 0`);
   }
 });
 

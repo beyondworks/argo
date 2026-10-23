@@ -13,7 +13,7 @@
 // host = {
 //   canAccept(offer) → boolean                             // 이 기기에 러너가 있어 받을 수 있나(받을 수 없으면 accept하지 않는다)
 //   runTurn(offer, ctx) → Promise<{ text, files?, handoffs?, usage? }>
-//   onEvent?(name, detail)                                 // 로그·화면용(update_required·device_invalid·paused·resumed·lease_lost 등)
+//   onEvent?(name, detail)                                 // 로그·화면용(update_required·device_invalid·paused·resumed·lease_lost 등) + connected((재)접속)·scope_changed(agent.scope 빠짐 알림)
 // }
 // ctx(runTurn에 넘기는 것) = { signal, tier, progress(stage, note), requestApproval(req), effect(key, kind, fn), upload(name, bytes, mime) }
 //
@@ -138,6 +138,7 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
       return;
     }
     if (env.device && env.device !== device) return; // 다른 기기에 간 봉투
+    if (env.type === 'agent.scope') { ev('scope_changed', {}); return; } // 빠짐 알림(일 없는 봉투) — 본체가 msgr2_agent_rooms로 다시 확인한다(20261022180000)
     // 이 본체에 없는 에이전트 — 받은 봉투 목록에서 뺀다: 대응표를 아직 못 받은 본체(중단 중 부팅)가 나중에 따라잡기로 다시 받을 수 있게
     if (agentIds && !agentIds.has(env.agent)) { if (env.id) seen.delete(env.id); return; }
     const w = works.get(env.work);
@@ -315,7 +316,7 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
   function start() {
     stopped = false;
     sub = transport.subscribe(topicWork(uid), (env) => onEnvelope(env), (status) => {
-      if (status === 'connected') catchUp(); // (재)접속마다 한 번 따라잡는다 — 예비 조회·폴링은 없다(D7)
+      if (status === 'connected') { catchUp(); ev('connected', {}); } // (재)접속마다 한 번 따라잡는다 — 예비 조회·폴링은 없다(D7). 본체는 이때 회수 확인을 한 번 한다
     });
     return api;
   }
