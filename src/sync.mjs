@@ -74,9 +74,11 @@ const companyIdle = new Map();
    쓴 직후 판을 기록하면 그 사이 다른 기기가 덮었을 때 남의 판에 내 내용을 묶지만, MD5가 같다는 것은 보관 바이트가 지금 원격 바이트 그대로라는 뜻이라
    경합·같은 크기 덮어쓰기·CDN 옛 판(#832 — info는 늘 원본) 어디서도 틀린 내용을 쓰지 않는다. Storage의 etag는 단일 업로드 객체의 내용 MD5다(로컬 storage-api
    1.41.8 실측, 운영 매니페스트 699개 모두 "32자리 16진수" 꼴). 그 꼴이 아니거나(여러 조각 업로드) 확인 못 하면 종전처럼 받는다.
-   옵트인(ARGO_SYNC_MANIFEST_REUSE=1) — 꺼져 있으면 보관도 하지 않아 요청이 배포본과 같다. 기본값 승격은 상주 실측 뒤. 경우 표: artifacts/manifest-reuse/case-table.md */
+   기본 켬(2026-10-23 승격 — 운영 Storage 전송 하루 2.9~4.1GB, 매니페스트 MISS 약 1.49GB/일). ARGO_SYNC_MANIFEST_REUSE=0이면 보관도 하지 않아 요청이 배포본(0.1.116)과 같다.
+   승격 조건(#1068): ① 운영 매니페스트 info의 cf_cache_status HIT 0(info가 캐시되면 옛 etag가 보관본 MD5와 같아 다른 기기 변경을 덮는다 — 이 장치의 유일한 전제)
+   ② 상주 실측 — 본체 발행 전에 맥 one이 확인한다(PR 본문). 경우 표: #1068 본문, 이번 승격의 기본값 시험은 test/sync-manifest-reuse.test.mjs M20·verify V3r */
 const manifestKeep = (globalThis.__argoManifestKeep ??= new Map()); // 매니페스트 키 → { buf, md5 } — 프로세스 메모리(재시작하면 첫 주기에 한 번 받는다)
-const manifestReuseOn = () => process.env.ARGO_SYNC_MANIFEST_REUSE === '1';
+const manifestReuseOn = () => process.env.ARGO_SYNC_MANIFEST_REUSE !== '0'; // 2026-10-23 기본 켬(전송량 — 아래 승격 기록). ARGO_SYNC_MANIFEST_REUSE=0이면 배포본(0.1.116) 경로: 보관도 cacheNonce도 없다
 const etagMd5 = (etag) => { const m = String(etag ?? '').replace(/"/g, '').trim().toLowerCase(); return /^[0-9a-f]{32}$/.test(m) ? m : null; };
 function keepManifest(key, buf) { if (manifestReuseOn() && buf?.length) manifestKeep.set(key, { buf, md5: createHash('md5').update(buf).digest('hex') }); }
 /** 보관 바이트가 지금 원격 바이트 그대로인가 — etag(info, 원본)가 보관 바이트의 MD5와 같을 때만 그 바이트. 아니면 null(받는다). */
