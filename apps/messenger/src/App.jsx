@@ -3869,7 +3869,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
   };
   const save = async (nextAllow, nextList) => {
     setBusy(true);
-    if (V2) { // v2: 사용 범위 = 이 팀 공간 자리의 allow·allow_users(msgr2_set_seat — 주인만). 옛 msgr_crews 저장은 v2 어댑터에 없어 v2_unsupported였다(재공개 전 검수 F1)
+    if (V2) { // v2: 사용 범위 = 이 팀 공간 자리의 allow·allow_users(msgr2_seat_scope — 주인만, 파견된 자리만). 옛 msgr_crews 저장은 v2 어댑터에 없어 v2_unsupported였다(재공개 전 검수 F1)
       const r = org?.id ? await seatSaveScope(rawSupabase.rpc.bind(rawSupabase), crew.id, org.id, nextAllow, nextList) : { error: { message: 'v2_unsupported' } };
       setBusy(false);
       if (r.error) return onError(friendlyErr(r.error.message, t));
@@ -3933,8 +3933,9 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
         <section>
           <h3>{t('crew.allow')}</h3>
           <p>{t('crew.allow.desc')}</p>
-          <Seg label={t('crew.allow')} value={allow} onPick={pickAllow} disabled={!owner || busy || locked} options={['all', 'list', 'owner'].map((v) => ({ v, label: t(`crew.allow.${v}`) }))} />
-          {allow === 'list' && (
+          {V2 && !dispatched ? <p className="note">{t('crew.allow.needDispatch')}</p> /* v2: 범위는 파견된 자리에만 있다 — 해제한 자리를 범위 저장이 되살리지 않게(재공개 전 검수 2차, 서버 msgr2_seat_scope) */
+            : <Seg label={t('crew.allow')} value={allow} onPick={pickAllow} disabled={!owner || busy || locked} options={['all', 'list', 'owner'].map((v) => ({ v, label: t(`crew.allow.${v}`) }))} />}
+          {allow === 'list' && !(V2 && !dispatched) && (
             <div className="picks">
               <span className="msgr-klabel">{t('crew.allow.pick')}</span>
               {others.map((m) => <label key={m.user_id} className={`pick${list.includes(m.user_id) ? ' on' : ''}`}><input type="checkbox" checked={list.includes(m.user_id)} disabled={!owner || busy} onChange={() => toggle(m.user_id)} /><Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span>{m.display_name || m.user_id.slice(0, 8)}</span><span className="msgr-klabel">{t(`role.${m.role}`)}</span></label>)}

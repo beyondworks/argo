@@ -21,16 +21,16 @@ test('회수 = msgr2_set_seat p_remove(서버는 범위를 건드리지 않는�
   assert.deepEqual(calls, [['msgr2_set_seat', { p_agent: 'ag', p_space: 'sp', p_allow: 'all', p_remove: true }]]);
 });
 
-test('사용 범위 저장 = msgr2_set_seat(allow, users) — 나만·모두는 명단 비움, 지정한 사람은 중복 없이, 모르는 값은 보내지 않음', async () => {
+test('사용 범위 저장 = msgr2_seat_scope(allow, users) — 파견된 자리만(빠진 자리를 되살리지 않음, 검수 2차) — 나만·모두는 명단 비움, 지정한 사람은 중복 없이, 모르는 값은 보내지 않음', async () => {
   const { calls, rpc } = spy();
   await seatSaveScope(rpc, 'ag', 'sp', 'owner', ['x']);
   await seatSaveScope(rpc, 'ag', 'sp', 'all');
   await seatSaveScope(rpc, 'ag', 'sp', 'list', ['u1', 'u2', 'u1']);
   const bad = await seatSaveScope(rpc, 'ag', 'sp', 'everyone', []);
   assert.deepEqual(calls, [
-    ['msgr2_set_seat', { p_agent: 'ag', p_space: 'sp', p_allow: 'owner', p_users: [] }],
-    ['msgr2_set_seat', { p_agent: 'ag', p_space: 'sp', p_allow: 'all', p_users: [] }],
-    ['msgr2_set_seat', { p_agent: 'ag', p_space: 'sp', p_allow: 'list', p_users: ['u1', 'u2'] }],
+    ['msgr2_seat_scope', { p_agent: 'ag', p_space: 'sp', p_allow: 'owner', p_users: [] }],
+    ['msgr2_seat_scope', { p_agent: 'ag', p_space: 'sp', p_allow: 'all', p_users: [] }],
+    ['msgr2_seat_scope', { p_agent: 'ag', p_space: 'sp', p_allow: 'list', p_users: ['u1', 'u2'] }],
   ]);
   assert.equal(bad.error?.message, 'msgr2_bad_allow');
 });
@@ -50,4 +50,10 @@ test('F3 연결: Pro 업그레이드 링크는 openExternalUrl로 연다(Tauri �
     assert.ok(at.length >= 1, `${f}: 링크가 있다(전제)`);
     for (const i of at) assert.match(src.slice(i, src.indexOf('\n', i)), /^target="_blank" rel="[a-z ]+" onClick=\{\(e\) => \{ e\.preventDefault\(\); openExternalUrl\(/, `${f}: ${src.slice(i, i + 80)}`);
   }
+});
+
+test('v2 범위 단추는 파견된 에이전트에만 — 파견 안 됐으면 안내(검수 2차: 해제한 자리를 범위 저장이 되살리지 않게)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /V2 && !dispatched \? <p className="note">\{t\('crew\.allow\.needDispatch'\)\}/);
 });

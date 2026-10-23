@@ -1116,6 +1116,7 @@ export const DICT = {
   'crew.state.away.never': ['지금은 대화할 수 없습니다 — 아직 접속한 적이 없습니다', 'Can’t chat right now — it has never connected'],
   'crew.state.recalled': ['지금은 대화할 수 없습니다 — 파견이 해제되어 지시·답글을 받지 않습니다', 'Can’t chat right now — it was recalled and takes no instructions or replies'],
   'crew.allow': ['누가 시킬 수 있나', 'Who can task this agent'],
+  'crew.allow.needDispatch': ['파견한 뒤에 누가 시킬 수 있는지 정할 수 있습니다.', 'Dispatch this agent first, then choose who may use it.'],
   'crew.allow.desc': ['방 밖에서(이 에이전트가 들어가지 않은 방이나 1:1 대화) 멘션해 일을 시킬 수 있는 사람입니다. 방에 들어온 에이전트는 그 방 멤버 누구나 부를 수 있습니다. 결재 확정은 언제나 소유자만 합니다.', 'Who may mention this agent outside a room it has joined (other rooms, 1:1 chats). Once it joins a room, anyone in that room can call it. Only the owner confirms approvals.'],
   'crew.allow.all': ['모두', 'Everyone'],
   'crew.allow.list': ['정한 사람만', 'Chosen people'],
