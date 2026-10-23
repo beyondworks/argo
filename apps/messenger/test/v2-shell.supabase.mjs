@@ -100,7 +100,7 @@ function query(table) {
 
 const rpcs = {
   argo_min_app_version: () => null, msgr2_service_pause: () => null,
-  msgr2_device_register: () => { if (state.free) throw Object.assign(new Error('msgr2_pro_required'), { code: '42501' }); /* ?free=1 — 무료 계정(새 기기 등록은 Pro만, #1133 검수) */ if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
+  msgr2_device_register: () => { if (state.free) throw Object.assign(new Error('msgr2_pro_required'), { code: '42501' }); /* ?free=1 — 무료 계정(새 기기 등록은 Pro만, #1133 검수) */ if (state.loginReq) { state.loginReq -= 1; throw Object.assign(new Error('device_login_required'), { code: '42501' }); } /* ?loginreq=N — 처음 N번 '다시 로그인 필요'(10분 규칙, F8 재로그인 안내 화면) */ if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
   msgr2_catch_up: () => ({ rooms: [], next_since: 202 }),
   msgr2_my_personal_space: () => P,
   msgr2_work_status: ({ p_work }) => ({ work: p_work, effects: [] }),
@@ -218,6 +218,8 @@ state.devices = [
   { id: 'd0000000-0000-4000-8000-000000000004', kind: 'app', app: 'messenger', app_version: '0.1.5', registered_at: at(60000), created_at: at(90000), state: 'expired', is_current: false },
 ];
 state.failRegister = Number(new URLSearchParams(globalThis.location?.search ?? '').get('failreg') || 0);
+state.loginReq = Number(new URLSearchParams(globalThis.location?.search ?? '').get('loginreq') || 0);
+state.signInAgain = () => { state.signedIn = true; const sess = { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' }; for (const cb of state.authCbs) cb('SIGNED_IN', sess); }; // 화면 시험: 다시 로그인한 것처럼
 state.free = new URLSearchParams(globalThis.location?.search ?? '').get('free') === '1';
 // 한 목록 시험 자료(메신저 단순화 2단계): 두 번째 조직(Lumen 연구)의 채널, 개인 여러 명 방(주말 모임), 친구가 연 1:1(친구 개인 공간)
 { const T2 = '7e000000-0000-4000-8000-0000000000ee', LAB = '7f000000-0000-4000-8000-000000000005', GROUP = '7f000000-0000-4000-8000-000000000006', FDM = '7f000000-0000-4000-8000-000000000007';
@@ -235,6 +237,8 @@ state.free = new URLSearchParams(globalThis.location?.search ?? '').get('free') 
     { id: 303, room_id: FDM, author_kind: 'user', author_user_id: mate, kind: 'text', body: '내일 점심 같이 해요', meta: {}, mentions: [], created_at: at(90) });
   T_.msgr2_prefs.push({ room_id: GEN, user_id: uid, muted: false, pinned: true }); }
 
+if (new URLSearchParams(globalThis.location?.search ?? '').get('admin') === '1') { const me = state.tables.msgr2_space_members.find((m) => m.space_id === T && m.user_id === uid); if (me) me.role = 'admin'; } // ?admin=1 — 나를 이 팀의 관리자로(관리자 전용 설정 화면)
+{ const n = Number(new URLSearchParams(globalThis.location?.search ?? '').get('legacybots') || 0); for (let i = 0; i < n; i++) { const slug = `bot-${(0x0804ccfb1680 + i).toString(16).padStart(12, '0')}`; state.tables.msgr2_agents.push({ id: `b0000000-0000-4000-8000-${String(i).padStart(12, '0')}`, owner_user_id: uid, display_name: i % 2 ? slug : '', slug, role_text: null, hosting: 'bot', status: 'active', created_at: at(100 + i) }); } } // ?legacybots=N — 이름 없는 옛 봇 N개(자리 없음, 유건 계정 45개 모양)
 if (new URLSearchParams(globalThis.location?.search ?? '').get('noagents') === '1') { state.tables.msgr2_agents = state.tables.msgr2_agents.filter((a) => a.owner_user_id !== uid); state.tables.msgr2_room_members = state.tables.msgr2_room_members.filter((m) => !(m.member_kind === 'agent' && [A, C].includes(m.member_id))); state.tables.msgr2_agent_seats = state.tables.msgr2_agent_seats.filter((x) => x.agent_id !== A); } // ?noagents=1 — 내 에이전트 0명 계정(빈 안내)
 // 두 번째 계정(민지)이 나에게 새 1:1을 연다 — 서버처럼 방을 민지의 개인 공간(PM)에 두고, 나에게 rooms 사건과 글 방송을 보낸다(#1088 검수 1: 받는 쪽에 보여야 한다)
 state.friendOpens = (body = '안녕하세요, 민지예요') => {

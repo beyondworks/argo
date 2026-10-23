@@ -15,12 +15,14 @@ import { WorkPanel, missingSchema } from './work-panel.jsx';
 import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
 import { supabase as rawSupabase, configured, q } from './supabase.js';
 import { v2Enabled } from './v2/flag.mjs';
-import { seatEnsure, seatRecall, seatSaveScope } from './v2/seat.mjs'; // 에이전트 자리 — 방에 넣기는 범위 보존(재공개 전 검수 F1)
+import { seatEnsure, seatRecall, seatSaveScope } from './v2/seat.mjs';
+import { splitLegacyBots } from './v2/legacy-bots.mjs'; // 이름 없는 옛 봇은 기본 목록 밖(유건 사용 검수 2026-10-23) // 에이전트 자리 — 방에 넣기는 범위 보존(재공개 전 검수 F1)
 import { createV2ClientFor, createV2Runtime, currentV2 } from './v2/runtime.mjs';
 import { bindLifecycle } from './link/lifecycle.mjs';
 import { v2ComposerTransport } from './v2/composer.mjs';
 import { useWorkCards } from './v2/useWorkCards.jsx';
 import { DevicesCard as V2DevicesCard } from './v2/DevicesCard.jsx';
+import { VpsSoonCard as V2VpsSoonCard } from './v2/VpsSoonCard.jsx'; // v2 VPS 연결 준비 중 안내(빈 화면 대신)
 import { v2StateBar, v2SignOutNotice } from './v2/devices.mjs';
 import { roomEventPlan, mergePlans } from './v2/room-events.mjs';
 import { loadMyInvitesIf, inviteInboxItems } from './v2/my-invites.mjs';
@@ -110,7 +112,7 @@ import { appBackStack, rootBackAction } from './back-stack.mjs'; import { useBac
 import { watchOnline } from './connection.mjs';
 import { selfMember, personalSelfName } from './self-member.mjs';
 import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu.mjs';
-import { initialOpen, foldToggle, railForceOpen } from './rail-fold.mjs';
+import { initialOpen, foldToggle, railForceOpen, readFold } from './rail-fold.mjs';
 import { adminRemovedNotice, readAdminRemoved } from './dispatch-notice.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
@@ -139,7 +141,7 @@ setIosCopy(isIos); // iOS 빌드는 무료 한도 오류에서 결제 권유를 
 setDeliveryReporter((kind, message) => pushDiag(kind, message)); // 전송 실패의 영어 원문은 카드에 보이지 않고 진단 기록(설정 > 진단)으로만 간다(검수 E, 2026-10-01)
 import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
-import { sessionTransition } from './session-notice.mjs';
+import { sessionTransition, noticeAfterSignIn } from './session-notice.mjs';
 import { createNativeSessionApplier, mountNativeRealtime, mountNativeNotificationTaps, updateNativeRealtimeContext } from './native-realtime.mjs';
 import { createSessionRecovery, waitingView } from './session-recovery.mjs';
 import { createNavInbox, decideNav } from './notif-nav.mjs';
@@ -401,6 +403,7 @@ export default function App() {
   const [signingOut, setSigningOut] = useState(false);
   const [cleanupEpoch, setCleanupEpoch] = useState(0);
   const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false); const recoveryRef = useRef(null);
+  const screenNoticeKey = useRef(null); // signOutNotice로 띄운 로그인 화면 이유 안내 — 다시 로그인하면 지운다(session-notice.mjs noticeAfterSignIn, F8)
   const cleanupCommitWaiters = useRef([]);
   const applySession = useCallback((next) => {
     const uid = next?.user?.id ?? null;
@@ -413,7 +416,7 @@ export default function App() {
     // 누르지 않은 로그아웃(만료·서버에서 끊김) → 로그인 화면에 이유를 적는다(D10). 다시 들어오면 그 안내만 지운다(로그인 뒤 토스트로 남지 않게)
     const tr = sessionTransition(globalThis.localStorage, next, { pending: logoutPending.current, deleting: deletingAccount.current });
     if (tr === 'expired') setLogoutNotice('auth.sessionExpired');
-    else if (tr === 'signedIn') setLogoutNotice((v) => (v === 'auth.sessionExpired' ? '' : v));
+    else if (tr === 'signedIn') setLogoutNotice((v) => noticeAfterSignIn(v, screenNoticeKey.current)); // 로그인 화면 이유 안내(만료·signOutNotice)는 지운다(F8)
     setSession(next);
   }, []);
   useEffect(() => {
@@ -500,7 +503,7 @@ export default function App() {
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = APLUS ? <APlusRoot key={session.user.id} session={session} onSignOut={signOut} /> : <Shell key={session.user.id} session={session} />;
   const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await recoveryRef.current?.restartSignIn(); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
-  const signOutNotice = async (key) => { await signOut(); setLogoutNotice(key); }; // 메신저 v2: 기기 폐기·다시 로그인 필요·모든 기기 로그아웃 뒤 로그인 화면에 이유를 남긴다(U6c-2a)
+  const signOutNotice = async (key) => { await signOut(); screenNoticeKey.current = key; setLogoutNotice(key); }; // 메신저 v2: 기기 폐기·다시 로그인 필요·모든 기기 로그아웃 뒤 로그인 화면에 이유를 남긴다(U6c-2a)
   return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted, signOutNotice }}><Sprite /><UpdateBar t={t} /><MobileUpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
@@ -601,8 +604,8 @@ function RailSection({ id, label, right = null, forceOpen = false, children }) {
 }
 
 /* 구역 안의 작은 묶음 — 에이전트를 '내 에이전트 / 외부 / 회사'로 접었다 편다(유건 2026-09-16). 접힘은 구역과 같은 저장소에 남는다. */
-function RailFold({ id, label, count, children }) {
-  const [open, setOpen] = useState(() => initialOpen(id, foldStore()));
+function RailFold({ id, label, count, children, defaultClosed = false }) {
+  const [open, setOpen] = useState(() => (defaultClosed ? readFold(foldStore())[id] === false : initialOpen(id, foldStore()))); // defaultClosed — 펼친 적이 있을 때만 펼친다(저장값 false = 펼침)
   const onToggle = (e) => { setOpen(foldToggle({ id, nextOpen: e.currentTarget.open, storage: foldStore() }).open); };
   return (
     <details className="msgr-fold" open={open} onToggle={onToggle}>
@@ -1620,6 +1623,7 @@ function Shell({ session }) {
   // 부르는 때: 시작(조직 목록 뒤) 한 번, 결재 방송(어느 조직이든 — 이미 붙은 구독에 처리기만 더함, 600ms에 한 번), 앱 복귀, 에이전트 탭에 들어갈 때.
   // 주기 호출 없음 — 유휴 0. 한 번에 2건(결재 표·에이전트 참여 요청 표, 둘 다 RLS가 볼 수 있는 대기 행만).
   const [approvals, setApprovals] = useState([]); const approvalsRef = useRef(approvals); approvalsRef.current = approvals;
+  const [legacyBots, setLegacyBots] = useState([]); // 이름 없는 옛 봇(v2/legacy-bots.mjs) — 기본 목록에서 빼고 레일의 접힌 '기타(비활성)'에만
   const [myAgents, setMyAgents] = useState(null); // 폰 에이전트 탭 — 내 에이전트(모든 공간). 아래 loadMyAgents가 채운다(선언은 얼굴 문맥(avatarCtx)보다 앞)
   // 에이전트 = 한 사람(유건 2026-10-05) — 내 크루 행 전부(개인 공간 + 모든 조직)로 얼굴 지도(crew-face.mjs agentLooks)를 만든다. 같은 에이전트는 공간·화면과 상관없이 같은 얼굴·사진.
   // 읽기: 로그인 때 1건 + 복귀·재연결(syncEpoch) 때 1건. 내 에이전트 목록(loadMyAgents)도 같은 읽기를 쓴다(agent-groups.mjs ownRowsReader — 읽는 중이면 같은 약속,
@@ -2492,7 +2496,7 @@ function Shell({ session }) {
     if (pins) setAgentPins(new Set(pins.map((p) => `${p.org_id}:${p.target_id}`)));
     if (own === null) return;
     setOwnCrews(newerOwn(own));
-    if (V2) { setMyAgents(stampFetched(v2MyAgents(own.rows, uid))); return; } // v2: 내 에이전트 한 행 = 개인 공간의 그 에이전트(옛 개인 행·조직 쌍둥이 행 조회가 v2에서 비어 폰 에이전트 탭이 '없음'이던 결함, 2026-10-22)
+    if (V2) { const { agents, legacy } = splitLegacyBots(v2MyAgents(own.rows, uid)); setLegacyBots(legacy); setMyAgents(stampFetched(agents)); return; } // 이름 없는 옛 봇은 기본 목록 밖(legacy-bots.mjs) // v2: 내 에이전트 한 행 = 개인 공간의 그 에이전트(옛 개인 행·조직 쌍둥이 행 조회가 v2에서 비어 폰 에이전트 탭이 '없음'이던 결함, 2026-10-22)
     const wsOf = new Map(own.rows.filter((c) => !c.org_id).map((c) => [c.id, c.ws_id]));
     setMyAgents(stampFetched([...withoutCopies(personal ?? []).filter((c) => c.owner_user_id === uid && c.status === 'active').map((c) => ({ ...c, org_id: null, ws_id: c.ws_id ?? wsOf.get(c.id) ?? null })), ...withoutCopies(own.rows).filter((c) => c.org_id)]));
   }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps -- readOwnCrews는 uid로만 바뀐다
@@ -3145,6 +3149,7 @@ function Shell({ session }) {
     <div className="msgr-list mine">
       {pauseNote && pauseNoteEl}
       {olFolds.map(([id, k, list]) => <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(olAgentRow)}</RailFold>)}
+      {legacyBots.length > 0 && <RailFold id="mine.legacy" label={t('rail.agents.legacy')} count={legacyBots.length} defaultClosed>{legacyBots.map((c) => <div key={c.id} className="msgr-railrow nomore"><button type="button" className="item" onClick={() => openAgentCard(c)} title={t('agent.legacyBot.hint')}><Av name={t('agent.legacyBot')} crew size="xs" crewId={c.id} /><span className="name">{t('agent.legacyBot')}</span></button></div>)}</RailFold>}
       {myAgents !== null && !olMine.length && <p className="msgr-rail-empty">{t('onelist.new.agent.none')} <RunnerButton /></p>}
     </div>
   </RailSection>);
@@ -3171,7 +3176,7 @@ function Shell({ session }) {
     </div>
   );
   // ── 한 목록 화면(v2) — 폰 대화 탭과 데스크톱 레일이 같은 자료·같은 거르개를 쓴다 ──
-  const olName = (row) => oneListTitle(row, (k, id) => (k === 'agent' ? (myAgents?.find((g) => g.id === id)?.display_name ?? crewShown(id)?.display_name ?? null) : nameOfUser(id))) ?? t('onelist.untitled');
+  const olName = (row) => oneListTitle(row, (k, id) => (k === 'agent' ? (legacyBots.some((g) => g.id === id) ? t('agent.legacyBot') : myAgents?.find((g) => g.id === id)?.display_name ?? crewShown(id)?.display_name ?? null) : nameOfUser(id))) ?? t('onelist.untitled'); // 이름 없는 옛 봇과의 옛 1:1은 목록에 그대로 두되 이름은 '이름 없는 옛 봇'
   // AI 이용 동의 전·조회 중엔 조직 방을 목록에서 뺀다(App Store 5.1.2 재검수 M-5, 유건 2026-09-27 — 동의 전엔 조직 공간 전체를 막는다. 동의는 계정 하나에 하나라 공간과 상관없이 같은 판정)
   const olOrgGated = V2 && (aiConsent === undefined ? !aiConsentFailOpen : !aiConsented);
   const olRows = olOrgGated && ol ? ol.filter((r) => r.space_kind !== 'team') : ol; const olGatedN = ol && olRows ? ol.length - olRows.length : 0;
@@ -4956,7 +4961,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
       <MemberListCard org={org} uid={uid} members={members} onNote={onNote} onError={onError} t={t} editSelf={false} />
     </div>)}</>);
     if (view === 'server') return body(t('phone.set.server'), <>{pick}{!ready ? waiting : os.locked ? lockedWhy : (<div className="msgr-setbody">
-      <OrgCard key={org.id} part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />
+      <OrgCard key={org.id} part="node" solo org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />
     </div>)}</>);
     if (view === 'ext') return body(t('phone.set.ext'), <>{pick}{!ready ? waiting : os.locked ? lockedWhy : (<div className="msgr-setbody">
       <OrgCard key={org.id} part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />
@@ -5031,7 +5036,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
         {tab === 'org' && org && !gated && <ReportsCard org={org} uid={uid} isAdmin={!!isAdmin} members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} />}
         {tab === 'crews' && org && !gated && (<>
           {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
-          {isAdmin && <OrgCard part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
+          {(isAdmin || V2) && <OrgCard part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
           {policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
         </>)}
         {tab === 'friends' && !gated && <FriendsCard isPersonal={!org} uid={uid} friends={friends} members={members} onChanged={onFriendsChanged} onDm={onDm} onPersonalDm={onPersonalDm} onNote={onNote} onError={onError} />}
@@ -5965,7 +5970,7 @@ function MemberListCard({ org, uid, members, onNote, onError, t, editSelf = true
   return (<section className="msgr-setcard"><h2>{t('org.members')} · {members.length}</h2><div className="msgr-rows">{members.map((m) => <div key={m.user_id} className="row"><Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{m.user_id === org.service_user_id ? t('org.node') : t(`role.${m.role}`)}{m.user_id === uid ? ` · ${t('ui.me')}` : ''}</span><MemberProfile org={org} m={m} uid={editSelf ? uid : null} profiles={profiles} reload={reload} onNote={onNote} onError={onError} t={t} /></div>)}</div></section>);
 }
 function OrgCard(props) {
-  if (V2 && (props.part === 'node' || props.part === 'agents')) return null; // v2: 상주 서버(노드)·조직 에이전트 관리 카드는 v2 공간에 없다(자리 = 파견, U6c-1b) — 플래그는 모듈 상수라 훅 순서가 바뀌지 않는다
+  if (V2 && (props.part === 'node' || props.part === 'agents')) return props.part === 'agents' || props.solo ? <V2VpsSoonCard /> : null; // v2: 상주 서버(노드)·조직 에이전트 관리는 v2 공간에 없다(자리 = 파견, U6c-1b) — 빈 화면 대신 'VPS 연결 준비 중' 안내(v2/VpsSoonCard.jsx, 데스크톱 탭은 node·agents를 함께 그려 agents 한 장만). 플래그는 모듈 상수라 훅 순서가 바뀌지 않는다
   return <OrgCardBody {...props} />;
 }
 function OrgCardBody({ org, orgs = [], uid, invitesTick = 0, members, channels = [], onInvite = null, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '', onOpenCrew, ent = null }) {

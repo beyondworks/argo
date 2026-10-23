@@ -10,6 +10,7 @@
 // RPC는 네 갈래다: 그대로(RPCS.keep·msgr2_*), U6d로 번역(legacy-rpc.mjs LEGACY_RPCS), 쓰기 없음(RPCS.write → v2_unsupported), 그 밖의 읽기는 빈 값. 실시간·보내기는 여기서 하지 않는다 — 연결 상태 기계(src/link/machine.mjs)가 맡는다(App.jsx v2 분기).
 
 import { LEGACY_RPCS, legacyInvite, inviteArgs } from './legacy-rpc.mjs';
+import { looksLegacyBot, markLegacyBots } from './legacy-bots.mjs'; // 이름 없는 옛 봇 표지(유건 사용 검수 2026-10-23)
 
 export const V2_UNSUPPORTED = 'v2_unsupported';
 /** v2 첨부 버킷(storage_path 앞 칸). */
@@ -369,10 +370,18 @@ class CrewBuilder extends Builder {
       const me = sess?.session?.user?.id;
       if (me) {
         const mine = await raw.from('msgr2_agents').select('id, owner_user_id, slug, display_name, role_text, face, hosting, status, created_at').eq('owner_user_id', me).eq('status', 'active');
-        if (!mine.error) list = list.concat((mine.data ?? []).filter((a) => !seats.has(a.id)).map((a) => ({ ...a, status: 'available' })));
+        if (!mine.error) list = list.concat((mine.data ?? []).filter((a) => !seats.has(a.id)).map((a) => ({ ...a, status: 'available', _avail: true })));
       }
     }
-    let rows = list.map((a) => {
+    // 이름 없는 옛 봇(legacy-bots.mjs) — 후보가 있을 때만 자리를 한 번 본다(어느 공간이든 살아 있는 자리). 못 읽으면 표지를 달지 않는다(숨기지 않는 쪽).
+    // '파견 전' 목록(에이전트 추가·파견 후보)에서는 빼고, 그 밖의 목록에는 표지만 달아 부르는 쪽(레일)이 접힌 '기타'로 내린다.
+    const cand = list.filter(looksLegacyBot).map((a) => a.id);
+    if (cand.length) {
+      const st = await raw.from('msgr2_agent_seats').select('agent_id').in('agent_id', cand).is('removed_at', null);
+      list = markLegacyBots(list, st.error ? null : new Set((st.data ?? []).map((x) => x.agent_id)));
+      list = list.filter((a) => !(a._avail && a._legacy_bot));
+    }
+    let rows = list.map(({ _avail, ...a }) => { // _avail = 위 '파견 전' 표지(행에 남기지 않는다)
       const seat = seats?.get(a.id);
       const row = { ...a, org_id: space, allow: seat?.allow ?? 'all', allow_users: seat?.allow_users ?? [], last_seen_at: null, folder: null, avatar_url: null, bio: null, _v2: true }; // 접속은 v2:pr:(Presence)로 본다 — 행 시각이 없다
       for (const c of want) if (c !== '*' && !(c in row)) row[c] = null;
