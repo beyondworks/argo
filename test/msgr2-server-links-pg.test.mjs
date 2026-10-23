@@ -224,6 +224,11 @@ test('#1154 검수 I-1·I-2: 주인이 팀 방에서 빠지면 그 방 일을 �
     post(xApp, '두 번째 일');
     const wb = db.sql(`select id from public.msgr2_works where room_id = '${R}' and state = 'offered'`);
     assert.ok(wb);
+    // 손님 기한이 끝난 주인(방 멤버 행은 그대로, S2 _msgr2_owner_active) — 받기·답하기 모두 막힌다
+    db.sql(`update public.msgr2_space_members set role = 'guest', expires_at = now() - interval '1 minute' where space_id = '${T}' and user_id = '${P}'`);
+    assert.deepEqual(updates(tok, 0), [], '기한 끝난 손님 주인의 봇에게 그 방 일은 없다');
+    assert.match(finish(tok, ua.message.execution_attempt, '답').err, /msgr_execution_forbidden/);
+    db.sql(`update public.msgr2_space_members set role = 'member', expires_at = null where space_id = '${T}' and user_id = '${P}'`);
     // P가 팀 공간·방에서 빠진다
     db.sql(`update public.msgr2_space_members set removed_at = now() where space_id = '${T}' and user_id = '${P}'`);
     db.sql(`update public.msgr2_room_members set removed_at = now() where room_id = '${R}' and member_kind = 'user' and member_id = '${P}'`);
