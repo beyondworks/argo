@@ -448,6 +448,14 @@ begin
 end $$;
 drop function if exists public._msgr2_storage_delete(text);
 drop function if exists public._msgr2_room_delete_check(uuid, uuid);
+-- 채널 기억 문서: 트리거를 지우고 옛 FK(on delete cascade)를 되돌린다. 이미 지운 방을 가리키는 문서가 있을 수 있어 not valid(새 행만 검사)
+drop trigger if exists msgr2_ref_channel_id on public.msgr_org_docs;
+do $do$ begin
+  if to_regclass('public.msgr_org_docs') is not null and to_regclass('public.msgr_channels') is not null
+     and not exists (select 1 from pg_constraint where conrelid = 'public.msgr_org_docs'::regclass and conname = 'msgr_org_docs_channel_id_fkey') then
+    alter table public.msgr_org_docs add constraint msgr_org_docs_channel_id_fkey foreign key (channel_id) references public.msgr_channels (id) on delete cascade not valid;
+  end if;
+end $do$;
 drop function if exists public._msgr2_room_deletable(uuid, uuid);
 -- F7: 새 함수만 지운다(표·행은 바꾸지 않았다)
 drop function if exists public.msgr2_room_set(uuid, text, boolean, boolean);

@@ -81,12 +81,21 @@ test('1:1 참가자·만든 사람(방에 있음)·팀 관리자는 지운다', 
   assert.equal(rooms(R1) + rooms(R2), '00');
 });
 
-test('진행 중인 일이 있으면 work_active, 일이 끝나면 지운다 — v2 의존 행·옛 채널·옛 글이 모두 없어지고 일지는 남는다', { skip }, () => {
+test('진행 중인 일이 있으면 work_active, 일이 끝나면 지운다 — v2 의존 행·옛 채널·옛 글이 모두 없어지고 일지·채널 기억 문서는 남되 읽히지 않는다', { skip }, () => {
   const R = room(TS, 'private', '일방', M, [['user', M], ['user', O], ['agent', AG]]);
   // 같은 id의 옛 채널·옛 글(백필 전 원본) + 일지
   db.sql(`insert into public.msgr_channels (id, org_id, kind, name, created_by) values ('${R}', '${TS}', 'private', '일방', '${M}')`);
   db.sql(`insert into public.msgr_messages (org_id, channel_id, author_kind, author_user_id, kind, body) values ('${TS}', '${R}', 'user', '${M}', 'text', '옛 글')`);
   db.sql(`insert into public.msgr_journal_entries (org_id, channel_id, day, line) values ('${TS}', '${R}', current_date, '기록')`);
+  // 채널 기억 문서(journal/·rules) + 문서 사이 연결 — 방을 지워도 남아야 한다(기억 데이터), 그러나 아무도 읽지 못한다. 전사 문서는 그대로 읽힌다
+  const d1 = db.sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${TS}', '${R}', 'journal/r-day.md', '일지', '본문', '${M}', '${M}') returning id`);
+  const d2 = db.sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${TS}', '${R}', 'rules/r-rule.md', '규칙', '본문', '${M}', '${M}') returning id`);
+  db.sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${TS}', null, 'rules/org-wide.md', '전사', '본문', '${M}', '${M}')`);
+  db.sql(`insert into public.msgr_doc_links (src_doc, dst_doc, reason) values ('${d1}', '${d2}', 'wikilink')`);
+  const docsSeen = (who) => db.as(who.uid, who.sid, `select string_agg(path, ',' order by path) from public.msgr_org_docs where org_id = '${TS}'`);
+  db.sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${TS}', '${O}', 'member'), ('${TS}', '${M}', 'owner') on conflict (org_id, user_id) do update set role = excluded.role, removed_at = null`);
+  db.sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${R}', 'user', '${O}'), ('${R}', 'user', '${M}') on conflict do nothing`);
+  assert.equal(docsSeen(oApp), 'journal/r-day.md,rules/org-wide.md,rules/r-rule.md', '전제: 삭제 전에는 방 문서를 읽는다');
   const mid = say(mApp, R, '에이 해줘', [AG]);
   assert.equal(JSON.parse(db.as(M, mApp.sid, `select public.msgr2_attachment_add(${mid}, 0, 'a.txt', 'text/plain', 1)`)).ok, true);
   db.as(M, mApp.sid, `insert into public.msgr2_reactions (message_id, user_id, emoji) values (${mid}, '${M}', '👍')`);
@@ -127,6 +136,10 @@ test('진행 중인 일이 있으면 work_active, 일이 끝나면 지운다 —
   assert.equal(db.sql(`select count(*) from public.msgr_channels where id = '${R}'`), '0', '옛 채널');
   assert.equal(db.sql(`select count(*) from public.msgr_messages where channel_id = '${R}'`), '0', '옛 글(옛 FK cascade)');
   assert.equal(db.sql(`select count(*) from public.msgr_journal_entries where line = '기록'`), '1', '일지는 남는다(기억 데이터)');
+  assert.equal(db.sql(`select count(*) from public.msgr_org_docs where channel_id = '${R}'`), '2', '채널 기억 문서(journal/·rules)는 남는다 — 옛 FK cascade로 지워지지 않는다');
+  assert.equal(db.sql(`select count(*) from public.msgr_doc_links where src_doc = '${d1}'`), '1', '문서 사이 연결도 남는다');
+  assert.equal(docsSeen(oApp), 'rules/org-wide.md', '지운 방의 문서는 아무도 읽지 못한다(전사 문서만)');
+  assert.equal(docsSeen(mApp), 'rules/org-wide.md', '주인도 지운 방의 문서는 읽지 못한다');
   assert.equal(rooms(other), '1', '다른 방 그대로');
 });
 
@@ -151,10 +164,15 @@ test('반응이 속도 제한보다 많아도 지운다(사람 채팅 켬) — �
 });
 
 test('되돌림 파일을 적용하면 삭제 함수·Storage 지우기 정책이 없어지고, 다시 적용하면 원래대로', { skip }, () => {
+  const docFk = () => db.sql(`select coalesce(string_agg(conname || ':' || convalidated, ','), '-') from pg_constraint where conrelid = 'public.msgr_org_docs'::regclass and contype = 'f' and confrelid = 'public.msgr_channels'::regclass`);
+  const docTrg = () => db.sql(`select count(*) from pg_trigger where tgrelid = 'public.msgr_org_docs'::regclass and tgname = 'msgr2_ref_channel_id'`);
+  assert.equal(docFk() + '/' + docTrg(), '-/1', '적용 판: 옛 FK 없음, ref_check 트리거');
   db.psql(['-v', 'ON_ERROR_STOP=1', '-f', DOWN]);
+  assert.equal(docFk() + '/' + docTrg(), 'msgr_org_docs_channel_id_fkey:false/0', '되돌림: 옛 FK를 not valid로 되돌리고 트리거를 지운다');
   assert.equal(db.sql(`select count(*) from pg_proc where proname in ('msgr2_room_delete', 'msgr2_room_delete_files', '_msgr2_room_deletable', '_msgr2_storage_delete', '_msgr2_room_delete_check')`), '0');
   assert.equal(db.sql(`select count(*) from pg_policies where policyname = 'msgr2_files_delete'`), '0');
   assert.equal(db.sql(`select public._msgr2_storage_gate(${q(`${TS}/${id(99)}/1/0-a.txt`)}, 'delete')`), 't', '없는 방 경로 = v2 경로 아님(종전)');
   db.psql(['-c', readFileSync(MIG, 'utf8')]);
   assert.equal(db.sql(`select count(*) from pg_proc where proname in ('msgr2_room_delete', 'msgr2_room_delete_files', '_msgr2_room_deletable', '_msgr2_storage_delete', '_msgr2_room_delete_check')`), '5');
+  assert.equal(docFk() + '/' + docTrg(), '-/1', '다시 적용하면 FK를 다시 떼고 트리거');
 });

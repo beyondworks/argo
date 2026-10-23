@@ -511,11 +511,28 @@ end $$;
 --   막는 경우: 진행 중인 일(offered·accepted·running·awaiting_approval, 만료·멈춤 판정 뒤)이 있으면 'work_active' — 실행 중인 본체가 사라진 행을 쓰지 않게.
 --   지우는 행: 반응·대기·푸시 기록·결재·일 사건·효과·일 파일·일·첨부·글·토픽·읽음·설정·카운터·방 멤버·방, 같은 id의 옛 msgr_channels(옛 글·첨부·멤버는 옛 FK cascade).
 --   옛 표를 같이 지우는 이유: 백필(msgr2_backfill_run·restart)이 다시 돌면 옛 채널에서 방·글을 되살린다. 옛 앱의 목록에도 남지 않게(v1 삭제와 같은 결과).
---   일지(msgr_journal_entries)·신고(msgr_reports)는 지우지 않는다(DB 위생 1: 기억 데이터). 글 연결과 신고의 방 연결은 비우고(옛 FK on delete set null과 같다),
---   일지의 방 id는 비울 수 없는 열이라 남긴다 — v1은 일지까지 cascade로 지웠지만 여기서는 남긴다(지운 방은 아무도 읽을 수 없어 방 권한으로 걸러진다).
+--   일지(msgr_journal_entries)·신고(msgr_reports)·채널 기억 문서(msgr_org_docs — journal/·rules·glossary·projects, 그 문서의 msgr_doc_links)는 지우지 않는다(DB 위생 1: 기억 데이터).
+--   글 연결과 신고의 방 연결은 비운다(옛 FK on delete set null과 같다). 일지·문서의 방 id는 남긴다 — 비우면 문서가 전사 범위(channel_id null)로 넓어져 비공개 문서가 드러난다.
+--   지운 방은 아무도 읽을 수 없어 읽기 정책(msgr_docs_select의 msgr_can_read_channel, 일지는 방 권한)이 걸러 준다. v1은 이것들까지 cascade로 지웠다.
+--   그래서 msgr_org_docs.channel_id의 옛 FK(msgr_channels on delete cascade, 20260903120000:891)를 떼고, 일지와 같은 _msgr2_ref_check 트리거로 바꾼다
+--   (20261020200600 4절과 같은 방식 — 넣기·고치기 때 옛 채널 또는 v2 방에 있는지만 본다). 옛 msgr_channels 행 삭제는 유지한다(백필 재생성 방지).
 --   반응 지우기 속도 제한(msgr2_rate_guard)은 이 함수 안에서만 건너뛴다(트랜잭션 한정 표지 msgr2.room_drop). 표지를 위조해도 반응 지우기 속도 제한만 풀린다(권한 판정 아님).
 --   동시성: 방 행을 for update로 잡는다 — 그 방에 글·일을 넣는 쪽(FK의 key share)이 기다렸다가 방이 없어 실패한다.
 -- 부하: 사용자가 누를 때만. 주기 작업·폴링 없음. 방 하나의 행 수만큼 지운다.
+
+do $do$
+declare cname text;
+begin
+  if to_regclass('public.msgr_org_docs') is null or to_regclass('public.msgr_channels') is null then return; end if;
+  for cname in select c.conname from pg_constraint c
+                where c.conrelid = 'public.msgr_org_docs'::regclass and c.contype = 'f' and c.confrelid = 'public.msgr_channels'::regclass
+                  and c.conkey = array[(select a.attnum from pg_attribute a where a.attrelid = 'public.msgr_org_docs'::regclass and a.attname = 'channel_id')] loop
+    execute format('alter table public.msgr_org_docs drop constraint %I', cname);
+  end loop;
+  drop trigger if exists msgr2_ref_channel_id on public.msgr_org_docs;
+  create trigger msgr2_ref_channel_id before insert or update of channel_id on public.msgr_org_docs
+    for each row execute function public._msgr2_ref_check('channel_id', 'msgr_channels', 'msgr2_rooms', 'uuid');
+end $do$;
 
 -- 판정: 이 사람이 이 방을 지울 수 있나(파일 목록·삭제·Storage 지우기가 같이 쓴다)
 create or replace function public._msgr2_room_deletable(p_room uuid, p_uid uuid) returns boolean
@@ -605,7 +622,7 @@ begin
   delete from public.msgr2_room_members where room_id = p_room;
   delete from public.msgr2_rooms where id = p_room;
   if to_regclass('public.msgr_channels') is not null then
-    delete from public.msgr_channels where id = p_room; -- 옛 글·첨부·멤버·반응은 옛 FK cascade(v1 deleteChannel과 같은 길)
+    delete from public.msgr_channels where id = p_room; -- 옛 글·첨부·멤버·반응은 옛 FK cascade(v1 deleteChannel과 같은 길). 채널 기억 문서는 위에서 FK를 떼어 남는다
   end if;
   perform set_config('msgr2.room_drop', '', true);
   foreach x in array tell loop
