@@ -422,4 +422,31 @@ begin
 end $$;
 drop function if exists public._msgr2_session_untrusted();
 drop function if exists public._msgr2_owner_active(uuid, uuid);
+-- b(대화 삭제): 새 함수·정책을 지우고 msgr2_rate_guard·_msgr2_storage_gate를 직전 본문(20261020201600·20261020200300)으로
+drop policy if exists msgr2_files_delete on storage.objects;
+drop function if exists public.msgr2_room_delete(uuid);
+drop function if exists public.msgr2_room_delete_files(uuid);
+create or replace function public.msgr2_rate_guard() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is null or not public._msgr2_people() then return coalesce(new, old); end if;
+  if tg_table_name = 'msgr2_reactions' then
+    perform public._msgr2_rate('reactions', 'minute', public._msgr2_clamp('msgr2_limit_reactions_min', 60, 120));
+  elsif tg_op = 'INSERT' then -- msgr2_rooms
+    perform public._msgr2_rate('room_create', 'minute', public._msgr2_clamp('msgr2_limit_room_create_min', 10, 30));
+    perform public._msgr2_rate('room_create', 'day', public._msgr2_clamp('msgr2_limit_room_create_day', 200, 500));
+  elsif new.archived_at is distinct from old.archived_at then
+    perform public._msgr2_rate('room_archive', 'minute', public._msgr2_clamp('msgr2_limit_room_archive_min', 10, 30));
+  end if;
+  return coalesce(new, old);
+end $$;
+create or replace function public._msgr2_storage_gate(p_name text, p_op text) returns boolean
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+begin
+  if public._msgr2_storage_room(p_name) is null then return true; end if;
+  return case p_op when 'select' then public._msgr2_storage_read(p_name) when 'write' then public._msgr2_storage_write(p_name) else false end;
+end $$;
+drop function if exists public._msgr2_storage_delete(text);
+drop function if exists public._msgr2_room_delete_check(uuid, uuid);
+drop function if exists public._msgr2_room_deletable(uuid, uuid);
 commit;

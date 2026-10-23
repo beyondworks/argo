@@ -499,3 +499,156 @@ begin
   perform realtime.send(jsonb_build_object('device_id', t.id), 'device_revoked', 'v2:u:' || me::text, true); -- 약속 v1 TOPICS.user(옛 u: 토픽과 겹치지 않게, #1076 검수)
   return true;
 end $$;
+
+-- ── b. 대화(방) 삭제(재공개 전 검수 b, 총괄 결정 2026-10-23 "실제 삭제") ──────────────────────────
+-- 원인: v2 앱의 방 삭제는 msgr2_rooms 직접 delete라 권한이 없어 거부됐다(F7 1번). v2 표는 FK 연쇄 삭제가 없다.
+-- 처방: 정의자 RPC 두 개 + Storage 지우기 정책. 앱 순서 = msgr2_room_delete_files(지울 수 있는지 + 파일 목록) → Storage API remove → msgr2_room_delete.
+--   파일 목록이 삭제와 같은 판정(_msgr2_room_delete_check)을 먼저 본다 — 지우지 못할 방의 파일을 먼저 지우지 않게. 그 사이 일이 시작되면 삭제가 work_active로 거부되고 파일만 지워진다(창이 짧아 받아들인다).
+--   누가 지우나(v1 20261006170000과 같은 규칙): 1:1(direct) = 방에 있는 참가자 누구나. 그 밖의 방 = 관리(팀 owner·admin, 개인 공간 주인)
+--   또는 만든 사람이면서 지금 방에 있음. 읽을 수 없는 방(남의 방)은 못 지운다.
+--   막는 경우: 진행 중인 일(offered·accepted·running·awaiting_approval, 만료·멈춤 판정 뒤)이 있으면 'work_active' — 실행 중인 본체가 사라진 행을 쓰지 않게.
+--   지우는 행: 반응·대기·푸시 기록·결재·일 사건·효과·일 파일·일·첨부·글·토픽·읽음·설정·카운터·방 멤버·방, 같은 id의 옛 msgr_channels(옛 글·첨부·멤버는 옛 FK cascade).
+--   옛 표를 같이 지우는 이유: 백필(msgr2_backfill_run·restart)이 다시 돌면 옛 채널에서 방·글을 되살린다. 옛 앱의 목록에도 남지 않게(v1 삭제와 같은 결과).
+--   일지(msgr_journal_entries)·신고(msgr_reports)는 지우지 않는다(DB 위생 1: 기억 데이터). 글 연결과 신고의 방 연결은 비우고(옛 FK on delete set null과 같다),
+--   일지의 방 id는 비울 수 없는 열이라 남긴다 — v1은 일지까지 cascade로 지웠지만 여기서는 남긴다(지운 방은 아무도 읽을 수 없어 방 권한으로 걸러진다).
+--   반응 지우기 속도 제한(msgr2_rate_guard)은 이 함수 안에서만 건너뛴다(트랜잭션 한정 표지 msgr2.room_drop). 표지를 위조해도 반응 지우기 속도 제한만 풀린다(권한 판정 아님).
+--   동시성: 방 행을 for update로 잡는다 — 그 방에 글·일을 넣는 쪽(FK의 key share)이 기다렸다가 방이 없어 실패한다.
+-- 부하: 사용자가 누를 때만. 주기 작업·폴링 없음. 방 하나의 행 수만큼 지운다.
+
+-- 판정: 이 사람이 이 방을 지울 수 있나(파일 목록·삭제·Storage 지우기가 같이 쓴다)
+create or replace function public._msgr2_room_deletable(p_room uuid, p_uid uuid) returns boolean
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare r public.msgr2_rooms; a public.msgr2_access_t; in_room boolean;
+begin
+  if p_uid is null or p_room is null then return false; end if;
+  select * into r from public.msgr2_rooms where id = p_room;
+  if not found then return false; end if;
+  a := public._msgr2_access_for(p_room, p_uid);
+  if not coalesce(a.read, false) then return false; end if;
+  in_room := exists (select 1 from public.msgr2_room_members m where m.room_id = r.id and m.member_kind = 'user' and m.member_id = p_uid and m.removed_at is null);
+  if r.kind = 'direct' then return in_room; end if;
+  return coalesce(a.manage, false) or (r.created_by = p_uid and in_room);
+end $$;
+revoke all on function public._msgr2_room_deletable(uuid, uuid) from public, anon, authenticated;
+
+-- 지울 수 있는지 미리 본다: 거부 코드 | null(지울 수 있음). 파일 목록과 삭제가 같이 쓴다 — 지우지 못할 방의 파일을 먼저 지우지 않게.
+create or replace function public._msgr2_room_delete_check(p_room uuid, p_uid uuid) returns text
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+begin
+  if not public._msgr2_room_deletable(p_room, p_uid) then return 'forbidden'; end if;
+  if public._msgr2_migration_window() then return 'migration'; end if;
+  if exists (select 1 from public.msgr2_works w where w.room_id = p_room
+              and public._msgr2_effective_state(w.state, w.expires_at, w.lease_until, w.has_result) in ('offered', 'accepted', 'running', 'awaiting_approval')) then
+    return 'work_active';
+  end if;
+  return null;
+end $$;
+revoke all on function public._msgr2_room_delete_check(uuid, uuid) from public, anon, authenticated;
+
+-- 지울 파일 목록: 첨부·일 파일 중 경로가 이 방을 가리키는 것만(버킷 접두어 'msgr/'는 뗀다 — v2 행은 붙이고 이전된 옛 행은 안 붙인다).
+-- 다른 방 경로를 가리키는 행은 돌려주지 않는다(그 방의 파일을 지우지 않게). 반환: {ok, paths} | 거부({ok:false, code}).
+create or replace function public.msgr2_room_delete_files(p_room uuid) returns jsonb
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare uid uuid := public._msgr2_need_app(); why text := public._msgr2_room_delete_check(p_room, uid);
+begin
+  if why is not null then return public._msgr2_rej(why); end if;
+  return jsonb_build_object('ok', true, 'paths', coalesce((select jsonb_agg(distinct p order by p) from (
+      select regexp_replace(a.storage_path, '^msgr/', '') p from public.msgr2_attachments a where a.room_id = p_room
+      union all
+      select regexp_replace(f.storage_path, '^msgr/', '') from public.msgr2_work_files f where f.room_id = p_room) x
+    where public._msgr2_storage_room(p) = p_room), '[]'::jsonb));
+end $$;
+revoke all on function public.msgr2_room_delete_files(uuid) from public, anon;
+grant execute on function public.msgr2_room_delete_files(uuid) to authenticated;
+
+create or replace function public.msgr2_room_delete(p_room uuid) returns jsonb
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare uid uuid := public._msgr2_need_app(); r public.msgr2_rooms; tell uuid[]; x uuid; n bigint; why text;
+begin
+  select * into r from public.msgr2_rooms where id = p_room for update;
+  if not found then return public._msgr2_rej('forbidden'); end if;
+  why := public._msgr2_room_delete_check(p_room, uid);
+  if why is not null then return public._msgr2_rej(why); end if;
+  if public._msgr2_people() then
+    perform public._msgr2_rate('room_archive', 'minute', public._msgr2_clamp('msgr2_limit_room_archive_min', 10, 30)); -- 보관과 같은 상한을 나눠 쓴다
+  end if;
+  tell := array(select public._msgr2_room_humans(p_room));
+  perform set_config('msgr2.room_drop', p_room::text, true);
+  -- 일지·신고는 남기고 연결만 비운다
+  if to_regclass('public.msgr_journal_entries') is not null then
+    update public.msgr_journal_entries set source_msg_id = null where source_msg_id in (select id from public.msgr2_messages where room_id = p_room);
+    -- channel_id는 비울 수 없는 열이라 그대로 둔다(옛 FK는 cascade였지만 이전 때 떼어 냈다 — 일지는 기억 데이터라 지우지 않는다. 읽는 쪽은 방 권한으로 거른다)
+  end if;
+  if to_regclass('public.msgr_reports') is not null then
+    update public.msgr_reports set message_id = null where message_id in (select id from public.msgr2_messages where room_id = p_room);
+    update public.msgr_reports set channel_id = null where channel_id = p_room;
+  end if;
+  delete from public.msgr2_reactions where message_id in (select id from public.msgr2_messages where room_id = p_room);
+  delete from public.msgr2_msg_waits where room_id = p_room;
+  delete from public.msgr2_push_sent where message_id in (select id from public.msgr2_messages where room_id = p_room);
+  delete from public.msgr2_push_gate where room_id = p_room;
+  delete from public.msgr2_approvals where room_id = p_room or work_id in (select id from public.msgr2_works where room_id = p_room);
+  delete from public.msgr2_work_events where work_id in (select id from public.msgr2_works where room_id = p_room);
+  delete from public.msgr2_effects where work_id in (select id from public.msgr2_works where room_id = p_room);
+  delete from public.msgr2_work_files where room_id = p_room or work_id in (select id from public.msgr2_works where room_id = p_room);
+  update public.msgr2_works set parent_work_id = null where room_id <> p_room and parent_work_id in (select id from public.msgr2_works where room_id = p_room);
+  delete from public.msgr2_works where room_id = p_room;
+  delete from public.msgr2_attachments where room_id = p_room;
+  delete from public.msgr2_messages where room_id = p_room; -- rule-ok: 방 주인·참가자가 누른 대화 삭제(v1 msgr_channels 삭제와 같은 결과, 총괄 결정 2026-10-23 "실제 삭제", 유건 "승인할테니까 지우라고 하고"). 운영 정리 아님
+  get diagnostics n = row_count;
+  delete from public.msgr2_topics where room_id = p_room;
+  delete from public.msgr2_reads where room_id = p_room;
+  delete from public.msgr2_prefs where room_id = p_room;
+  delete from public.msgr2_room_counters where room_id = p_room;
+  delete from public.msgr2_room_members where room_id = p_room;
+  delete from public.msgr2_rooms where id = p_room;
+  if to_regclass('public.msgr_channels') is not null then
+    delete from public.msgr_channels where id = p_room; -- 옛 글·첨부·멤버·반응은 옛 FK cascade(v1 deleteChannel과 같은 길)
+  end if;
+  perform set_config('msgr2.room_drop', '', true);
+  foreach x in array tell loop
+    perform public._msgr2_send_u(x, 'rooms', jsonb_build_object('space_id', r.space_id, 'room_id', p_room, 'removed', true));
+  end loop;
+  return jsonb_build_object('ok', true, 'messages', n);
+end $$;
+revoke all on function public.msgr2_room_delete(uuid) from public, anon;
+grant execute on function public.msgr2_room_delete(uuid) to authenticated;
+
+-- 반응 지우기 속도 제한: 방 삭제 안에서는 건너뛴다(본문은 20261020201600 그대로 + 첫 갈래 한 줄)
+create or replace function public.msgr2_rate_guard() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is null or not public._msgr2_people() then return coalesce(new, old); end if;
+  if tg_table_name = 'msgr2_reactions' then
+    if tg_op = 'DELETE' and coalesce(current_setting('msgr2.room_drop', true), '') <> '' then return old; end if; -- b: 방 삭제(msgr2_room_delete) 안
+    perform public._msgr2_rate('reactions', 'minute', public._msgr2_clamp('msgr2_limit_reactions_min', 60, 120));
+  elsif tg_op = 'INSERT' then -- msgr2_rooms
+    perform public._msgr2_rate('room_create', 'minute', public._msgr2_clamp('msgr2_limit_room_create_min', 10, 30));
+    perform public._msgr2_rate('room_create', 'day', public._msgr2_clamp('msgr2_limit_room_create_day', 200, 500));
+  elsif new.archived_at is distinct from old.archived_at then
+    perform public._msgr2_rate('room_archive', 'minute', public._msgr2_clamp('msgr2_limit_room_archive_min', 10, 30));
+  end if;
+  return coalesce(new, old);
+end $$;
+
+-- Storage 지우기: v2 경로(이 방의 파일)는 그 방을 지울 수 있는 사람(앱 기기)만. v2 경로가 아니면 거짓(허용 정책이 옛 경로를 열지 않게).
+create or replace function public._msgr2_storage_delete(p_name text) returns boolean
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare rid uuid := public._msgr2_storage_room(p_name);
+begin
+  return rid is not null and public._msgr2_device_ok() and public._msgr2_device_app() and public._msgr2_room_deletable(rid, auth.uid());
+end $$;
+revoke all on function public._msgr2_storage_delete(text) from public, anon;
+grant execute on function public._msgr2_storage_delete(text) to authenticated; -- 정책 식이 사용자 권한으로 부른다(_msgr2_storage_gate와 같다)
+-- 제한 정책 판정: 본문은 20261020200300 그대로 + 'delete' 갈래
+create or replace function public._msgr2_storage_gate(p_name text, p_op text) returns boolean
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+begin
+  if public._msgr2_storage_room(p_name) is null then return true; end if;
+  return case p_op when 'select' then public._msgr2_storage_read(p_name) when 'write' then public._msgr2_storage_write(p_name)
+    when 'delete' then public._msgr2_storage_delete(p_name) else false end;
+end $$;
+-- 허용 정책: 옛 msgr_files_delete(조직 관리자)만 있어 1:1 참가자·개인 공간 방(p/…)은 지울 수 없었다. v2 경로에만 걸린다(옛 경로 판정은 그대로).
+drop policy if exists msgr2_files_delete on storage.objects;
+create policy msgr2_files_delete on storage.objects for delete to authenticated
+  using (bucket_id = 'msgr' and public._msgr2_storage_delete(name));

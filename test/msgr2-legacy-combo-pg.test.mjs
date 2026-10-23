@@ -60,7 +60,7 @@ test('높음 2 — 옛 정리 작업(msgr_storage_sweep_list)이 v2 파일을 �
   assert.ok(c.includes(orphan), '옛 고아 파일은 여전히 후보'); assert.ok(c.includes(oldStale), '옛 채널의 첨부 없는 파일은 여전히 후보');
 });
 
-test('높음 3 — v2 방 경로는 v2 판정만: 옛 표 관리자(v2 멤버 아님)는 읽기·쓰기·지우기 모두 안 되고, v2 주인도 지우지 못한다', { skip }, () => {
+test('높음 3 — v2 방 경로는 v2 판정만: 옛 표 관리자(v2 멤버 아님)는 읽기·쓰기·지우기 모두 안 되고, v2에서는 그 방을 지울 수 있는 사람만 지운다', { skip }, () => {
   const mid = db.as(O, oApp.sid, `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${R}', 'user', '${O}', '파일') returning id`);
   const a = JSON.parse(db.as(O, oApp.sid, `select public.msgr2_attachment_add(${mid}, 0, 'secret.pdf', null, 1)`));
   assert.equal(canWrite(oApp, a.path), true, 'v2 주인은 자기 첨부 경로에 올린다');
@@ -68,7 +68,9 @@ test('높음 3 — v2 방 경로는 v2 판정만: 옛 표 관리자(v2 멤버 �
   assert.equal(canRead(xApp, a.path), false, '옛 관리자 읽기 차단');
   assert.equal(canWrite(xApp, `${S}/${R}/${mid}/1-x.pdf`), false, '옛 관리자 쓰기 차단');
   assert.equal(delCount(xApp, a.path), 0, '옛 관리자 지우기 차단(0행)');
-  assert.equal(delCount(oApp, a.path), 0, 'v2 주인도 SQL 정책으로는 못 지운다');
+  // b(재공개 전 검수 2026-10-23, 대화 삭제): 그 방을 지울 수 있는 v2 사람은 파일을 지운다(msgr2_files_delete). 옛 판정은 그대로라 실제로 지우지 않고 판정만 본다
+  assert.equal(db.as(O, oApp.sid, `select public._msgr2_storage_delete('${a.path}')`), 't', 'v2 팀 주인(방에 있음)은 그 방 파일을 지울 수 있다');
+  assert.equal(db.as(O, oRun.sid, `select public._msgr2_storage_delete('${a.path}')`), 'f', '본체 기기는 못 지운다');
   // v2에서 읽을 수 있고 옛 표에서는 관리자인 사람 — 옛 지우기 정책(관리자)이 허용해도 v2 방 경로는 지우지 못한다
   db.sql(`insert into public.msgr2_space_members (space_id, user_id, role) values ('${S}', '${X}', 'member'); insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${R}', 'user', '${X}')`);
   try {
