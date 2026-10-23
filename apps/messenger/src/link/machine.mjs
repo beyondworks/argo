@@ -58,7 +58,10 @@ export function createLinkMachine(opts) {
   const seen = new Set();
   const unread = new Map(); let activeRoom = null;
   const moreRooms = new Set();
-  const watched = new Map(); // workId → { owner, chans: [] }
+  const watched = new Map(); // workId → { owner, chans: [], pr: 주인 접속 표시 채널을 잡았나 }
+  // 주인 접속 표시 채널은 주인마다 하나를 함께 쓴다(owner → { ch, refs }). supabase-js는 같은 토픽이면 있던 채널을 돌려주고, 가입한 채널에 presence 콜백을 붙이면 던진다 —
+  // 팀 방 '모두에게'처럼 같은 주인의 에이전트 여러 명에게 일이 생기면 두 번째 일에서 화면이 깨졌다(2026-10-23). 마지막 일이 닫힐 때만 채널을 닫는다
+  const presence = new Map();
   const sleeps = new Set(); // 보내기 재시도 대기 — 중단·폐기 때 바로 깨운다
   const listeners = new Map();
 
@@ -112,7 +115,9 @@ export function createLinkMachine(opts) {
   // ── 타이머·채널 정리 ────────────────────────────────────────────────────────
   function clearTimer() { if (timer != null) clock.clearTimeout(timer); timer = null; nextAt = null; }
   function closeWorks() {
-    for (const w of watched.values()) { for (const ch of w.chans) { try { client.removeChannel(ch); } catch { /* 이미 닫힘 */ } } w.chans = []; }
+    for (const w of watched.values()) { for (const ch of w.chans) { try { client.removeChannel(ch); } catch { /* 이미 닫힘 */ } } w.chans = []; w.pr = false; }
+    for (const p of presence.values()) { try { client.removeChannel(p.ch); } catch { /* 이미 닫힘 */ } }
+    presence.clear();
     closeSpaces();
   }
   function closeSpaces() {
@@ -546,20 +551,41 @@ export function createLinkMachine(opts) {
     });
     ch.subscribe(() => {}); // 끊기면 u:가 다시 붙을 때 함께 다시 가입한다(따로 재시도하지 않는다)
     w.chans.push(ch);
-    if (w.owner) {
-      const pr = client.channel(names.presenceTopic(w.owner), { config: { private: true } });
-      pr.on('presence', { event: 'sync' }, () => emit('presence', { owner: w.owner, state: pr.presenceState?.() ?? {} }));
-      pr.subscribe(() => {});
-      w.chans.push(pr);
+    if (w.owner && !w.pr) {
+      let p = presence.get(w.owner);
+      if (!p) {
+        const owner = w.owner;
+        const pr = client.channel(names.presenceTopic(owner), { config: { private: true } });
+        pr.on('presence', { event: 'sync' }, () => emit('presence', { owner, state: pr.presenceState?.() ?? {} }));
+        pr.subscribe(() => {});
+        p = { ch: pr, refs: 0 };
+        presence.set(owner, p);
+      }
+      p.refs++; w.pr = true;
     }
+  }
+  /** 이 일이 잡은 주인 접속 표시를 놓는다 — 그 주인을 보는 일이 더 없으면 채널을 닫는다.
+      바로 닫지 않고 한 박자 뒤(마이크로태스크)에 닫는다: 화면(useWorkCards)은 진행 중인 일 목록이 바뀔 때 모두 놓았다가 곧바로 다시 잡는다.
+      supabase-js의 removeChannel은 서버의 나가기 답이 와야 목록에서 빠져서, 그사이 같은 토픽을 다시 만들면 닫히는 중인 옛 채널이 돌아와 접속 표시가 끊긴다. */
+  function releasePresence(w) {
+    if (!w?.pr) return;
+    w.pr = false;
+    const owner = w.owner; const p = presence.get(owner); if (!p) return;
+    if (--p.refs > 0) return;
+    queueMicrotask(() => {
+      if (p.refs > 0 || presence.get(owner) !== p) return; // 그사이 다시 잡혔다
+      presence.delete(owner);
+      try { client.removeChannel(p.ch); } catch { /* 이미 닫힘 */ }
+    });
   }
   function watchWork(workId, { owner = null } = {}) {
     if (!workId || terminal()) return () => {};
-    if (!watched.has(workId)) watched.set(workId, { owner, chans: [] });
+    if (!watched.has(workId)) watched.set(workId, { owner, chans: [], pr: false });
     joinWork(workId);
     return () => {
       const w = watched.get(workId); if (!w) return;
       for (const ch of w.chans) { try { client.removeChannel(ch); } catch { /* 이미 닫힘 */ } }
+      releasePresence(w);
       watched.delete(workId);
     };
   }
