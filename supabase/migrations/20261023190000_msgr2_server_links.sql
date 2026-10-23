@@ -294,8 +294,9 @@ revoke all on function public.msgr2_bot_me(text) from public;
 grant execute on function public.msgr2_bot_me(text) to anon, authenticated;
 
 -- 일 받기: 이 봇 에이전트의 offered 일(만료 전)을 accepted로 잡고(리스 15분, lease_device = 봇 행 id) 텔레그램 모양으로 준다.
--- 이미 이 봇이 잡았지만 답하지 않은 일 중 update_id > p_after인 것도 다시 준다(봇이 받은 뒤 죽은 경우). 일이 없으면 쓰기 0.
--- update_id = 사람 글 id(source_message_id). 넘김 일(사람 글 없음)은 봇에게 오지 않는다 — 회의·넘김은 1단계 밖.
+-- 이미 이 봇이 잡았지만 답하지 않은 일 중 리스가 살아 있고 update_id > p_after인 것도 다시 준다(봇이 받은 뒤 죽은 경우). 일이 없으면 쓰기 0.
+-- update_id = 일의 원문 글 id(source_message_id): 사람 글, 또는 다른 에이전트가 넘긴 결과 글(넘김 일도 원문이 있어 봇에게 간다). 회의 일에는 봇이 참가하지 않는다(20261020201400 124행).
+-- 주인이 그 방을 더는 읽을 수 없으면(팀 공간·방에서 빠짐) 주지 않는다 — 본체 따라잡기(msgr2_link_pending, 20261020200200 743행)와 같은 판정.
 create or replace function public.msgr2_bot_updates(p_token text, p_after bigint default 0, p_lim int default 1) returns jsonb
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare b public.msgr2_bots := public._msgr2_bot_auth(p_token); uid uuid; out jsonb := '[]'::jsonb; w public.msgr2_works; n int := 0; lim int := least(greatest(coalesce(p_lim, 1), 1), 10);
@@ -306,7 +307,8 @@ begin
   for w in select * from public.msgr2_works x
             where x.agent_id = b.agent_id and x.source_message_id is not null and not x.has_result
               and ((x.state = 'offered' and x.expires_at > now())
-                   or (x.state in ('accepted', 'running') and x.lease_device = b.id and x.source_message_id > coalesce(p_after, 0)))
+                   or (x.state in ('accepted', 'running') and x.lease_device = b.id and x.lease_until > now() and x.source_message_id > coalesce(p_after, 0)))
+              and coalesce((public._msgr2_access_for(x.room_id, uid)).read, false)
             order by x.created_at, x.id limit lim for update skip locked loop
     if w.state = 'offered' then
       update public.msgr2_works set state = 'accepted', lease_device = b.id, lease_gen = lease_gen + 1, lease_until = now() + interval '15 minutes', updated_at = now()
@@ -328,6 +330,7 @@ revoke all on function public.msgr2_bot_updates(text, bigint, int) from public;
 grant execute on function public.msgr2_bot_updates(text, bigint, int) to anon, authenticated;
 
 -- 최종 답: 이 봇이 잡은 일에 한 번. 같은 일을 다시 보내면(봇의 보관함 재시도) 쓰기 없이 첫 글 id를 돌려준다.
+-- 리스(15분)가 지났거나 주인이 그 방을 더는 읽을 수 없으면 받지 않는다(방에서 빠진 뒤 답이 방에 들어가던 결함, #1154 검수 I-1).
 -- 글 모양은 본체 경로(msgr2_link_send work.result 비회의 갈래, 20261020201400 425~426행)와 같다: agent 글 + meta.work, 일 done·has_result, 연속 답장 +1.
 create or replace function public.msgr2_bot_finish(p_token text, p_attempt uuid, p_text text) returns bigint
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
@@ -339,7 +342,8 @@ begin
     select id into mid from public.msgr2_messages where work_id = w.id and author_kind = 'agent' order by id limit 1;
     return mid;
   end if;
-  if w.state not in ('accepted', 'running') or w.lease_device is distinct from b.id then raise exception 'msgr_execution_not_owner'; end if;
+  if w.state not in ('accepted', 'running') or w.lease_device is distinct from b.id or not (w.lease_until > now()) then raise exception 'msgr_execution_not_owner'; end if;
+  if not coalesce((public._msgr2_access_for(w.room_id, w.owner_user_id)).read, false) then raise exception 'msgr_execution_forbidden'; end if;
   if length(coalesce(p_text, '')) not between 1 and 20000 then raise exception 'msgr_bot_bad_body'; end if;
   if public._msgr2_paused() then raise exception 'service_paused'; end if;
   insert into public.msgr2_messages (room_id, topic_id, author_kind, author_agent_id, kind, body, meta, work_id)
@@ -360,6 +364,7 @@ begin
      or not exists (select 1 from public.msgr2_works x where x.room_id = p_room and x.agent_id = b.agent_id and x.lease_device = b.id and x.created_at > now() - interval '1 hour') then
     raise exception 'msgr_bot_not_member';
   end if;
+  if not coalesce((public._msgr2_access_for(p_room, b.owner_user_id)).read, false) then raise exception 'msgr_bot_not_member'; end if; -- 주인이 그 방을 더는 못 읽으면(검수 I-1과 같은 판정)
   if length(coalesce(p_text, '')) not between 1 and 20000 then raise exception 'msgr_bot_bad_body'; end if;
   if public._msgr2_paused() then raise exception 'service_paused'; end if;
   insert into public.msgr2_messages (room_id, author_kind, author_agent_id, kind, body, meta)

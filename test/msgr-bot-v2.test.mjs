@@ -98,7 +98,7 @@ test('sendMessage: execution_attempt면 최종 답(표지 떼기), 없으면 보
   assert.equal((await handleV2({ token: V2, method: 'sendMessage', params: { chat_id: ROOM, text: 'x', execution_attempt: 'nope' } }, h.rpc, h.opts)).status, 400);
   assert.equal((await handleV2({ token: V2, method: 'sendMessage', params: { chat_id: 'general', text: 'x' } }, h.rpc, h.opts)).status, 400);
   assert.equal(h.calls.length, 2);
-  for (const [name, code] of [['msgr_execution_not_owner', 409], ['msgr_bot_bad_body', 400], ['msgr_bot_not_member', 403], ['service_paused', 503]]) {
+  for (const [name, code] of [['msgr_execution_not_owner', 409], ['msgr_execution_forbidden', 403], ['msgr_bot_bad_body', 400], ['msgr_bot_not_member', 403], ['service_paused', 503]]) {
     const e = harness({ msgr2_bot_finish: new Error(`${name}`) });
     assert.equal((await handleV2({ token: V2, method: 'sendMessage', params: { chat_id: ROOM, text: 'x', execution_attempt: W } }, e.rpc, e.opts)).status, code, name);
   }

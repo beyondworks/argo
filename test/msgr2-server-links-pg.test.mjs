@@ -38,6 +38,7 @@ const say = (who, room, body) => db.as(who.uid, who.sid, `insert into public.msg
 const dm = (who, agent) => JSON.parse(app(who, `public.msgr2_agent_dm_open('${agent}')::text`)).room_id;
 const agentOf = (host, kind, id, owner = P) => db.sql(`select id from public.msgr2_agents where owner_user_id = '${owner}' and ws_id = 'vps:${host}' and slug = '~bot.${kind}.${id}'`);
 const xmins = (t, where) => db.xmins(t, where);
+const setting = (k, v) => db.sql(v == null ? `delete from public.msgr_settings where key = '${k}'` : `insert into public.msgr_settings values ('${k}', '${v}') on conflict (key) do update set value = excluded.value`);
 
 // 처음 연결 한 바퀴(보고 → 승인 → 완료). 반환 { link, code, toks, agents }
 function connect(host, list, picks = list.map(([k, i]) => [k, i]), who = pApp, retire = []) {
@@ -204,6 +205,48 @@ test('연결 해제: 토큰 폐기·에이전트 retired·방 멤버 닫힘·열
   connect('vps-d', [['hermes', 'default', 'Hermes']]);
   assert.equal(db.sql(`select status from public.msgr2_agents where id = '${ag}'`), 'active', '같은 행이 되살아난다(고아 행이 늘지 않음)');
   assert.match(anon(`public.msgr2_bot_me(${q(tok)})`).err, /msgr_bot_unauthorized/, '해제한 옛 토큰은 에이전트가 되살아나도 무효');
+});
+
+test('#1154 검수 I-1·I-2: 주인이 팀 방에서 빠지면 그 방 일을 받지도 답하지도 못한다, 리스가 지난 일은 답 못 함, 남의 봇은 내 일을 못 가져간다', { skip }, () => {
+  const { toks } = connect('vps-t', [['hermes', 'default', 'Hermes']]);
+  const tok = toks['hermes:default']; const ag = agentOf('vps-t', 'hermes', 'default');
+  setting('msgr2_lite', 'off'); // 팀 방(1:1 밖)
+  try {
+    const T = db.sql(`insert into public.msgr2_spaces (kind, owner_user_id, name) values ('team', '${X}', 't') returning id`);
+    db.sql(`insert into public.msgr2_space_members (space_id, user_id, role) values ('${T}', '${X}', 'owner'), ('${T}', '${P}', 'member')`);
+    db.sql(`insert into public.msgr2_agent_seats (agent_id, space_id, allow) values ('${ag}', '${T}', 'all')`);
+    const R = db.sql(`insert into public.msgr2_rooms (space_id, kind, name) values ('${T}', 'open', '팀방') returning id`);
+    db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${R}', 'user', '${X}'), ('${R}', 'user', '${P}'), ('${R}', 'agent', '${ag}')`);
+    const post = (who, body) => db.as(who.uid, who.sid, `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body, mentions) values ('${R}', 'user', '${who.uid}', ${q(body)}, '{${ag}}') returning id`);
+    post(pApp, '첫 일');
+    const [ua] = updates(tok);
+    assert.ok(ua, '방에 있는 동안은 받는다');
+    post(xApp, '두 번째 일');
+    const wb = db.sql(`select id from public.msgr2_works where room_id = '${R}' and state = 'offered'`);
+    assert.ok(wb);
+    // P가 팀 공간·방에서 빠진다
+    db.sql(`update public.msgr2_space_members set removed_at = now() where space_id = '${T}' and user_id = '${P}'`);
+    db.sql(`update public.msgr2_room_members set removed_at = now() where room_id = '${R}' and member_kind = 'user' and member_id = '${P}'`);
+    assert.deepEqual(updates(tok, 0), [], '빠진 방의 일(offered·잡은 일)은 주지 않는다 — 원문·방 이름이 새지 않는다');
+    assert.equal(db.sql(`select state from public.msgr2_works where id = '${wb}'`), 'offered', '잡지도 않는다');
+    const n = db.sql(`select count(*) from public.msgr2_messages where room_id = '${R}'`);
+    assert.match(finish(tok, ua.message.execution_attempt, '답').err, /msgr_execution_forbidden/, '이미 잡은 일도 답이 방에 들어가지 않는다');
+    assert.equal(db.sql(`select count(*) from public.msgr2_messages where room_id = '${R}'`), n);
+  } finally { setting('msgr2_lite', null); }
+  // 리스가 지난 일: 다시 주지 않고 답도 받지 않는다
+  const room = dm(pApp, ag);
+  say(pApp, room, '오래된 질문');
+  const [uc] = updates(tok);
+  db.sql(`update public.msgr2_works set lease_until = now() - interval '2 days' where id = '${uc.message.execution_attempt}'`);
+  assert.deepEqual(updates(tok, 0), [], '리스가 지난 일은 다시 주지 않는다');
+  assert.match(finish(tok, uc.message.execution_attempt, '늦은 답').err, /msgr_execution_not_owner/);
+  // I-2: 남의 봇은 내 offered 일을 가져가지 못한다
+  say(pApp, room, '새 질문');
+  const wd = db.sql(`select id from public.msgr2_works where room_id = '${room}' and state = 'offered'`);
+  const other = connect('vps-i2', [['hermes', 'default', 'Other']], undefined, xApp).toks['hermes:default'];
+  assert.deepEqual(updates(other, 0), [], '다른 사용자의 봇에게 내 일은 없다');
+  assert.equal(db.sql(`select state from public.msgr2_works where id = '${wd}'`), 'offered', '내 일은 그대로 offered');
+  assert.equal(updates(tok)[0].message.execution_attempt, wd, '내 봇은 받는다');
 });
 
 test('일 만들기 관문: VPS 봇 토큰이 없으면 봇 일은 종전처럼 "업데이트 필요" 안내', { skip }, () => {

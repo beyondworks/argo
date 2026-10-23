@@ -35,6 +35,7 @@ const ERR = {
   msgr_bot_unauthorized: () => fail(401, 'Unauthorized: bad or revoked bot token', AUTH_RETRY_S),
   msgr_bot_plan_required: () => fail(403, 'Forbidden: external agent connections need Argo Pro for the agent owner — upgrade in Argo Messenger', PLAN_RETRY_S),
   msgr_execution_not_owner: () => fail(409, 'Conflict: response has no matching execution claim'),
+  msgr_execution_forbidden: () => fail(403, 'Forbidden: request access is no longer available'), // 주인이 그 방에서 빠졌다(#1154 검수 I-1)
   msgr_bot_bad_body: () => fail(400, 'Bad Request: body must contain 1 to 20000 characters'),
   msgr_bot_not_member: () => fail(403, 'Forbidden: this bot has no recent request in this chat'),
   service_paused: () => fail(503, 'Service Unavailable: Argo Messenger is paused', 60),
