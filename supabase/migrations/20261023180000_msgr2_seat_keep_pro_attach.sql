@@ -77,7 +77,7 @@ begin
   return exists (select 1 from public.msgr2_work_files f join public.msgr2_works w on w.id = f.work_id
                   where f.storage_path = full_path and f.room_id = rid and w.owner_user_id = auth.uid() and w.lease_device = dv.id
                     and w.lease_until > now() and w.state in ('accepted', 'running', 'awaiting_approval')
-                    and coalesce((public._msgr2_access_for(w.room_id, auth.uid())).read, false)); -- S2: 주인이 방을 더는 읽을 수 없으면 리스로 쓰지 못한다
+                    and public._msgr2_owner_active(w.room_id, auth.uid())); -- S2: 주인이 팀 공간에서 빠졌으면 리스로 쓰지 못한다
 end $$;
 revoke all on function public._msgr2_storage_write(text) from public, anon, authenticated;
 grant execute on function public._msgr2_storage_write(text) to authenticated;
@@ -113,9 +113,18 @@ end $$;
 -- S4 본체·폐기 기기 세션으로 계정 삭제가 되던 것: 지금 세션이 기기 행이 있는 앱이 아닌 세션(runner·resident) 또는 폐기·만료·세대 지난 기기면 거부한다.
 --    기기 행이 없는 세션(옛 v1 앱 0.1.63·웹)은 종전대로 통과한다 — 재공개 전 설치본에서 계정 삭제가 막히지 않게. 기기 폐기 때 그 로그인 세션도 끊는다(msgr2_device_revoke).
 -- S5 본체(runner) 세션이 사람 글을 직접 넣던 것: 사람 글 넣기 정책·msgr2_attachment_add·msgr2_message_ready에 _msgr2_device_app()(앱 기기만). 본체의 에이전트 글은 msgr2_link_send(서버 함수)라 무관하다.
--- S2 공간·방에서 빠진(또는 손님 기한이 끝난) 주인의 본체가 진행 중인 일로 계속 쓰고 읽던 것: msgr2_link_send·msgr2_link_upload_slot·_msgr2_rt_send_ok·Storage 리스 갈래(읽기·쓰기)에서
---    _msgr2_access_for(방, 주인).read를 본다 — 일을 만들 때(_msgr2_make_offer)와 같은 판정. 거부는 'work_closed'(본체는 그 일을 끝낸다).
+-- S2 팀 공간에서 내보낸(또는 손님 기한이 끝난) 주인의 본체가 진행 중인 일로 계속 쓰고 읽던 것: msgr2_link_send·msgr2_link_upload_slot·_msgr2_rt_send_ok·Storage 리스 갈래(읽기·쓰기)에서
+--    _msgr2_owner_active(방, 주인)을 본다 — 방의 공간이 팀이면 주인이 그 공간의 활동 멤버(기한 안)여야 한다. 거부는 'work_closed'(본체는 그 일을 끝낸다).
+--    방에서만 빠진 주인(공간에는 남음)은 종전대로 리스를 쥔 그 일 동안 쓰고 읽는다(#1076 설계, test/msgr2-realtime-storage-pg.test.mjs 'Storage — 방을 못 읽는 주인의 runner').
+--    처음 판(방 읽기 권한으로 판정)은 이 경우까지 막아 회귀였다(PG 시험으로 확인).
 -- 3  사람 채팅 꺼짐(lite)에서 Pro가 끝난 계정의 사람 글: msgr2_lite_guard가 lite일 때도 Pro를 본다(사람 채팅 켬은 종전대로).
+create or replace function public._msgr2_owner_active(p_room uuid, p_uid uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select coalesce((select s.deleted_at is null and (s.kind <> 'team' or exists (
+             select 1 from public.msgr2_space_members sm where sm.space_id = s.id and sm.user_id = p_uid and sm.removed_at is null and (sm.expires_at is null or sm.expires_at > now())))
+      from public.msgr2_rooms r join public.msgr2_spaces s on s.id = r.space_id where r.id = p_room), false)
+$$;
+revoke all on function public._msgr2_owner_active(uuid, uuid) from public, anon, authenticated;
 create or replace function public._msgr2_session_untrusted() returns boolean
   language sql stable security definer set search_path = public, pg_temp as $$
   select exists (select 1 from public.msgr2_devices d
@@ -197,7 +206,7 @@ begin
 
   select * into w from public.msgr2_works where id = (p_env->>'work')::uuid for update;
   if not found or w.owner_user_id <> uid or w.agent_id <> (p_env->>'agent')::uuid then return public._msgr2_rej('work_not_found'); end if;
-  if not coalesce((public._msgr2_access_for(w.room_id, uid)).read, false) then return public._msgr2_rej('work_closed'); end if; -- S2: 주인이 그 방을 더는 읽을 수 없으면(공간·방에서 빠짐·손님 기한 끝) 그 일로 쓰지 못한다(리스 연장 포함)
+  if not public._msgr2_owner_active(w.room_id, uid) then return public._msgr2_rej('work_closed'); end if; -- S2: 주인이 팀 공간에서 빠졌으면(내보냄·손님 기한 끝) 그 일로 쓰지 못한다(리스 연장 포함)
   if exists (select 1 from public.msgr2_work_events e where e.work_id = w.id and e.sender = 'runner' and e.device_id = dv.id and e.seq = (p_env->>'seq')::bigint) then
     return public._msgr2_rej('seq_conflict');
   end if;
@@ -319,7 +328,7 @@ begin
   if public._msgr2_paused() then return public._msgr2_rej('service_paused'); end if;
   select * into w from public.msgr2_works where id = p_work for update;
   if not found or w.owner_user_id <> uid then return public._msgr2_rej('work_not_found'); end if;
-  if not coalesce((public._msgr2_access_for(w.room_id, uid)).read, false) then return public._msgr2_rej('work_closed'); end if; -- S2
+  if not public._msgr2_owner_active(w.room_id, uid) then return public._msgr2_rej('work_closed'); end if; -- S2
   st := public._msgr2_effective_state(w.state, w.expires_at, w.lease_until, w.has_result);
   if st in ('done', 'failed', 'cancelled', 'expired') then return public._msgr2_rej('work_closed'); end if;
   if w.lease_device is distinct from dv.id or st = 'stalled' then return public._msgr2_rej('not_lease_holder'); end if;
@@ -346,7 +355,7 @@ begin
   if dv.code is not null or dv.kind not in ('runner', 'resident') then return false; end if;
   return exists (select 1 from public.msgr2_works w where w.id = split_part(p_topic, ':', 3)::uuid and w.owner_user_id = auth.uid() and w.lease_device = dv.id
                    and w.lease_until > now() and w.state in ('accepted', 'running', 'awaiting_approval')
-                   and coalesce((public._msgr2_access_for(w.room_id, auth.uid())).read, false)); -- S2
+                   and public._msgr2_owner_active(w.room_id, auth.uid())); -- S2
 end $$;
 
 create or replace function public._msgr2_storage_read(p_name text) returns boolean
@@ -359,7 +368,7 @@ begin
   if dv.code is not null or dv.kind not in ('runner', 'resident') then return false; end if;
   return exists (select 1 from public.msgr2_works w where w.room_id = rid and w.owner_user_id = auth.uid() and w.lease_device = dv.id
                    and w.lease_until > now() and w.state in ('accepted', 'running', 'awaiting_approval')
-                   and coalesce((public._msgr2_access_for(w.room_id, auth.uid())).read, false)); -- S2
+                   and public._msgr2_owner_active(w.room_id, auth.uid())); -- S2
 end $$;
 
 create or replace function public.msgr2_message_ready(p_message bigint) returns jsonb

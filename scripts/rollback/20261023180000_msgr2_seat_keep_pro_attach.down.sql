@@ -421,4 +421,5 @@ begin
   return true;
 end $$;
 drop function if exists public._msgr2_session_untrusted();
+drop function if exists public._msgr2_owner_active(uuid, uuid);
 commit;

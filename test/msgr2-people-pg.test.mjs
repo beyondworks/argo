@@ -103,12 +103,12 @@ test('켬 — 무료인 다른 사람을 방에 바로 넣으면 msgr2_member_no
   } finally { people(false); }
 });
 
-test('켬 — 무료는 자기 에이전트 1:1에도 글을 못 쓴다(무료 = 서버 안 씀). 꺼짐(A+)에서는 종전대로 글 + Pro 안내', { skip }, () => {
+test('켬 — 무료는 자기 에이전트 1:1에도 글을 못 쓴다(무료 = 서버 안 씀). 꺼짐(A+)에서도 같다(재공개 전 검수 2026-10-23 — 종전 "글 + Pro 안내"에서 바꿈, A+ 앱이 거부 코드를 Pro 안내로 보인다)', { skip }, () => {
   const fr = agentRoom(F, FS, FA);
   people(true);
   try { assert.match(sayErr(fApp, fr, '켬'), /msgr2_pro_required/); } finally { people(false); }
-  say(fApp, fr, '꺼짐');
-  assert.equal(JSON.parse(db.sql(`select meta::text from public.msgr2_messages where room_id = '${fr}' and kind = 'system' order by id desc limit 1`)).limit, 'pro');
+  assert.match(sayErr(fApp, fr, '꺼짐'), /msgr2_pro_required/);
+  assert.equal(db.sql(`select count(*) from public.msgr2_messages where room_id = '${fr}'`), '0', '글·안내 글 모두 남지 않는다');
 });
 
 test('사람 방 상한 — 사람 글 분당·공간 인원(설정은 최대값을 넘지 못한다)', { skip }, () => {
