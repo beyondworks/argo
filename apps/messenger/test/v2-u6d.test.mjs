@@ -244,7 +244,7 @@ test('방 사건(v2:u: spaces·rooms·invite): 공간 목록·보는 공간의 �
   assert.match(src, /if \(kind === 'user' && !V2\) supabase\.rpc\('msgr_friend_request'/, 'v2 팀 1:1은 자동 친구 요청을 보내지 않는다(#1088 검수 3)');
 });
 
-test('셸: #1085에서 숨긴 단추를 켰다(신고·친구 요청·새 채널·둘러보기·새 대화·초대·조직 참여·만들기), 범위 밖(그룹·노드·업무 패널·에이전트 숨김)은 그대로 숨김', () => {
+test('셸: #1085에서 숨긴 단추를 켰다(신고·친구 요청·새 채널·둘러보기·새 대화·초대·조직 참여·만들기), 범위 밖(그룹·노드·업무 패널·에이전트 숨김)은 그대로 숨김 — 외부 에이전트 카드는 2026-10-23부터 v2 VPS 서버 연결', () => {
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(src, /const orgJoinForms = \(phone = false\) => \(<>/);
   assert.match(src, /\{items\.includes\('invite'\) && <button/);
@@ -252,7 +252,7 @@ test('셸: #1085에서 숨긴 단추를 켰다(신고·친구 요청·새 채널
   assert.doesNotMatch(src, /\.\.\.\(V2 \? \[\] : \[\{ key: 'new'/);
   assert.doesNotMatch(src, /!V2 && <button type="button" className="btn msgr-chbrowse"/);
   assert.doesNotMatch(src, /onOrgTab && !orgBlocked && !V2 &&/);
-  for (const keep of [/isPhone && !isPersonal && !V2 && \{ icon: 'folder'/, /if \(V2 && \(props\.part === 'node' \|\| props\.part === 'agents'\)\) return props\.part === 'agents' \|\| props\.solo \? <V2VpsSoonCard \/> : null;/, /\{!V2 && <>\{!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button"/, /const canMuteCrew = !V2 &&/]) assert.match(src, keep);
+  for (const keep of [/isPhone && !isPersonal && !V2 && \{ icon: 'folder'/, /if \(V2 && props\.part === 'node'\) return props\.solo \? <VpsConnectCard [^\n]*: null;/, /if \(V2 && props\.part === 'agents'\) return <VpsConnectCard /, /\{!V2 && <>\{!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button"/, /const canMuteCrew = !V2 &&/]) assert.match(src, keep);
 });
 
 test('두 계정(#1088 검수 1): 친구(민지)가 새 1:1을 열면 방은 친구 개인 공간에 있어도 내 개인 목록·안 읽음·합계·찾기·방 사건에 보인다(픽스처 대역)', async () => {

@@ -68,5 +68,5 @@ test('App 배선: 레일은 옛 봇을 접힌 "기타(비활성)"로(처음 접�
   assert.match(app, /<RailFold id="mine\.legacy" label=\{t\('rail\.agents\.legacy'\)\} count=\{legacyBots\.length\} defaultClosed>/);
   assert.match(app, /legacyBots\.some\(\(g\) => g\.id === id\) \? t\('agent\.legacyBot'\)/);
   assert.match(app, /defaultClosed \? readFold\(foldStore\(\)\)\[id\] === false : initialOpen\(id, foldStore\(\)\)/);
-  for (const k of ['rail.agents.legacy', 'agent.legacyBot', 'agent.legacyBot.hint', 'v2.vps.soon.title', 'v2.vps.soon.body']) assert.ok(DICT[k]?.[0]?.trim() && DICT[k]?.[1]?.trim(), k);
+  for (const k of ['rail.agents.legacy', 'agent.legacyBot', 'agent.legacyBot.hint']) assert.ok(DICT[k]?.[0]?.trim() && DICT[k]?.[1]?.trim(), k);
 });

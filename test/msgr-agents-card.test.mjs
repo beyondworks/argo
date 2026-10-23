@@ -38,7 +38,7 @@ test('봇 = 개인 등급(클라이언트 crewTier, 2026-09-24 — Argo 에이�
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-node-cmd code \{[^}]*white-space: pre-wrap;/, '설정 두 줄이 줄바꿈으로 보인다(실측: 한 줄로 붙어 보였다)');
   assert.match(app, /crew\.hosting === 'resident' \? 'resident' : crew\.hosting === 'bot' \? 'bot' : 'local'/, '시트 hosting 표기');
   assert.match(app, /htmlFor=\{`role-\$\{crew\.id\}`\}\>\{t\('crew\.role'\)\}<\/label>[\s\S]*?crew\.hosting === 'bot' \? await supabase\.rpc\('msgr_bot_set_role', \{ bot_crew: crew\.id, new_role_text: v \}\)/, '봇 역할 변경은 잠금·권한을 검증하는 RPC를 지난다');
-  assert.match(app, /<OrgCard part="node"[^\n]*\n\s*\{\(isAdmin \|\| V2\) && <OrgCard part="agents"/, '크루 탭에서 노드 카드 다음에 에이전트 카드(관리자만, v2는 누구나 — VPS 준비 중 안내, 재공개 전 검수)');
+  assert.match(app, /<OrgCard part="node"[^\n]*\n\s*\{isAdmin && !V2 && <OrgCard part="agents"/, '크루 탭에서 노드 카드 다음에 에이전트 카드(관리자만, 옛 화면 — v2는 VPS 서버 연결 카드)');
 });
 
 test('카드: 생성·회전은 RPC(토큰은 응답에서 setup 상태로만) · 설정 두 줄 = URL+토큰 · 해제는 인라인 확인 · 표는 폐기 제외', () => {
