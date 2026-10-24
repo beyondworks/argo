@@ -25,6 +25,7 @@ test('setInterval은 허용 목록뿐 — 새 주기 호출은 이유와 함께 
     [/if \(!onScreen\) return undefined; const iv = setInterval\(\(\) => \{ const \{ msgs: ms, atts: at \} = live\.current; const miss/, '빈 첨부·반응이 있을 때만 메우기(없으면 요청 0)'],
     [/if \(!nodeOn \|\| channel\.kind === 'dm'\) return; loadRequests\(\)\.catch\(\(\) => \{\}\); const iv = setInterval\(/, '방 설정 시트를 연 동안 노드의 크루 만들기 요청 진행(시트를 닫으면 멈춘다)'],
     [/const iv = setInterval\(async \(\) => \{\n\s*const \{ data, error \} = await supabase\.from\('msgr_server_links'\)/, 'VPS 연결을 진행하는 동안만(연결 끝·만료면 멈춘다)'],
+    [/const iv = setInterval\(async \(\) => \{\n\s*const \{ data, error \} = await supabase\.rpc\('msgr2_server_link_get'/, 'v2 VPS 연결을 진행하는 동안만 2초(연결 끝·만료면 멈춘다, 최대 15분 — 읽기만)'],
   ];
   const found = [...app.matchAll(/setInterval\(/g)].length;
   const hits = allowed.filter(([re]) => re.test(app)).length;

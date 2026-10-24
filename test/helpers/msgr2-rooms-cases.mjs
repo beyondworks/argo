@@ -39,7 +39,8 @@ export const NEEDS_ROOMS = ['20261020201200_msgr2_invite_revoke_signal.sql', // 
   '20261020201400_msgr2_aplus.sql', // test/msgr2-aplus-pg.test.mjs(A+ — 1:1 밖 막기 트리거가 초대 표에 걸린다)
   '20261020201500_msgr2_people.sql', // test/msgr2-people-pg.test.mjs(사람 채팅 — 관문이 초대 표를 센다)
   '20261020201600_msgr2_rate.sql', // test/msgr2-people-pg.test.mjs(속도 상한 — 사람 채팅 판정 _msgr2_people에 기댄다)
-  '20261023180000_msgr2_seat_keep_pro_attach.sql']; // test/msgr2-relaunch-security-pg 등 setupFull(재공개 전 검수 — msgr2_lite_guard 다시 정의가 초대 표에 걸린다)
+  '20261023180000_msgr2_seat_keep_pro_attach.sql', // test/msgr2-relaunch-security-pg 등 setupFull(재공개 전 검수 — msgr2_lite_guard 다시 정의가 초대 표에 걸린다)
+  '20261023190000_msgr2_server_links.sql']; // test/msgr2-server-links-pg.test.mjs(VPS 서버 연결 — A+의 기기 기능 열(msgr2_devices.features)·_msgr2_runner_has에 기댄다)
 
 // msgr2 파일을 버전 순서로 적용하되 U6d(이 파일)만 뺀다 — 적용 전·후를 비교하려고(setup()은 U2b 뒤 파일을 모두 적용한다)
 function setupWithoutRooms(DB) {

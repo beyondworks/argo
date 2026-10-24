@@ -2522,3 +2522,15 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-ol .ph-kl2 { align-items: center; } .msgr-phone .ph-ol .ph-kbadges { align-self: center; padding-top: 0; } /* 배지와 미리보기 글자의 세로 중앙을 맞춘다(실측 1.6px 아래였다) */
   .msgr-phone .ph-root.ph-v2 .ph-apcard.on { border-color: var(--border); } /* 결재 있음 카드도 다른 카드와 같은 얇은 경계 — 라이트 진한·다크 흰 테두리(규칙집 2-1·1-6). 결재 있음은 아이콘 칸이 말한다 */
 }
+/* 메신저 v2 VPS 서버 연결 카드(2026-10-23) — 옛 VPS 흐름 모양 그대로. '터미널은 어디에' 펼침은 details 대신 단추(규칙집 2-12) */
+.msgr-vps-where { display: grid; gap: 4px; }
+.msgr-vps-wherebtn { justify-self: start; display: inline-flex; align-items: center; gap: 4px; padding: 2px 0; border: 0; background: none; color: var(--fg-2); font: inherit; font-size: 13px; cursor: pointer; }
+@media (hover: hover) { .msgr-vps-wherebtn:hover { color: var(--fg); } }
+.msgr-vps-wherebtn:active { color: var(--fg); }
+.msgr-vps-wherebtn > :last-child { transform: rotate(-90deg); transition: transform .15s; }
+.msgr-vps-wherebtn > .open:last-child { transform: none; }
+.msgr-vpscard-h { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--fg-2); }
+.msgr-vpscard .msgr-rows .row .sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-vps .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.msgr-vps .msgr-localimport-list .pick { min-width: 0; } /* 390폭: 긴 이름이 칸 밖으로 밀던 것(그리드 항목 기본 min-width:auto) — 이름이 말줄임된다 */
+.msgr-vps .msgr-localimport-list .pick .msgr-klabel { flex-shrink: 0; }

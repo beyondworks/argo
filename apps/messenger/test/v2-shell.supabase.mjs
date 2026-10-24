@@ -282,6 +282,30 @@ state.revoke = (code) => { const i = state.myInvites.find((x) => x.code === code
 state.pause = (on) => fire(`v2:u:${uid}`, 'pause', { paused: !!on }); // 서버 중단 스위치 대역
 state.client = () => supabase; // 페이지 시험은 이 함수로 앱과 같은 대역을 쓴다(모듈을 다시 불러오면 다른 사본이 생긴다)
 state.ids = { uid, mate, T, P, PM, GEN, PLAN, DM, NEWS, A, B, C, W };
+// VPS 서버 연결(2026-10-23, 20261023190000) 대역 — 명령 만들기 → (자동) 서버가 보고 → 고르고 연결 → (자동) 설치 끝. ?vps=list = 연결된 서버 에이전트 둘이 있는 계정,
+// ?vps=re = 같은 서버를 다시 연결(이 서버에서 안 보이는 에이전트 1개). state.vpsStep(n)으로 단계를 직접 넘길 수도 있다(캡처용). 자격 값은 가짜다.
+{ const want = new URLSearchParams(globalThis.location?.search ?? '').get('vps');
+  const HOST = 'srv1102938.hstgr.cloud';
+  const vps = state.vps = { link: null, gets: 0, bots: [] };
+  const bot = (n, name, seenMin) => ({ agent_id: `a5000000-0000-4000-8000-00000000000${n}`, kind: 'hermes', host: HOST, name, last_seen_at: seenMin == null ? null : at(seenMin), created_at: at(3000) });
+  if (want === 'list' || want === 're') vps.bots.push(bot(1, 'Hermes', 3), bot(2, 'Research', want === 're' ? 4000 : null));
+  const iso = (d) => new Date(d).toISOString();
+  const view = () => ({ ...vps.link, expired: vps.link.status !== 'done' && Date.parse(vps.link.expires_at) < Date.now() });
+  state.vpsStep = () => { const l = vps.link; if (!l) return;
+    if (l.status === 'waiting') Object.assign(l, { status: 'reported', host: HOST, agents: [{ kind: 'hermes', id: 'default', name: 'Hermes', default: true }, { kind: 'hermes', id: 'marketing', name: '마케팅 담당 에이전트 이름이 긴 경우', default: false }],
+      missing: want === 're' ? [{ agent_id: bot(2).agent_id, kind: 'hermes', id: 'research', name: 'Research' }] : [] });
+    else if (l.status === 'approved') Object.assign(l, { status: 'done', results: l.approved.map((x) => ({ kind: x.kind, id: x.id, ok: true, detail: '' })) }); };
+  Object.assign(rpcs, {
+    msgr2_server_link_create: () => { if (state.free) throw Object.assign(new Error('msgr2_pro_required'), { code: '42501' }); vps.gets = 0; vps.link = { link_id: 'c5000000-0000-4000-8000-000000000001', status: 'waiting', host: null, agents: [], missing: [], approved: [], results: [], expires_at: iso(Date.now() + 15 * 60_000) }; return { link_id: vps.link.link_id, code: `argo_link_${'0f'.repeat(24)}` }; },
+    msgr2_server_link_get: ({ p_link }) => { if (!vps.link || (p_link == null && !['reported', 'approved'].includes(vps.link.status))) return null; vps.gets += 1; if (new URLSearchParams(globalThis.location?.search ?? '').get('vpsauto') !== '0' && vps.gets % 3 === 0) state.vpsStep(); return view(); },
+    msgr2_server_link_approve: ({ p_picks, p_retire }) => { const out = p_picks.map((x, i) => ({ ...x, agent_id: `a5000000-0000-4000-8000-00000000010${i}`, reused: x.id === 'default' && want === 're' }));
+      vps.link.status = 'approved'; vps.link.approved = out; vps.bots = vps.bots.filter((b) => !(p_retire ?? []).includes(b.agent_id));
+      for (const o of out) { const name = vps.link.agents.find((a) => a.id === o.id)?.name ?? o.id; if (!vps.bots.some((b) => b.name === name)) vps.bots.push({ agent_id: o.agent_id, kind: o.kind, host: HOST, name, last_seen_at: null, created_at: iso(Date.now()) });
+        if (!state.tables.msgr2_agents.some((a) => a.id === o.agent_id)) state.tables.msgr2_agents.push({ id: o.agent_id, owner_user_id: uid, display_name: name, slug: `~bot.${o.kind}.${o.id}`, role_text: '', hosting: 'bot', status: 'active', created_at: iso(Date.now()) }); }
+      return out; },
+    msgr2_bots_mine: () => vps.bots.map((b) => ({ ...b })),
+    msgr2_bot_revoke: ({ p_agent }) => { const n = vps.bots.length; vps.bots = vps.bots.filter((b) => b.agent_id !== p_agent); const a = state.tables.msgr2_agents.find((x) => x.id === p_agent); if (a) a.status = 'retired'; return vps.bots.length < n; },
+  }); }
 export async function q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }
 
 // 화면 보기용: HMR로 어떤 파일이 바뀌든 화면 전체를 다시 불러온다 — 가짜 서버 상태(기기 등록·방)가 모듈 교체로 날아가 '대화 목록을 불러오지 못했습니다'가 뜨던 것(총괄 실측). 앱 코드에는 영향 없음

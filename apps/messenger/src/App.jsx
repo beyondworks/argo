@@ -24,7 +24,6 @@ import { bindLifecycle } from './link/lifecycle.mjs';
 import { v2ComposerTransport } from './v2/composer.mjs';
 import { useWorkCards } from './v2/useWorkCards.jsx';
 import { DevicesCard as V2DevicesCard } from './v2/DevicesCard.jsx';
-import { VpsSoonCard as V2VpsSoonCard } from './v2/VpsSoonCard.jsx'; // v2 VPS 연결 준비 중 안내(빈 화면 대신)
 import { v2StateBar, v2SignOutNotice } from './v2/devices.mjs';
 import { roomEventPlan, mergePlans } from './v2/room-events.mjs';
 import { loadMyInvitesIf, inviteInboxItems } from './v2/my-invites.mjs';
@@ -4903,7 +4902,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
   const mode = family ? theme.slice(family.length) : null;
   const skins = THEMES.filter((c) => !FAMILY_CODES.includes(c));
   // 검수 M-5(2026-09-27) — 동의 전엔 '내 계정' 탭(동의 카드가 있는 곳)만 연다. 멤버·조직·에이전트 탭은 조직 내용이다.
-  const tabs = gated ? [['me', 'set.tab.me']] : [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], org && ['crews', 'set.tab.crews'], ['friends', 'set.tab.friends'], ['me', 'set.tab.me']].filter(Boolean); // 친구는 설정의 별도 분류(유건 지시 2026-09-09) // 기록은 활동 페이지(트리+그래프)로 — 유건 지시 2026-09-04 // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
+  const tabs = gated ? [['me', 'set.tab.me']] : [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], (org || V2) && ['crews', 'set.tab.crews'], ['friends', 'set.tab.friends'], ['me', 'set.tab.me']].filter(Boolean); // v2: '에이전트와 서버'(VPS 서버 연결)는 개인 기능 — 조직이 없어도 연다 // 친구는 설정의 별도 분류(유건 지시 2026-09-09) // 기록은 활동 페이지(트리+그래프)로 — 유건 지시 2026-09-04 // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
   const [tab, setTab] = useState(org ? 'members' : 'me');
   const [isOps, setIsOps] = useState(false); // 운영자(msgr_report_operators)만 '운영 신고함'을 본다
   useEffect(() => { let live = true; q(supabase.rpc('msgr_is_report_operator')).then((v) => { if (live) setIsOps(v === true); }).catch(() => {}); return () => { live = false; }; }, [uid]);
@@ -4974,6 +4973,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
     if (view === 'server') return body(t('phone.set.server'), <>{pick}{!ready ? waiting : os.locked ? lockedWhy : (<div className="msgr-setbody">
       <OrgCard key={org.id} part="node" solo org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />
     </div>)}</>);
+    if (view === 'ext' && V2) return body(t('phone.set.ext'), <div className="msgr-setbody"><VpsConnectCard onNote={onNote} onError={onError} onAgentsChanged={onAgentsChanged} /></div>); // v2: 개인 기능 — 조직 고르기·관리자 잠금 없음
     if (view === 'ext') return body(t('phone.set.ext'), <>{pick}{!ready ? waiting : os.locked ? lockedWhy : (<div className="msgr-setbody">
       <OrgCard key={org.id} part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />
     </div>)}</>);
@@ -4991,7 +4991,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
       {group('orgs', t('phone.set.g.orgs'), orow.org ? row('org', ic('person'), t('phone.set.orgRow'), () => onOrgSub?.('org'), t('phone.set.orgRow.sub')) : <p className="ph-setnote">{t('phone.set.noOrg')}</p>)}
       {group('agents', t('phone.set.g.agents'), <>
         {row('mine', ic('memory'), t('phone.set.myAgents'), () => onSub?.('agents'), t('phone.set.myAgents.sub'))}
-        {orow.ext && row('ext', ic('node'), t('phone.set.ext'), () => onOrgSub?.('ext'), t('phone.set.ext.sub'))}
+        {(orow.ext || V2) && row('ext', ic('node'), t('phone.set.ext'), () => (V2 ? onSub?.('ext') : onOrgSub?.('ext')), t('phone.set.ext.sub'))}
       </>)}
       {orow.server && group('server', t('phone.set.g.server'), row('server', ic('node'), t('phone.set.server'), () => onOrgSub?.('server'), t('phone.set.server.sub')))}
       {orow.memory && group('memory', t('phone.set.g.memory'), row('memory', ic('folder'), t('phone.set.agentMemory'), () => onOrgSub?.('memory'), t('phone.set.agentMemory.sub')))}
@@ -5045,9 +5045,10 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
           ? <OrgCard part="org" org={org} uid={uid} members={members} ent={ent} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} myEmail={session.user.email} />
           : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
         {tab === 'org' && org && !gated && <ReportsCard org={org} uid={uid} isAdmin={!!isAdmin} members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} />}
+        {tab === 'crews' && V2 && !gated && <VpsConnectCard onNote={onNote} onError={onError} onAgentsChanged={onAgentsChanged} />}
         {tab === 'crews' && org && !gated && (<>
           {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
-          {(isAdmin || V2) && <OrgCard part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
+          {isAdmin && !V2 && <OrgCard part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
           {policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
         </>)}
         {tab === 'friends' && !gated && <FriendsCard isPersonal={!org} uid={uid} friends={friends} members={members} onChanged={onFriendsChanged} onDm={onDm} onPersonalDm={onPersonalDm} onNote={onNote} onError={onError} />}
@@ -5980,8 +5981,120 @@ function MemberListCard({ org, uid, members, onNote, onError, t, editSelf = true
   const [profiles, reload] = useMemberProfiles(org.id, true);
   return (<section className="msgr-setcard"><h2>{t('org.members')} · {members.length}</h2><div className="msgr-rows">{members.map((m) => <div key={m.user_id} className="row"><Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{m.user_id === org.service_user_id ? t('org.node') : t(`role.${m.role}`)}{m.user_id === uid ? ` · ${t('ui.me')}` : ''}</span><MemberProfile org={org} m={m} uid={editSelf ? uid : null} profiles={profiles} reload={reload} onNote={onNote} onError={onError} t={t} /></div>)}</div></section>);
 }
+// 메신저 v2 — VPS 서버 연결(2026-10-23 유건 "기존꺼 그냥 가져다 붙이기만 하면 되잖아"). 옛 'agents' 카드의 VPS 흐름(아래 OrgCardBody openVps…)을 그대로 옮겼다.
+// 바뀐 것: 주인 = 나(조직 관리자 아님) · RPC = msgr2_server_link_*(20261023190000) · 연결한 에이전트는 '내 에이전트'(msgr2_agents)에 들어가 1:1에서 답한다.
+// 진행 상태는 msgr2_server_link_get을 2초마다 읽는다(연결 중에만, 최대 15분 — 쓰기 0). 재연결 때 이 서버에서 안 보이는 봇(missing)은 체크된 채로 보여 주고 저장하면 정리한다.
+// 연결 해제 = msgr2_bot_revoke(토큰 폐기·에이전트 retired·방에서 빠짐, 대화 기록은 남음). 결재 카드·첨부·예약 작업 미러는 1단계 밖.
+const vpsKey = (a) => `${a.kind}:${a.id}`;
+const vpsState = (row, command, cur = null) => ({ linkId: row.link_id ?? cur?.linkId, command, row,
+  picks: cur?.picks ?? (row.status === 'reported' ? (row.agents ?? []).map(vpsKey) : null), // 처음 보고되면 전원 체크(v1 유건 결정 3)
+  retire: cur?.retire ?? (row.status === 'reported' ? (row.missing ?? []).map((m) => m.agent_id) : null) });
+function VpsConnectCard({ onNote, onError, onAgentsChanged = null }) {
+  const { t, lang } = useT();
+  const botUrl = `${SB_URL}/functions/v1/msgr-bot`;
+  const [busy, setBusy] = useState(false);
+  const [vps, setVps] = useState(null); // null | { linkId, command, row, picks, retire }
+  const [bots, setBots] = useState(null);
+  const [where, setWhere] = useState(false);
+  const [confirmOff, setConfirmOff] = useState(null);
+  const fail = (e) => { const m = String(e?.message ?? e); onError(/msgr2_pro_required/.test(m) ? t('v2.vps.pro') : /msgr2_rate/.test(m) ? t('v2.vps.rate') : /msgr_link_invalid/.test(m) ? t('org.agents.vps.expired') : /msgr_link_used/.test(m) ? t('v2.vps.used') : friendlyErr(m, t)); };
+  const loadBots = useCallback(async () => { const r = await supabase.rpc('msgr2_bots_mine'); if (!r.error) setBots(Array.isArray(r.data) ? r.data : []); }, []);
+  useEffect(() => { // 다시 들어오면 내가 시작한 진행 중 연결(보고됨·승인됨)을 잇는다 — 대기 단계는 명령 원문을 저장하지 않아 새로 만든다(v1과 같음)
+    loadBots().catch(() => {});
+    supabase.rpc('msgr2_server_link_get', { p_link: null }).then(({ data }) => { if (data) setVps((cur) => cur ?? vpsState(data, null)); }, () => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const open = async () => {
+    setBusy(true);
+    try {
+      const r = await supabase.rpc('msgr2_server_link_create'); if (r.error) throw new Error(r.error.message);
+      setWhere(false);
+      setVps({ linkId: r.data.link_id, command: `curl -fsSL ${botUrl}/connect | python3 - ${r.data.code} ${botUrl}`, row: { status: 'waiting', agents: [], missing: [] }, picks: null, retire: null });
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  };
+  const live = !!vps && vps.row.status !== 'done' && !vps.row.expired;
+  useEffect(() => {
+    if (!live) return undefined;
+    const id = vps.linkId;
+    const iv = setInterval(async () => {
+      const { data, error } = await supabase.rpc('msgr2_server_link_get', { p_link: id });
+      if (error || !data) return;
+      setVps((cur) => (cur?.linkId !== id ? cur : vpsState(data, cur.command, cur)));
+      if (data.status === 'done') { loadBots().catch(() => {}); onAgentsChanged?.(); }
+    }, 2000);
+    return () => clearInterval(iv);
+  }, [live, vps?.linkId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toggle = (field, k) => setVps((cur) => { const on = new Set(cur[field] ?? []); if (on.has(k)) on.delete(k); else on.add(k); return { ...cur, [field]: [...on] }; });
+  const approve = async () => {
+    const picks = (vps.row.agents ?? []).filter((a) => (vps.picks ?? []).includes(vpsKey(a))).map((a) => ({ kind: a.kind, id: a.id }));
+    if (!picks.length) { onError(t('org.agents.vps.pick')); return; }
+    setBusy(true);
+    try {
+      const r = await supabase.rpc('msgr2_server_link_approve', { p_link: vps.linkId, p_picks: picks, p_retire: vps.retire ?? [] }); if (r.error) throw new Error(r.error.message);
+      setVps((cur) => ({ ...cur, row: { ...cur.row, status: 'approved', approved: r.data } })); loadBots().catch(() => {}); onAgentsChanged?.();
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  };
+  const disconnect = async (b) => {
+    setBusy(true);
+    const r = await supabase.rpc('msgr2_bot_revoke', { p_agent: b.agent_id });
+    setBusy(false); setConfirmOff(null);
+    if (r.error) return fail(r.error);
+    onNote(t('org.agents.revoke.done')); loadBots().catch(() => {}); onAgentsChanged?.();
+  };
+  const copy = async () => { await navigator.clipboard?.writeText(vps.command).catch(() => {}); onNote(t('org.agents.vps.copied')); };
+  const nameOf = (r) => (vps?.row.agents ?? []).find((a) => a.kind === r.kind && a.id === r.id)?.name ?? r.id;
+  const seen = (b) => (b.last_seen_at ? t('v2.vps.seen', { when: fmtWhen(b.last_seen_at, lang) }) : t('v2.vps.neverSeen'));
+  const row = vps?.row;
+  return (
+    <section className="msgr-setcard msgr-vpscard">
+      <h2>{t('v2.vps.h')}</h2><p>{t('v2.vps.desc')}</p>
+      {!vps && <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy} onClick={open}><I name="plus" size={13} />{t('org.agents.vps.open')}</button></div>}
+      {vps && <div className="msgr-localimport msgr-vps">
+        {row.expired ? <><p className="msgr-auto failed">{t('org.agents.vps.expired')}</p><div className="acts"><button type="button" className="btn btn-primary sm" disabled={busy} onClick={open}>{t('org.agents.vps.again')}</button><button type="button" className="btn sm ghost" onClick={() => setVps(null)}>{t('ui.close')}</button></div></>
+        : row.status === 'waiting' ? <>
+          <ol className="steps"><li>{t('org.agents.vps.step1')}</li><li>{t('org.agents.vps.step2')}</li><li>{t('org.agents.vps.step3')}</li></ol>
+          {vps.command && <div className="msgr-node-cmd"><code>{vps.command}</code><div className="acts"><button type="button" className="btn btn-primary sm" onClick={copy}><I name="copy" size={13} />{t('org.agents.vps.copy')}</button></div><p className="note">{t('v2.vps.user')}</p></div>}
+          <div className="msgr-vps-where"><button type="button" className="msgr-vps-wherebtn" aria-expanded={where} onClick={() => setWhere((x) => !x)}>{t('org.agents.vps.where')}<I name="caret" size={12} className={where ? 'open' : ''} /></button>
+            {where && <ul><li>{t('org.agents.vps.where.hostinger')}</li><li>{t('org.agents.vps.where.oracle')}</li><li>{t('org.agents.vps.where.aws')}</li></ul>}</div>
+          <p className="msgr-auto running"><span className="msgr-dot mark" /> {t('org.agents.vps.waiting')}</p>
+          <div className="acts"><button type="button" className="btn sm ghost" onClick={() => setVps(null)}>{t('ui.cancel')}</button></div>
+        </>
+        : row.status === 'reported' ? <>
+          <p>{t('org.agents.vps.found', { host: row.host, n: (row.agents ?? []).length })}</p>
+          <fieldset className="msgr-localimport-list" disabled={busy}>
+            <legend>{row.host}</legend>
+            {(row.agents ?? []).map((a) => { const k = vpsKey(a); const on = (vps.picks ?? []).includes(k); return <label key={k} className={`pick${on ? ' on' : ''}`}><input type="checkbox" checked={on} onChange={() => toggle('picks', k)} /><Av name={a.name} crew size="sm" /><span>{a.name}</span><span className="msgr-klabel">{t(`org.agents.kind.${a.kind}`)}{a.default ? ` · ${t('org.agents.local.default')}` : ''}</span></label>; })}
+          </fieldset>
+          {!!(row.missing ?? []).length && <fieldset className="msgr-localimport-list" disabled={busy}>
+            <legend>{t('v2.vps.missing')}</legend>
+            {row.missing.map((m) => { const on = (vps.retire ?? []).includes(m.agent_id); return <label key={m.agent_id} className={`pick${on ? ' on' : ''}`}><input type="checkbox" checked={on} onChange={() => toggle('retire', m.agent_id)} /><Av name={m.name} crew size="sm" /><span>{m.name}</span><span className="msgr-klabel">{t('v2.vps.missing.do')}</span></label>; })}
+          </fieldset>}
+          <div className="acts"><button type="button" className="btn btn-primary sm" disabled={busy || !(vps.picks ?? []).length} onClick={approve}><I name="check" size={13} />{t('org.agents.vps.connect', { n: (vps.picks ?? []).length })}</button><button type="button" className="btn sm ghost" disabled={busy} onClick={() => setVps(null)}>{t('ui.cancel')}</button></div>
+        </>
+        : row.status === 'approved' ? <p className="msgr-auto running"><span className="msgr-dot mark" /> {t('org.agents.vps.installing')}</p>
+        : (() => { const results = row.results ?? []; const ok = results.length > 0 && results.every((r) => r.ok); return <>
+          <div className={`msgr-auto ${ok ? 'done' : 'failed'}`}><p><span className={`msgr-dot${ok ? ' ok' : ''}`} /> {ok ? t('v2.vps.done', { host: row.host, n: results.length }) : t('org.agents.vps.partial')}</p>
+            <ul>{results.map((r) => <li key={`${r.kind}:${r.id}`}><b>{nameOf(r)}</b>: {r.ok ? '✓' : '✗'} {t(`org.agents.kind.${r.kind}`)}{(row.approved ?? []).find((x) => x.kind === r.kind && x.id === r.id)?.reused && <> · {t('org.agents.vps.reused')}</>}{!r.ok && r.detail ? ` — ${String(r.detail).slice(0, 160)}` : ''}</li>)}</ul></div>
+          <div className="acts">{!ok && <button type="button" className="btn sm" disabled={busy} onClick={open}>{t('org.agents.vps.again')}</button>}<button type="button" className="btn sm ghost" onClick={() => setVps(null)}>{t('ui.close')}</button></div>
+        </>; })()}
+      </div>}
+      <h3 className="msgr-vpscard-h">{t('v2.vps.connected')}</h3>
+      {bots === null ? null : !bots.length ? <p className="empty">{t('v2.vps.none')}</p> : (
+        <div className="msgr-rows">
+          {bots.map((b) => (
+            <div key={b.agent_id} className="row">
+              <Av name={b.name} crew size="sm" crewId={b.agent_id} />
+              <span className="name">{b.name}</span>
+              <span className="sub">{t(`org.agents.kind.${b.kind}`)} · {b.host} · {seen(b)}</span>
+              {confirmOff === b.agent_id
+                ? <span className="confirm-inline"><span>{t('v2.vps.revoke.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => disconnect(b)}>{t('org.agents.revoke')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmOff(null)}>{t('ui.cancel')}</button></span>
+                : <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => setConfirmOff(b.agent_id)}>{t('org.agents.revoke')}</button>}
+            </div>))}
+        </div>)}
+    </section>);
+}
 function OrgCard(props) {
-  if (V2 && (props.part === 'node' || props.part === 'agents')) return props.part === 'agents' || props.solo ? <V2VpsSoonCard /> : null; // v2: 상주 서버(노드)·조직 에이전트 관리는 v2 공간에 없다(자리 = 파견, U6c-1b) — 빈 화면 대신 'VPS 연결 준비 중' 안내(v2/VpsSoonCard.jsx, 데스크톱 탭은 node·agents를 함께 그려 agents 한 장만). 플래그는 모듈 상수라 훅 순서가 바뀌지 않는다
+  if (V2 && props.part === 'node') return props.solo ? <VpsConnectCard onNote={props.onNote} onError={props.onError} onAgentsChanged={props.onAgentsChanged} /> : null; // v2: 상주 서버(노드) 카드는 v2 공간에 없다(자리 = 파견, U6c-1b). 폰 '서버' 화면처럼 노드 카드 한 장만 그리는 곳(solo)은 빈 화면 대신 VPS 서버 연결(#1152 준비 중 안내 자리) — 플래그는 모듈 상수라 훅 순서가 바뀌지 않는다
+  if (V2 && props.part === 'agents') return <VpsConnectCard onNote={props.onNote} onError={props.onError} onAgentsChanged={props.onAgentsChanged} />; // v2: 외부 에이전트 = VPS 서버 연결(개인)
   return <OrgCardBody {...props} />;
 }
 function OrgCardBody({ org, orgs = [], uid, invitesTick = 0, members, channels = [], onInvite = null, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '', onOpenCrew, ent = null }) {

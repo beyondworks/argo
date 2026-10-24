@@ -52,9 +52,10 @@ test('① 응답 — node는 getMe·미러 보고 200·나머지 429, 그 밖은
   for (const m of ['routineEditDone', 'getUpdates', 'sendMessage', 'requestApproval']) assert.equal(pausedReply({ method: 'POST', path: `/msgr-bot/bot${T}/${m}`, userAgent: 'node' }).status, 429, m);
   assert.equal(pausedReply({ path: '/msgr-bot/connect', userAgent: 'curl/8' }).status, 410);
   assert.equal(pausedReply({ method: 'POST', path: '/msgr-bot/link/report', userAgent: 'Python-urllib/3.12' }).status, 410);
-  const src = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../supabase/functions/msgr-bot/paused.js', import.meta.url)), 'utf8')
-    + (await import('node:fs')).readFileSync(fileURLToPath(new URL('../supabase/functions/msgr-bot/index.ts', import.meta.url)), 'utf8');
-  assert.doesNotMatch(src, /\bfetch\(|createClient|rpc\(|SUPABASE_|Deno\.env/, '대체 함수는 DB·외부 호출·비밀값을 쓰지 않는다');
+  // 중단 응답 자체는 DB·외부 호출·비밀값을 쓰지 않는다. index.ts는 2026-10-23부터 v2 토큰·VPS 연결 경로에 DB를 쓰지만,
+  // 그 밖의 요청(옛 v1 토큰)은 routeOf 'paused' → 이 응답만 준다 — test/msgr-bot-v2.test.mjs가 갈래와 "DB 호출 0"을 잠근다.
+  const src = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../supabase/functions/msgr-bot/paused.js', import.meta.url)), 'utf8');
+  assert.doesNotMatch(src, /\bfetch\(|createClient|rpc\(|SUPABASE_|Deno\.env/, '중단 응답은 DB·외부 호출·비밀값을 쓰지 않는다');
 });
 
 // Hermes 어댑터(현재판)를 python3로 실제로 불러 이 서버에 붙인다 — asyncio.sleep은 가상 시계(1시간 넘으면 끝)
