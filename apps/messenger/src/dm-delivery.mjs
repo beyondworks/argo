@@ -10,6 +10,14 @@ export function mentionPopupCrews({ isDm, roomCrews = null, usable = [] }) {
   return isDm ? (roomCrews ?? []) : (roomCrews ?? usable);
 }
 
+// 개인 방에서 부를 수 있는 방 안 에이전트 — v1은 서버 전달 후보(msgr_dm_candidates)로 걸렀다(친구 에이전트는 지시 못 함).
+// v2에는 그 RPC가 없어 빈 목록이 와서 방 안의 내 에이전트까지 모두 빠졌다(유건 사용 검수 2026-10-24: 에이전트 1:1·회의방에서 @ 후보 없음).
+// v2 서버 규칙(_msgr2_make_offer_x, 20261020201400:196-197): 개인 공간은 글쓴이 자신의 에이전트에만 일이 생긴다 — 그 기준으로 거른다.
+export function personalRoomCrews(scopeCrews, { v2 = false, uid = null, dmCandidates = [] } = {}) {
+  if (!scopeCrews) return scopeCrews;
+  return v2 ? scopeCrews.filter((c) => c?.owner_user_id === uid) : scopeCrews.filter((c) => dmCandidates.some((p) => p.id === c.id));
+}
+
 export function setDmRecipient(recipients, crew, role) {
   if (!crew?.id || !['to', 'cc'].includes(role)) return recipients;
   const entry = { kind: 'crew', id: crew.id, name: crew.display_name || crew.name, role };

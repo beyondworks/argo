@@ -175,11 +175,11 @@ test('팝업 화면 — 불러오는 중이면 명령 없음 문구 대신 불�
 });
 
 // 입력창이 쓰는 파생값(slash·slashCands·slashLoading) — App.jsx의 실제 줄을 잘라 돌려서, slashView → 팝업 배선이 끊기면(예: slashLoading을 안 넘김) 여기서 빨개진다
-function composerGlue({ text = '/', slashOff = null, rolePick = null, slashCrews, freshCmds }) {
+function composerGlue({ text = '/', slashOff = null, rolePick = null, slashCrews, freshCmds, V2 = false }) {
   const from = app.indexOf('  const slash = useMemo(');
   const to = app.indexOf('\n', app.indexOf('const slashCands = slash?.cands', from));
   assert.ok(from > 0 && to > from, '입력창의 slash 파생 줄을 찾지 못함');
-  const deps = { useMemo: (f) => f(), rolePick, text, slashOff, slashCrews, freshCmds, t: (k) => `«${k}»`, slashView: slash.slashView };
+  const deps = { useMemo: (f) => f(), rolePick, text, slashOff, slashCrews, freshCmds, t: (k) => `«${k}»`, slashView: slash.slashView, V2 };
   return new Function(...Object.keys(deps), `${app.slice(from, to)}\n return { slashCands, slashLoading, slashFailed };`)(...Object.values(deps));
 }
 test('입력창 배선 — 에이전트 행에 commands가 없고 재조회 전이면 팝업에 불러오는 중, 재조회 값이 들어오면 목록, 문장 속 /·/to 질의 중이면 팝업 없음', () => {
@@ -349,4 +349,10 @@ test('새 문구 cmd.loading·cmd.loadFailed — 한국어·영어 모두 있고
     assert.match(pair[0], /[가-힣]/, key); assert.doesNotMatch(pair[1], /[가-힣]/, key);
   }
   assert.notEqual(DICT['cmd.loadFailed'][0], DICT['cmd.empty'][0], '실패 안내는 명령 없음 문구와 다르다');
+});
+
+test('v2는 /to·/cc를 명령 목록에 보이지 않는다(받는이·참조 역할이 v2 서버에 없다 — 총괄 결정 2026-10-24), v1은 그대로', () => {
+  const cmds = (V2) => (composerGlue({ text: '/', slashCrews: [], freshCmds: null, V2 }).slashCands ?? []).map((c) => c.cmd);
+  assert.ok(cmds(false).includes('to') && cmds(false).includes('cc'), 'v1');
+  assert.ok(!cmds(true).includes('to') && !cmds(true).includes('cc'), 'v2');
 });

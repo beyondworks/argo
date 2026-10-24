@@ -18,6 +18,7 @@ import { v2Enabled } from './v2/flag.mjs';
 import { seatEnsure, seatRecall, seatSaveScope } from './v2/seat.mjs';
 import { deleteRoomV2, roomDeleteErrKey } from './v2/room-delete.mjs';
 import { actionRoomName } from './v2/room-title.mjs'; // 확인 창·완료 안내의 방 제목 = 목록 제목(재공개 전 마지막 재검수) // v2 대화 삭제(재공개 전 검수 b)
+import { loadPeerNames, peerName } from './v2/stable-names.mjs'; // 한 목록 1:1·내 이름을 고른 방과 무관하게 고정(유건 사용 검수 2026-10-24)
 import { splitLegacyBots } from './v2/legacy-bots.mjs'; // 이름 없는 옛 봇은 기본 목록 밖(유건 사용 검수 2026-10-23) // 에이전트 자리 — 방에 넣기는 범위 보존(재공개 전 검수 F1)
 import { createV2ClientFor, createV2Runtime, currentV2 } from './v2/runtime.mjs';
 import { bindLifecycle } from './link/lifecycle.mjs';
@@ -94,7 +95,7 @@ import { createReadCursor, unreadWorthy, createCoalescer, openRoomBehind } from 
 import { writeScreenSnapshot, consumeScreenSnapshot } from './phone-screen-snapshot.mjs';
 import { mentionCandidates, mentionsFromBody, ambiguousMentions, ALL_RE, outsideCrewMentions, canInstructCrew, crewOrder, withoutCopies, outsideAddDone, outsideRowView } from './mention-candidates.mjs';
 import { OutsideRow } from './outside-row.mjs';
-import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames, relayNoticeView } from './dm-delivery.mjs';
+import { dmMentionCrews, mentionPopupCrews, personalRoomCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames, relayNoticeView } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile, chipSize } from './attach-files.mjs';
 import { formatBytes } from '../../../src/media-kind.mjs';
 import { MediaAttachments, LinkCard, linkify, onLinkClick } from './media.jsx'; // 첨부 말풍선·크게 보기·링크 카드(2026-10-02)
@@ -1817,6 +1818,14 @@ function Shell({ session }) {
   useEffect(() => { let live = true; loadMyInvitesIf({ enabled: V2, uid, ready: () => currentV2()?.ready(), rpc: (fn) => rawSupabase.rpc(fn) }).then((l) => { if (live && l) setMyInvites(l); }, () => {}); return () => { live = false; }; }, [uid, syncEpoch, myInvitesTick]); // eslint-disable-line react-hooks/exhaustive-deps -- 플래그 끔(옛 서버)·로그인 전은 호출 0(loadMyInvitesIf)
   // 한 목록(v2, 메신저 단순화 2단계) — msgr2_inbox 한 번 + 방송으로 행 고치기. 다시 읽는 때: 시작·복귀(syncEpoch)·방 사건·모르는 방의 첫 글(방마다 한 번). 주기 조회 없음
   const [ol, setOl] = useState(null); const [olMore, setOlMore] = useState(false); const [olPro, setOlPro] = useState(false); const [olTick, bumpOl] = useReducer((x) => x + 1, 0);
+  // 1:1 상대 이름은 행이 사는 공간 기준으로 고정(개인 = 프로필, 팀 = 그 팀 안 이름) — 고른 방의 공간 멤버 이름을 먼저 쓰면 레일 전체가 흔들렸다(유건 사용 검수 2026-10-24)
+  const [olPeerNames, setOlPeerNames] = useState({}); const olPeerRef = useRef({});
+  useEffect(() => { if (!V2 || !ol?.length) return undefined; let live = true;
+    loadPeerNames(supabase, ol, { personalKey: PERSONAL, known: olPeerRef.current, resolve: resolvePeopleNames }).then((got) => { if (!live || !Object.keys(got).length) return; olPeerRef.current = { ...olPeerRef.current, ...got }; setOlPeerNames(olPeerRef.current); }).catch(() => {});
+    return () => { live = false; }; }, [ol]); // eslint-disable-line react-hooks/exhaustive-deps
+  // v2 좌하단·폰 '나' 줄의 내 이름은 개인 프로필 기준 하나(고른 공간의 팀 안 이름으로 바뀌던 것 — 유건 사용 검수 2026-10-24). 프로필을 저장하면 다시 읽는다
+  const [myProfileName, setMyProfileName] = useState(null);
+  useEffect(() => { if (!V2 || !uid) return undefined; let live = true; resolvePeopleNames(supabase, { orgId: null, ids: [uid] }).then((got) => { if (live) setMyProfileName(got[uid] ?? null); }).catch(() => {}); return () => { live = false; }; }, [uid, profileTick]); // eslint-disable-line react-hooks/exhaustive-deps
   const [olAgentPos, setOlAgentPos] = useState(() => { try { return JSON.parse(localStorage.getItem('argo-msgr-v2-agent-order') || '[]'); } catch { return []; } }); /* v2 데스크톱 레일 '직접 배치' 순서 — v2는 msgr_target_prefs가 서버에 없어(source.mjs) 조직별 순서가 방을 바꿀 때 흔들렸다. 이 기기에 하나로 */ const [olErr, setOlErr] = useState(false); const [olFilter, setOlFilter] = useState('all'); const [olOrg, setOlOrg] = useState(null); const [olOrgMenu, setOlOrgMenu] = useState(false); const [olNew, setOlNew] = useState(false); // olNew = 새 대화 시트
   const olRef = useRef(ol); olRef.current = ol; const olMiss = useRef(new Set()); // 다시 읽어도 목록에 없던 방(들어가지 않은 open 방 방송) — 글마다 다시 읽지 않게
   useEffect(() => { if (!V2 || !uid) return undefined; let live = true; loadOneList(supabase).then((r) => { if (!live) return; if (r.error) { if (r.error.pro) setOlPro(true); else setOlErr(true); return; } setOlPro(false); setOlErr(false); setOl(r.rows); setOlMore(r.more); }, () => { if (live) setOlErr(true); }); return () => { live = false; }; }, [uid, syncEpoch, olTick]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1986,6 +1995,8 @@ function Shell({ session }) {
     return nameForUser({ id, members, otherNames, resolved: resolvedNames, left: t('user.left'), deleted: t('user.deleted'), unnamed: t('user.unnamed') });
   };
   const me = selfMember({ members, uid, isPersonal, personalName: resolvedNames[uid] || personalSelfName(otherNames, uid), email: session.user.email }); // 개인 공간은 구성원 목록(친구만)에 내가 없다 — 한 곳에서 내 이름을 정한다(검수 F: 레일·설정은 이메일·'—')
+  // v2 좌하단·폰 '나' 줄의 내 이름은 개인 프로필 기준 하나(myProfileName — 위 상태 선언 옆, 유건 사용 검수 2026-10-24)
+  const myLabel = (V2 ? myProfileName : null) || me?.display_name || session.user.email;
   const isAdmin = !isPersonal && org && ['owner', 'admin'].includes(org.role); // 개인 공간의 가상 조직(role owner)은 관리자가 아니다 — 초대 링크 등이 __personal__로 서버에 가던 것(2026-09-16)
   const chOffer = newChannelOffer({ role: org?.role, locked: orgLocked, personal: isPersonal, unsupported: false /* v2 공간도 방을 만든다(U6d msgr2_room_create, U6c-2b) */ }); const canNewCh = chOffer.can; // 새 채널 — 서버 msgr_create_channel은 owner·admin·member만, 잠긴 조직은 msgr_forbidden. 못 하는 행동은 보이지 않게(화면 검수 UM1), 이유는 안내 문구로(2차 검수 L-b)
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
@@ -3185,7 +3196,7 @@ function Shell({ session }) {
     </div>
   );
   // ── 한 목록 화면(v2) — 폰 대화 탭과 데스크톱 레일이 같은 자료·같은 거르개를 쓴다 ──
-  const olName = (row) => oneListTitle(row, (k, id) => (k === 'agent' ? (legacyBots.some((g) => g.id === id) ? t('agent.legacyBot') : myAgents?.find((g) => g.id === id)?.display_name ?? crewShown(id)?.display_name ?? null) : nameOfUser(id))) ?? t('onelist.untitled'); // 이름 없는 옛 봇과의 옛 1:1은 목록에 그대로 두되 이름은 '이름 없는 옛 봇'
+  const olName = (row) => oneListTitle(row, (k, id) => (k === 'agent' ? (legacyBots.some((g) => g.id === id) ? t('agent.legacyBot') : myAgents?.find((g) => g.id === id)?.display_name ?? crewShown(id)?.display_name ?? null) : (V2 ? peerName({ ...row, peer_id: id }, olPeerNames, PERSONAL, nameOfUser) : nameOfUser(id)))) ?? t('onelist.untitled'); // 이름 없는 옛 봇과의 옛 1:1은 목록에 그대로 두되 이름은 '이름 없는 옛 봇'
   // AI 이용 동의 전·조회 중엔 조직 방을 목록에서 뺀다(App Store 5.1.2 재검수 M-5, 유건 2026-09-27 — 동의 전엔 조직 공간 전체를 막는다. 동의는 계정 하나에 하나라 공간과 상관없이 같은 판정)
   const olOrgGated = V2 && (aiConsent === undefined ? !aiConsentFailOpen : !aiConsented);
   const olRows = olOrgGated && ol ? ol.filter((r) => r.space_kind !== 'team') : ol; const olGatedN = ol && olRows ? ol.length - olRows.length : 0;
@@ -3341,7 +3352,7 @@ function Shell({ session }) {
       {searchBar}
       <div className="msgr-railbody ph-body" ref={pullList.setRef}><PullIndicator phase={pullList.phase} pulse={pullList.pulse} t={t} /><div className="msgr-railinner">
         {rootTab === 'friends' && (<>
-          {(() => { const label = me?.display_name || session.user.email; return !tabQText.trim() && (
+          {(() => { const label = myLabel; return !tabQText.trim() && (
             <button type="button" className="item ph-me" onClick={() => openSettings('me')}><Av name={label} size="kk" userId={uid} /><span className="ph-kbody"><span className="name">{label}</span><span className="snip">{t('phone.friends.meSub')}</span></span></button>); })()}
           {friendReqs.length > 0 && !tabQText.trim() && (<>
             <button type="button" className="item ph-reqrow" aria-expanded={reqOpen} onClick={() => setReqOpen((v) => !v)}><span className="ph-reqic"><I name="personplus" size={18} /></span><span className="name">{t('phone.friends.requests', { n: friendReqs.length })}</span><I name="caret" size={20} className={`ph-chev${reqOpen ? ' open' : ''}`} /></button>
@@ -3584,7 +3595,7 @@ function Shell({ session }) {
         {!isPhone && <div className={`msgr-foot${deskAp ? ' has-ap' : ''}`}>
           {isPhone && !orgBlocked && nodeInd && <button type="button" className={`ph-node${nodeInd.state === 'on' ? ' on' : nodeInd.state === 'down' ? ' down' : ''}`} onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={nodeLabel} aria-label={nodeLabel}><I name={nodeInd.state === 'on' ? 'node' : 'nodeoff'} size={18} /></button>}{/* 서버를 연결하는 사람(관리자)에게만, 없음은 중립색·끊김만 경고색(점검 A·B #11) */}
           <button type="button" className="me" onClick={() => { if (isPhone) { setSettingsTab('me'); setPage('settings'); setRail(false); } else setMeMenu((v) => !v); }} aria-haspopup={isPhone ? undefined : 'menu'} aria-expanded={isPhone ? undefined : meMenu} title={t(isPhone ? 'ui.settings' : 'ui.me.menu')}>
-            <Av name={me?.display_name || session.user.email} size="sm" userId={uid} /><span className="name">{me?.display_name || session.user.email}</span>
+            <Av name={myLabel} size="sm" userId={uid} /><span className="name" title={myLabel}>{myLabel}</span>
           </button>
           {meMenu && (<div className="msgr-rowmenu me" role="menu" onMouseLeave={() => setMeMenu(false)}>
             <button type="button" role="menuitem" onClick={() => { setMeMenu(false); setSettingsTab('me'); setPage('settings'); setRail(false); }}><I name="gear" size={13} />{t('set.tab.me')}</button>
@@ -7701,7 +7712,7 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
     }).catch(() => { if (active) setRecipientLoad('error'); });
     return () => { active = false; };
   }, [isDm, chId, recipientRetry]);
-  const roomCrews = useMemo(() => (isPersonal && scopeCrews ? scopeCrews.filter((c) => dmCandidates.some((p) => p.id === c.id)) : scopeCrews), [isPersonal, scopeCrews, dmCandidates]); // 개인 방: 방 안이어도 지시 못 하는 친구 에이전트는 부르지 않는다
+  const roomCrews = useMemo(() => (isPersonal ? personalRoomCrews(scopeCrews, { v2: V2, uid, dmCandidates }) : scopeCrews), [isPersonal, scopeCrews, dmCandidates, uid]); // 개인 방: 방 안이어도 지시 못 하는 친구 에이전트는 부르지 않는다
   const mentionCrews = useMemo(() => isDm ? dmMentionCrews(roomCrews ?? [], isPersonal ? [] : dmCandidates) : roomCrews ?? crews, [isDm, isPersonal, roomCrews, crews, dmCandidates]);
   const allByName = useMemo(() => [...(roomCrews ?? crews).map((c) => ({ kind: 'crew', id: c.id, name: c.display_name })), ...(scopePeople ?? members).map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) }))], [roomCrews, crews, scopePeople, members]);
   const [dragging, setDragging] = useState(false); // 파일을 끌어다 놓는 중 — 컴포저 테두리 강조
@@ -7746,11 +7757,13 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
   }, [isDm, recipientLoad, dmCandidates, scopeCrews, crews, channel?.excluded_crew_ids, channel?.personal_crews, org]);
   const rolePick = useMemo(() => {
     const exclude = new Set([...mentionsFromBody(text, byName, [], allByName).map((x) => x.id), ...recipients.map((r) => r.id)]);
+    if (V2) return null; // v2: /to·/cc 없음 — 서버에 받는이·참조 역할과 방 밖 전달(v1 relay)이 없다. 방 밖 에이전트는 본문 @이름 → '1:1로 시키기'(D14, 총괄 결정 2026-10-24)
     return rolePickCandidates(text, roleCands, { exclude, participants: new Set(isDm ? (scopeCrews ?? []).map((c) => c.id) : []) });
   }, [isDm, text, scopeCrews, byName, allByName, recipients, roleCands]);
   const [slashOff, setSlashOff] = useState(null); // Esc로 닫은 그 글자에서는 '/' 목록을 다시 띄우지 않는다(D18 S95) — 글자가 바뀌면 다시
   useEffect(() => { if (slashOff !== null && text !== slashOff) setSlashOff(null); }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
-  const slash = useMemo(() => rolePick || text === slashOff ? null : slashView(text, slashCrews, freshCmds, { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashOff, slashCrews, freshCmds, t]);
+  // v2는 /to·/cc를 명령 목록에 보이지 않는다(받는이·참조 역할이 v2 서버에 없다)
+  const slash = useMemo(() => rolePick || text === slashOff ? null : slashView(text, slashCrews, freshCmds, { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: V2 ? [] : [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashOff, slashCrews, freshCmds, t]);
   const slashCands = slash?.cands ?? null; const slashLoading = !!slash?.loading; const slashFailed = !!slash?.failed; // loading = 재조회 전이고 명령을 아직 모르는 에이전트가 있다, failed = 재조회가 실패했다
   const [slashSel, setSlashSel] = useState(0);
   useEffect(() => { setSlashSel(0); }, [text]);
