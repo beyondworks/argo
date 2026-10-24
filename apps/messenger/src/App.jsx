@@ -3595,7 +3595,7 @@ function Shell({ session }) {
         {!isPhone && <div className={`msgr-foot${deskAp ? ' has-ap' : ''}`}>
           {isPhone && !orgBlocked && nodeInd && <button type="button" className={`ph-node${nodeInd.state === 'on' ? ' on' : nodeInd.state === 'down' ? ' down' : ''}`} onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={nodeLabel} aria-label={nodeLabel}><I name={nodeInd.state === 'on' ? 'node' : 'nodeoff'} size={18} /></button>}{/* 서버를 연결하는 사람(관리자)에게만, 없음은 중립색·끊김만 경고색(점검 A·B #11) */}
           <button type="button" className="me" onClick={() => { if (isPhone) { setSettingsTab('me'); setPage('settings'); setRail(false); } else setMeMenu((v) => !v); }} aria-haspopup={isPhone ? undefined : 'menu'} aria-expanded={isPhone ? undefined : meMenu} title={t(isPhone ? 'ui.settings' : 'ui.me.menu')}>
-            <Av name={myLabel} size="sm" userId={uid} /><span className="name">{myLabel}</span>
+            <Av name={myLabel} size="sm" userId={uid} /><span className="name" title={myLabel}>{myLabel}</span>
           </button>
           {meMenu && (<div className="msgr-rowmenu me" role="menu" onMouseLeave={() => setMeMenu(false)}>
             <button type="button" role="menuitem" onClick={() => { setMeMenu(false); setSettingsTab('me'); setPage('settings'); setRail(false); }}><I name="gear" size={13} />{t('set.tab.me')}</button>
@@ -7757,11 +7757,13 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
   }, [isDm, recipientLoad, dmCandidates, scopeCrews, crews, channel?.excluded_crew_ids, channel?.personal_crews, org]);
   const rolePick = useMemo(() => {
     const exclude = new Set([...mentionsFromBody(text, byName, [], allByName).map((x) => x.id), ...recipients.map((r) => r.id)]);
+    if (V2) return null; // v2: /to·/cc 없음 — 서버에 받는이·참조 역할과 방 밖 전달(v1 relay)이 없다. 방 밖 에이전트는 본문 @이름 → '1:1로 시키기'(D14, 총괄 결정 2026-10-24)
     return rolePickCandidates(text, roleCands, { exclude, participants: new Set(isDm ? (scopeCrews ?? []).map((c) => c.id) : []) });
   }, [isDm, text, scopeCrews, byName, allByName, recipients, roleCands]);
   const [slashOff, setSlashOff] = useState(null); // Esc로 닫은 그 글자에서는 '/' 목록을 다시 띄우지 않는다(D18 S95) — 글자가 바뀌면 다시
   useEffect(() => { if (slashOff !== null && text !== slashOff) setSlashOff(null); }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
-  const slash = useMemo(() => rolePick || text === slashOff ? null : slashView(text, slashCrews, freshCmds, { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashOff, slashCrews, freshCmds, t]);
+  // v2는 /to·/cc를 명령 목록에 보이지 않는다(받는이·참조 역할이 v2 서버에 없다)
+  const slash = useMemo(() => rolePick || text === slashOff ? null : slashView(text, slashCrews, freshCmds, { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: V2 ? [] : [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashOff, slashCrews, freshCmds, t]);
   const slashCands = slash?.cands ?? null; const slashLoading = !!slash?.loading; const slashFailed = !!slash?.failed; // loading = 재조회 전이고 명령을 아직 모르는 에이전트가 있다, failed = 재조회가 실패했다
   const [slashSel, setSlashSel] = useState(0);
   useEffect(() => { setSlashSel(0); }, [text]);
