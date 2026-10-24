@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from '../src/dm-delivery.mjs';
+import { dmMentionCrews, mentionPopupCrews, personalRoomCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from '../src/dm-delivery.mjs';
 import { mentionsFromBody } from '../src/mention-candidates.mjs';
 import { createComposerDelivery } from '../../../src/composer-delivery.mjs';
 
@@ -89,4 +89,11 @@ test('@ 팝업 후보 — 대화방에서는 그 방에 들어온 에이전트�
   // 채널은 종전대로 — 방 구성이 있으면 그것, 없으면 쓸 수 있는 전체
   assert.deepEqual(mentionPopupCrews({ isDm: false, roomCrews: null, usable: outside }).map((c) => c.id), ['alfred', 'beast']);
   assert.deepEqual(mentionPopupCrews({ isDm: false, roomCrews: room, usable: outside }).map((c) => c.id), ['davinci']);
+});
+
+test('개인 방 @ 후보: v2는 방 안의 내 에이전트(서버 규칙 — 개인 공간은 글쓴이 자신의 에이전트만), v1은 서버 전달 후보로 거른다(유건 사용 검수 2026-10-24)', () => {
+  const scope = [{ id: 'a1', owner_user_id: 'me' }, { id: 'a2', owner_user_id: 'me' }, { id: 'fa', owner_user_id: 'friend' }];
+  assert.deepEqual(personalRoomCrews(scope, { v2: true, uid: 'me', dmCandidates: [] }).map((c) => c.id), ['a1', 'a2'], 'v2: 후보 RPC가 비어도 내 에이전트는 남는다');
+  assert.deepEqual(personalRoomCrews(scope, { v2: false, uid: 'me', dmCandidates: [{ id: 'a2' }] }).map((c) => c.id), ['a2'], 'v1은 종전대로');
+  assert.equal(personalRoomCrews(null, { v2: true, uid: 'me' }), null);
 });

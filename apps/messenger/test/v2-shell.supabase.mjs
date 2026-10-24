@@ -189,8 +189,8 @@ const rpcs = {
   msgr2_message_edit: ({ p_id, p_body }) => { const m = state.tables.msgr2_messages.find((x) => x.id === p_id); if (!m || m.author_user_id !== uid || m.deleted_at) return { ok: false, code: 'forbidden' }; m.body = p_body; m.edited_at = new Date().toISOString(); return { ok: true }; },
   msgr2_message_delete: ({ p_id }) => { const m = state.tables.msgr2_messages.find((x) => x.id === p_id); if (!m || m.author_user_id !== uid) return { ok: false, code: 'forbidden' }; m.body = ''; m.deleted_at = m.deleted_at ?? new Date().toISOString(); return { ok: true }; },
   // 그대로 쓰는 옛 RPC(설계 1-2절)
-  msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: '민지', handle: 'minji' }],
-  msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => ({ user_id: id, display_name: id === uid ? '유건' : '민지' })),
+  msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: state.namesSplit ? 'cocoball0610' : '민지', handle: 'minji' }],
+  msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => { const n = state.namesSplit ? (id === uid ? 'leankim' : 'cocoball0610') : (id === uid ? '유건' : '민지'); return { user_id: id, name: n, display_name: n }; }), // 서버(msgr_person_label)와 같이 name = 프로필 이름 → 이메일 앞부분
   msgr_friend_request: () => 'sent', msgr_find_user: () => [{ user_id: '9b2d4f10-0000-4000-8000-000000000003', display_name: '지수', handle: 'jisu' }],
   msgr_my_hidden_users: () => [], msgr_my_blocked: () => [], my_plan: () => ({ plan: 'pro' }) /* 서버 my_plan은 {plan, …} 객체(src/entitlement.mjs effectivePlanOf) */, msgr_my_ai_consent: () => new URLSearchParams(globalThis.location?.search ?? '').get('noconsent') !== '1', /* ?noconsent=1 = AI 이용 동의 전 계정(한 목록이 조직 방을 빼는지) */
 };
@@ -255,6 +255,10 @@ state.free = new URLSearchParams(globalThis.location?.search ?? '').get('free') 
     { id: 303, room_id: FDM, author_kind: 'user', author_user_id: mate, kind: 'text', body: '내일 점심 같이 해요', meta: {}, mentions: [], created_at: at(90) });
   T_.msgr2_prefs.push({ room_id: GEN, user_id: uid, muted: false, pinned: true }); }
 
+if (new URLSearchParams(globalThis.location?.search ?? '').get('names') === 'split') { // 같은 사람의 팀 안 이름과 프로필 이름이 다르다(유건 사용 검수 2026-10-24: 레일 이름이 선택한 방에 따라 바뀜)
+  state.namesSplit = true;
+  for (const m of state.tables.msgr2_space_members) if (m.space_id === T) m.display_name = m.user_id === uid ? '김효율' : 'Coco 팀';
+}
 if (new URLSearchParams(globalThis.location?.search ?? '').get('admin') === '1') { const me = state.tables.msgr2_space_members.find((m) => m.space_id === T && m.user_id === uid); if (me) me.role = 'admin'; } // ?admin=1 — 나를 이 팀의 관리자로(관리자 전용 설정 화면)
 { const n = Number(new URLSearchParams(globalThis.location?.search ?? '').get('legacybots') || 0); for (let i = 0; i < n; i++) { const slug = `bot-${(0x0804ccfb1680 + i).toString(16).padStart(12, '0')}`; state.tables.msgr2_agents.push({ id: `b0000000-0000-4000-8000-${String(i).padStart(12, '0')}`, owner_user_id: uid, display_name: i % 2 ? slug : '', slug, role_text: null, hosting: 'bot', status: 'active', created_at: at(100 + i) }); } } // ?legacybots=N — 이름 없는 옛 봇 N개(자리 없음, 유건 계정 45개 모양)
 if (new URLSearchParams(globalThis.location?.search ?? '').get('noagents') === '1') { state.tables.msgr2_agents = state.tables.msgr2_agents.filter((a) => a.owner_user_id !== uid); state.tables.msgr2_room_members = state.tables.msgr2_room_members.filter((m) => !(m.member_kind === 'agent' && [A, C].includes(m.member_id))); state.tables.msgr2_agent_seats = state.tables.msgr2_agent_seats.filter((x) => x.agent_id !== A); } // ?noagents=1 — 내 에이전트 0명 계정(빈 안내)
