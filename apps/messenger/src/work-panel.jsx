@@ -30,6 +30,8 @@ const errorText = (error, t) => {
   if (/pro_required/i.test(message)) return t('automation.error.pro'); // v2(20261024100000): 만든 사람의 Pro가 끝나면 막고 끈다
   if (/no_work/i.test(message)) return t('automation.error.noWork');
   if (/^expired$/i.test(message)) return t('automation.error.expired');
+  if (/^stalled$/i.test(message)) return t('automation.error.stalled');
+  if (/session_revoked/i.test(message)) return t('automation.error.session');
   if (/dispatch_failed/i.test(message)) return t('automation.error.dispatch');
   if (/not_editable/i.test(message)) return t('routine.error.notEditable');
   if (/invalid_channel/i.test(message)) return t('routine.error.channel');

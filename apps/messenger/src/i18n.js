@@ -32,6 +32,8 @@ export const DICT = {
   'automation.error.pro': ['Pro 요금제가 필요해 자동화를 멈췄습니다. 요금제를 확인한 뒤 다시 켜 주세요.', 'This automation needs Pro, so it was stopped. Check your plan, then turn it back on.'],
   'automation.error.noWork': ['에이전트에게 일을 넘기지 못했습니다. 방에 남은 안내를 확인하세요.', 'The task could not be handed to the agent. Check the notice in the room.'],
   'automation.error.expired': ['에이전트가 일을 받지 않아 만료됐습니다. Argo PC가 켜져 있는지 확인하세요.', 'The agent did not pick up the task in time. Check that Argo is running on your PC.'],
+  'automation.error.stalled': ['에이전트가 일을 받은 뒤 결과를 보내지 않았습니다. 방의 일 카드에서 확인하세요. 다음 회차는 그대로 실행합니다.', 'The agent took the task but sent no result. Check the task card in the room. The next run will go ahead as scheduled.'],
+  'automation.error.session': ['모든 기기에서 로그아웃해 이 자동화를 멈췄습니다. 지금 기기에서 다시 켜 주세요.', 'This automation was stopped because you signed out of all devices. Turn it back on from this device.'],
   'automation.error.dispatch': ['실행 중 오류가 나 이번 회차를 건너뛰었습니다. 다음 회차에 다시 실행합니다.', 'This run was skipped because of an error. It will run again at the next scheduled time.'],
   'automation.intro.v2': ['이 방의 에이전트에게 반복 지시를 맡깁니다. 정한 시각에 서버가 내 이름으로 지시를 보내고, 실제 작업은 그 에이전트의 Argo PC가 합니다.', 'Schedule recurring instructions for an agent in this room. At each set time the server sends the instruction in your name, and the agent’s Argo PC does the work.'],
   'routine.v2.soon': ['Argo PC에서 만든 루틴은 곧 여기서도 보고 고칠 수 있습니다.', 'Routines made in Argo on your PC will be viewable and editable here soon.'],

@@ -160,6 +160,35 @@ test('지금 실행: 사람 문맥(사람 글 관문을 그대로 지남), 같�
   assert.equal(db.as(P, pApp.sid, `select count(*) from public.msgr2_automations where id = '${a.id}' and deleted_at is null`), '0');
 });
 
+test('검수 지적 1: 만든 뒤 모든 기기 로그아웃(세대 올림)이면 크론은 글 0·blocked(session_revoked)·끔, 새 기기에서 다시 켜면 돈다', { skip }, () => {
+  const a = save(pApp, R1, A1, { title: '세대', prompt: '세대 확인' });
+  db.sql(`insert into public.msgr2_user_gen (user_id, gen) values ('${P}', 1) on conflict (user_id) do update set gen = public.msgr2_user_gen.gen + 1`);
+  due(a.id); const n0 = msgCount(R1);
+  assert.equal(dispatch(), 1);
+  assert.equal(msgCount(R1), n0, '로그아웃 전 세션이 건 일정으로 글을 넣지 않는다');
+  assert.equal(runs(a.id)[0].error, 'session_revoked'); assert.equal(auto(a.id).enabled, false);
+  assert.match(db.asErr(P, pApp.sid, `select public.msgr2_automation_set_enabled('${a.id}', true)`), /msgr2_app_device_required/, '옛 세대 기기로는 다시 켜지 못한다');
+  const gen = db.sql(`select gen from public.msgr2_user_gen where user_id = '${P}'`);
+  const nApp = seedDevice(db, P, 'app'); db.sql(`update public.msgr2_devices set gen = ${gen} where id = '${nApp.dev}'`);
+  assert.equal(JSON.parse(db.as(P, nApp.sid, `select public.msgr2_automation_set_enabled('${a.id}', true)`)).owner_gen, Number(gen), '새 기기에서 다시 켜면 지금 세대로');
+  due(a.id); assert.equal(dispatch(), 1); assert.equal(msgCount(R1), n0 + 1, '다시 켠 뒤에는 돈다');
+  pApp = nApp; // 뒤 시험은 새 세대 기기로
+  db.sql(`update public.msgr2_automations set deleted_at = now(), enabled = false where id = '${a.id}'`);
+});
+
+test('검수 지적 2: 받은 뒤 리스가 끝난 결과 모름(stalled) 일은 일정을 멈추지 않는다 — 다음 회차에 돌고 앞 기록은 failed(stalled)', { skip }, () => {
+  const a = save(pApp, R1, A1, { title: '멈춤', prompt: '멈춤 확인' }); due(a.id);
+  assert.equal(dispatch(), 1);
+  const [r] = runs(a.id);
+  db.sql(`update public.msgr2_works set state = 'running', lease_until = now() + interval '10 minutes' where id = '${r.work_id}'`);
+  due(a.id); const s = snap(); assert.equal(dispatch(), 0, '리스 안 — 기다린다'); assert.equal(snap(), s);
+  db.sql(`update public.msgr2_works set lease_until = now() - interval '1 minute' where id = '${r.work_id}'`);
+  assert.equal(dispatch(), 1, '리스가 끝난 일은 기다리지 않는다');
+  const [r1, r2] = runs(a.id);
+  assert.equal(r1.status, 'failed'); assert.equal(r1.error, 'stalled'); assert.equal(r2.status, 'queued');
+  db.sql(`update public.msgr2_automations set deleted_at = now(), enabled = false where id = '${a.id}'`);
+});
+
 test('보존: 실행 기록 30일 정리 문장은 30일 지난 기록만 지운다(자동화·글은 그대로)', { skip }, () => {
   const stmt = /\$c\$(delete from public\.msgr2_automation_runs[^$]+)\$c\$/.exec(readFileSync(MIG, 'utf8'))?.[1];
   assert.ok(stmt, '크론 정리 문장');

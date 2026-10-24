@@ -9,6 +9,7 @@
 --   (2) 크론 실행(msgr2_automation_dispatch)은 security definer 안에서, 글을 넣기 직전에 원래 사람의 권한을 다시 본다(_msgr2_automation_why):
 --       방 쓰기(_msgr2_access_for — 팀은 활동 공간 멤버·1:1 차단 포함), 팀 공간 활동 멤버(_msgr2_owner_active, S2와 같은 판정), 에이전트가 방에 있고 활성,
 --       개인 공간은 내 에이전트만·팀은 자리 규칙(allow), Pro(_msgr2_pro_ok), 사람 채팅 꺼짐(lite)이면 허용 방만(_msgr2_lite_room_ok), 중단 스위치(_msgr2_paused).
+--       만든 뒤 "모든 기기 로그아웃"·기기 폐기로 로그인 세대(msgr2_user_gen)가 올랐으면 그 일정도 막는다(owner_gen — 탈취한 세션이 건 일정이 남지 않게, S4와 같은 원칙).
 --       하나라도 어긋나면 글을 넣지 않고 실행 기록에 'blocked'와 이유를 남기고 자동화를 끈다(조용히 재시도하지 않는다).
 --   (3) 크론 문맥은 사람 글 속도 상한(msgr2_lite_guard)을 지나지 않는다 — 일정 간격이 5분 이상이고, 한 사람의 자동화는 50개까지(msgr2_limit_automations),
 --       자동화마다 진행 중인 일이 있으면 그 회차를 건너뛴다. 일 만들기 상한(분당 에이전트·방, 주인 하루 — _msgr2_make_offer_x)은 크론 글에도 그대로 걸린다.
@@ -37,6 +38,7 @@ create table if not exists public.msgr2_automations (
   last_message_id bigint,
   last_status text,
   last_error text,
+  owner_gen int not null default 0, -- 만들기·고치기·다시 켜기 때 만든 사람의 로그인 세대(msgr2_user_gen). "모든 기기 로그아웃"으로 세대가 오르면 실행을 막는다(검수 지적 1)
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   deleted_at timestamptz
@@ -133,6 +135,11 @@ begin
   return null;
 end $$;
 
+-- 그 사람의 지금 로그인 세대(기기 폐기·모든 기기 로그아웃 때 오른다 — 20261020200100)
+create or replace function public._msgr2_automation_gen(p_uid uuid) returns int
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select coalesce((select g.gen from public.msgr2_user_gen g where g.user_id = p_uid), 0) $$;
+
 -- 사람 RPC의 거부(오류 이름은 화면 문구 — work-panel.jsx errorText)
 create or replace function public._msgr2_automation_deny(p_why text) returns void
   language plpgsql volatile set search_path = public, pg_temp as $$
@@ -157,8 +164,8 @@ begin
     end if;
     select count(*) into n from public.msgr2_automations where created_by = uid and deleted_at is null;
     if n >= public._msgr2_clamp('msgr2_limit_automations', 50, 200) then raise exception 'msgr2_limit' using errcode = '22023', detail = 'automations'; end if;
-    insert into public.msgr2_automations (space_id, room_id, agent_id, created_by, create_request_id, title, prompt, schedule, next_run_at)
-      select r.space_id, p_room, p_agent, uid, p_request_id, btrim(p_title), btrim(p_prompt), p_schedule, due from public.msgr2_rooms r where r.id = p_room
+    insert into public.msgr2_automations (space_id, room_id, agent_id, created_by, create_request_id, title, prompt, schedule, next_run_at, owner_gen)
+      select r.space_id, p_room, p_agent, uid, p_request_id, btrim(p_title), btrim(p_prompt), p_schedule, due, public._msgr2_automation_gen(uid) from public.msgr2_rooms r where r.id = p_room
       on conflict (created_by, create_request_id) where create_request_id is not null do update set updated_at = msgr2_automations.updated_at
       returning * into a;
   else
@@ -166,7 +173,7 @@ begin
     if a.id is null or a.created_by is distinct from uid or a.deleted_at is not null then perform public._msgr2_automation_deny('forbidden'); end if;
     if a.room_id is distinct from p_room then raise exception 'msgr_automation_channel_immutable' using errcode = '22023'; end if; -- 기록은 처음 방에 붙어 있다
     update public.msgr2_automations set agent_id = p_agent, title = btrim(p_title), prompt = btrim(p_prompt), schedule = p_schedule, next_run_at = due,
-      last_error = null, updated_at = now() where id = p_automation returning * into a;
+      owner_gen = public._msgr2_automation_gen(uid), last_error = null, updated_at = now() where id = p_automation returning * into a;
   end if;
   return to_jsonb(a);
 end $$;
@@ -184,6 +191,7 @@ begin
   end if;
   update public.msgr2_automations set enabled = p_enabled,
     next_run_at = case when p_enabled then public._msgr2_automation_next(a.schedule, now()) else a.next_run_at end,
+    owner_gen = case when p_enabled then public._msgr2_automation_gen(uid) else owner_gen end,
     last_error = case when p_enabled then null else last_error end, updated_at = now()
    where id = p_automation returning * into a;
   return to_jsonb(a);
@@ -206,13 +214,17 @@ create or replace function public._msgr2_automation_enqueue(a public.msgr2_autom
 declare r public.msgr2_automation_runs; msg bigint; wid uuid; why text; nxt timestamptz;
 begin
   nxt := case when p_mode = 'schedule' then public._msgr2_automation_next(a.schedule, now()) else a.next_run_at end;
-  -- 앞 회차의 일이 끝나지 않은 채 만료됐으면(본체가 받지 않음) 그 기록을 닫는다 — 할 일이 있을 때만 쓴다(유휴 쓰기 0)
-  update public.msgr2_automation_runs x set status = 'failed', error = 'expired', finished_at = now()
+  -- 앞 회차의 일이 끝나지 않은 채 멈췄으면 그 기록을 닫는다 — 할 일이 있을 때만 쓴다(유휴 쓰기 0).
+  -- 받지 않고 만료(offered 기한 지남) = expired, 받은 뒤 리스가 끝나도 결과가 없음(결과 모름 — 본체가 잠듦·꺼짐) = stalled(검수 지적 2)
+  update public.msgr2_automation_runs x set status = 'failed', error = case when w.state = 'offered' then 'expired' else 'stalled' end, finished_at = now()
     from public.msgr2_works w
-   where x.automation_id = a.id and x.status in ('queued', 'running') and w.id = x.work_id and w.state = 'offered' and w.expires_at <= now();
+   where x.automation_id = a.id and x.status in ('queued', 'running') and w.id = x.work_id
+     and ((w.state = 'offered' and w.expires_at <= now()) or (w.state in ('accepted', 'running') and coalesce(w.lease_until, '-infinity') <= now()));
   insert into public.msgr2_automation_runs (automation_id, scheduled_for, trigger, status)
     values (a.id, case when p_mode = 'schedule' then a.next_run_at else clock_timestamp() end, p_mode, 'queued') returning * into r;
-  why := case when public._msgr2_paused() then 'service_paused' else public._msgr2_automation_why(a.created_by, a.room_id, a.agent_id) end;
+  why := case when public._msgr2_paused() then 'service_paused'
+              when a.owner_gen is distinct from public._msgr2_automation_gen(a.created_by) then 'session_revoked' -- 만든 뒤 모든 기기 로그아웃·기기 폐기: 그 세션이 건 일정은 다시 켜야 돈다
+              else public._msgr2_automation_why(a.created_by, a.room_id, a.agent_id) end;
   if why is not null then
     update public.msgr2_automation_runs set status = 'blocked', error = why, finished_at = now() where id = r.id returning * into r;
     update public.msgr2_automations set enabled = case when why = 'service_paused' then enabled else false end,
@@ -253,7 +265,8 @@ begin
 end $$;
 
 -- 크론 전용(매분 1회). 사람 세션(auth.uid() 있음)이 부르면 거부한다 — 일정 실행은 언제나 원래 사람의 권한을 _msgr2_automation_why로 다시 본 뒤에만 글을 넣는다.
--- 할 일이 없으면 쓰기 0. 한 번에 50개까지, 다른 실행과 겹치면 건너뛴다(skip locked). 자동화마다 진행 중인 일(만료 전)이 있으면 그 회차는 기다린다(쌓지 않는다).
+-- 할 일이 없으면 쓰기 0. 한 번에 50개까지, 다른 실행과 겹치면 건너뛴다(skip locked). 자동화마다 진행 중인 일이 있으면 그 회차는 기다린다(쌓지 않는다).
+-- 진행 중 = 결재 대기, 받기 전(기한 안), 받은 뒤 리스 안. 리스가 끝난 결과 모름(stalled) 일은 기다리지 않는다 — 하나가 일정을 영구히 멈추지 않게(검수 지적 2).
 -- 한 행이 실패해도 다른 행은 돈다. 실패한 행은 'failed'를 남기고 다음 회차로 넘긴다(매분 재시도 폭주 없음). 오류 원문은 남기지 않는다(지시 내용이 들어 있을 수 있다).
 create or replace function public.msgr2_automation_dispatch() returns int
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
@@ -265,7 +278,8 @@ begin
             where au.enabled and au.deleted_at is null and au.next_run_at <= now()
               and not exists (select 1 from public.msgr2_automation_runs p join public.msgr2_works w on w.id = p.work_id
                                where p.automation_id = au.id and p.status in ('queued', 'running')
-                                 and w.state in ('offered', 'accepted', 'running', 'awaiting_approval') and (w.state <> 'offered' or w.expires_at > now()))
+                                 and (w.state = 'awaiting_approval' or (w.state = 'offered' and w.expires_at > now())
+                                      or (w.state in ('accepted', 'running') and w.lease_until > now())))
             order by au.next_run_at limit 50 for update of au skip locked
   loop
     begin
@@ -315,7 +329,7 @@ drop trigger if exists msgr2_automation_work_state on public.msgr2_works;
 create trigger msgr2_automation_work_state after update of state on public.msgr2_works
   for each row when (old.state is distinct from new.state and new.source_message_id is not null) execute function public._msgr2_automation_work_state();
 
-revoke all on function public._msgr2_automation_next(jsonb, timestamptz), public._msgr2_automation_why(uuid, uuid, uuid), public._msgr2_automation_deny(text),
+revoke all on function public._msgr2_automation_next(jsonb, timestamptz), public._msgr2_automation_why(uuid, uuid, uuid), public._msgr2_automation_deny(text), public._msgr2_automation_gen(uuid),
   public._msgr2_automation_enqueue(public.msgr2_automations, text), public._msgr2_automation_work_state(), public.msgr2_automation_dispatch() from public, anon, authenticated;
 grant execute on function public.msgr2_automation_dispatch() to service_role;
 revoke all on function public.msgr2_automation_save(uuid, uuid, uuid, text, text, jsonb, uuid), public.msgr2_automation_set_enabled(uuid, boolean),

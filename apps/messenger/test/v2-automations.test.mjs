@@ -51,6 +51,6 @@ test('업무 창: 셸의 클라이언트를 받아 쓰고, v2에서는 팀 업�
   assert.match(src, /\{!v2 && <fieldset className="work-notification-routes">/);
   assert.match(src, /\{run\.message_id && !v2 && <button/);
   const i18n = readFileSync(new URL('../src/i18n.js', import.meta.url), 'utf8');
-  for (const k of ['automation.intro.v2', 'routine.v2.soon', 'automation.error.pro', 'automation.error.noWork', 'automation.error.expired', 'automation.error.dispatch'])
+  for (const k of ['automation.intro.v2', 'routine.v2.soon', 'automation.error.pro', 'automation.error.noWork', 'automation.error.expired', 'automation.error.dispatch', 'automation.error.stalled', 'automation.error.session'])
     assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });

@@ -21,6 +21,7 @@ drop function if exists public.msgr2_automation_delete(uuid);
 drop function if exists public.msgr2_automation_set_enabled(uuid, boolean);
 drop function if exists public.msgr2_automation_save(uuid, uuid, uuid, text, text, jsonb, uuid);
 drop function if exists public._msgr2_automation_deny(text);
+drop function if exists public._msgr2_automation_gen(uuid);
 drop function if exists public._msgr2_automation_why(uuid, uuid, uuid);
 drop function if exists public._msgr2_automation_next(jsonb, timestamptz);
 drop table if exists public.msgr2_automation_runs;
