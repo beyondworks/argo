@@ -253,6 +253,9 @@ test('셸: #1085에서 숨긴 단추를 켰다(신고·친구 요청·새 채널
   assert.doesNotMatch(src, /!V2 && <button type="button" className="btn msgr-chbrowse"/);
   assert.doesNotMatch(src, /onOrgTab && !orgBlocked && !V2 &&/);
   for (const keep of [/isPhone && !isPersonal && !V2 && \{ icon: 'folder'/, /if \(V2 && props\.part === 'node'\) return props\.solo \? <VpsConnectCard [^\n]*: null;/, /if \(V2 && props\.part === 'agents'\) return <VpsConnectCard /, /\{!V2 && <>\{!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button"/, /const canMuteCrew = !V2 &&/]) assert.match(src, keep);
+  // 자동화 일정 v2(20261024100000, 총괄 결정 2026-10-24 (A)): 옛 업무 패널 대신 자동화 단추 — 에이전트가 있는 방이면 개인 1:1에서도
+  assert.match(src, /\{V2 && !archived && chCrews\.length > 0 && <button type="button" className="btn sm msgr-work-button"[^\n]*\{t\('work\.tab\.automations'\)\}<\/button>\}/);
+  assert.match(src, /sheet=\{!phone\} v2=\{V2\} client=\{supabase\} \/>\}/, '업무 창에 v2 표지와 셸의 클라이언트(v2 어댑터)를 넘긴다 — 원래 클라이언트면 옛 표를 부른다');
 });
 
 test('두 계정(#1088 검수 1): 친구(민지)가 새 1:1을 열면 방은 친구 개인 공간에 있어도 내 개인 목록·안 읽음·합계·찾기·방 사건에 보인다(픽스처 대역)', async () => {

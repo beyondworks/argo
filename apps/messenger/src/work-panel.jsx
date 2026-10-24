@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { focusEntry } from './focus-entry.mjs';
 import { createPortal } from 'react-dom';
 import { DangerModal, Markdown } from '@argo/ui';
-import { supabase } from './supabase.js';
+import { supabase as rawSupabase } from './supabase.js';
 import { I } from './icons.jsx';
 import { toggleId } from './collapse-set.mjs';
 import './work-panel.css';
@@ -12,6 +12,10 @@ import { visibleRoutineRows } from './routine-rows.mjs'; // 목표 하트비트(
 // errors back off to two minutes and old servers stop until focus/manual refresh.
 const POLL_MS = 15_000;
 const TERMINAL = new Set(['completed', 'cancelled']);
+const NO_ROUTINES = { rows: [], error: null, refresh: () => {} };
+// 셸이 쓰는 클라이언트(v2 모드면 v2 어댑터 — App.jsx createV2ClientFor). 원래 클라이언트를 직접 쓰면 v2에서 옛 표를 부른다.
+const Db = createContext(rawSupabase);
+const useDb = () => useContext(Db);
 // 외부 에이전트 계약 1-a — 루틴 출처 배지 키. 미지정·미지원 source(custom 포함)는 고유명사가 아니므로 "외부 에이전트"로 묶는다.
 const ROUTINE_SOURCE_LABEL = { argo: 'automation.source.argo', hermes: 'automation.source.hermes', openclaw: 'automation.source.openclaw' };
 const stamp = (value, lang) => value ? new Date(value).toLocaleString(lang === 'en' ? 'en-US' : 'ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -22,7 +26,13 @@ const errorText = (error, t) => {
   if (missingSchema(error)) return t('work.error.upgrade');
   if (/no_available_lead/i.test(message)) return t('work.error.offline');
   if (/no_eligible|invalid_crew|crew_not|lead_not/i.test(message)) return t('work.error.crew');
-  if (/permission_revoked/i.test(message)) return t('automation.error.revoked');
+  if (/permission_revoked|agent_unavailable/i.test(message)) return t('automation.error.revoked');
+  if (/pro_required/i.test(message)) return t('automation.error.pro'); // v2(20261024100000): 만든 사람의 Pro가 끝나면 막고 끈다
+  if (/no_work/i.test(message)) return t('automation.error.noWork');
+  if (/^expired$/i.test(message)) return t('automation.error.expired');
+  if (/^stalled$/i.test(message)) return t('automation.error.stalled');
+  if (/session_revoked/i.test(message)) return t('automation.error.session');
+  if (/dispatch_failed/i.test(message)) return t('automation.error.dispatch');
   if (/not_editable/i.test(message)) return t('routine.error.notEditable');
   if (/invalid_channel/i.test(message)) return t('routine.error.channel');
   if (/denied|forbidden|permission|not_allowed|row.level security|not_member/i.test(message)) return t('work.error.denied');
@@ -31,7 +41,7 @@ const errorText = (error, t) => {
   return t('work.error.connection');
 };
 
-function useRows(table, channelId, enabled, capabilityIds = '') {
+function useRows(table, channelId, enabled, capabilityIds = '', supabase = rawSupabase) {
   const [state, setState] = useState({ rows: null, error: null, hasMore: false });
   const [page, setPage] = useState(0);
   const revision = useRef(0);
@@ -65,7 +75,7 @@ function useRows(table, channelId, enabled, capabilityIds = '') {
       failures.current++; missing.current = missingSchema(error);
       setState((old) => ({ ...old, error }));
     } }
-  }, [table, channelId, enabled, page, capabilityIds]);
+  }, [table, channelId, enabled, page, capabilityIds, supabase]);
   useEffect(() => {
     if (!enabled) return;
     let active = true; let timer;
@@ -80,7 +90,7 @@ function useRows(table, channelId, enabled, capabilityIds = '') {
 
 /** 업무 > 자동화 1단계 — Argo PC 루틴 미러(msgr_crew_routines). 1:1 방은 그 에이전트의 루틴 전부, 채널은 결과가
     그 채널로 가는 루틴만(channel_id 일치). RLS가 이미 소유자 행만 보여주므로 여기서는 범위만 고른다. */
-function useCrewRoutines(channel, crews, enabled) {
+function useCrewRoutines(channel, crews, enabled, supabase = rawSupabase) {
   const [state, setState] = useState({ rows: null, error: null });
   const revision = useRef(0);
   const isDm = channel.kind === 'dm';
@@ -105,7 +115,7 @@ function useCrewRoutines(channel, crews, enabled) {
       for (const e of edits ?? []) if (!latest.has(e.routine_id)) latest.set(e.routine_id, e);
       setState({ rows: (rows ?? []).map((r) => { const e = latest.get(r.id); return { ...r, pendingEdit: e && e.status !== 'applied' ? e : null }; }), error: null });
     } catch (error) { if (request === revision.current) setState((old) => ({ ...old, error })); }
-  }, [enabled, isDm, dmCrewId, channel.id]);
+  }, [enabled, isDm, dmCrewId, channel.id, supabase]);
   useEffect(() => {
     if (!enabled) return;
     let active = true; let timer;
@@ -116,11 +126,11 @@ function useCrewRoutines(channel, crews, enabled) {
   return { ...state, refresh };
 }
 
-function CrewSelect({ crews, value, onChange, automatic, t, disabled }) {
+function CrewSelect({ crews, value, onChange, automatic, t, disabled, v2 = false }) {
   return <label className="work-field"><span>{t(automatic ? 'work.lead' : 'automation.crew')}</span>
     <select className="msgr-select" value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} required={!automatic}>
       <option value="">{t(automatic ? 'work.lead.auto' : 'automation.crew.pick')}</option>
-      {crews.map((crew) => <option key={crew.id} value={crew.id}>{crew.display_name}{Date.now() - Date.parse(crew.last_seen_at ?? 0) > 90_000 ? ` · ${t('work.crew.offline')}` : ''}</option>)}
+      {crews.map((crew) => <option key={crew.id} value={crew.id}>{crew.display_name}{!v2 && Date.now() - Date.parse(crew.last_seen_at ?? 0) > 90_000 ? ` · ${t('work.crew.offline')}` : ''}</option>)}
     </select>
   </label>;
 }
@@ -133,8 +143,9 @@ function StateNotice({ rows, error, empty, refresh, t }) {
 }
 
 /** Each panel reads the authenticated cloud directly; the phone never calls a desktop localhost. */
-export function WorkPanel({ channel, roomName = null, uid, isAdmin, locked, crews, t, lang, onClose, sheet = false }) { // roomName: 화면에 보일 방 이름 — 1:1의 내부 이름 'dm:…' 대신(UXM-06) // sheet: 데스크톱 — 채널 패널과 같은 시트(폭 380, 비킴 규칙 공유). 폰은 전체 화면 오버레이
-  const [tab, setTab] = useState('team');
+export function WorkPanel({ channel, roomName = null, uid, isAdmin, locked, crews, t, lang, onClose, sheet = false, v2 = false, client = null }) { // roomName: 화면에 보일 방 이름 — 1:1의 내부 이름 'dm:…' 대신(UXM-06) // sheet: 데스크톱 — 채널 패널과 같은 시트(폭 380, 비킴 규칙 공유). 폰은 전체 화면 오버레이
+  const supabase = client ?? rawSupabase; // client: 셸의 클라이언트(v2 어댑터 포함)
+  const [tab, setTab] = useState(v2 ? 'automations' : 'team'); // v2: 자동화 일정만(옛 팀 업무 msgr_work_runs는 v2에 없다 — 20261024100000)
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [error, setError] = useState(null);
@@ -144,9 +155,10 @@ export function WorkPanel({ channel, roomName = null, uid, isAdmin, locked, crew
   const mounted = useRef(true);
   // Channel scope is supplied by Shell. Assignment authorization remains on the server.
   const eligible = crews.filter((crew) => crew.status === 'active');
-  const work = useRows('msgr_work_runs', channel.id, tab === 'team', eligible.map((crew) => crew.id).sort().join(','));
-  const automations = useRows('msgr_automations', channel.id, tab === 'automations');
-  const routines = useCrewRoutines(channel, eligible, tab === 'automations');
+  const work = useRows('msgr_work_runs', channel.id, tab === 'team', eligible.map((crew) => crew.id).sort().join(','), supabase);
+  const automations = useRows('msgr_automations', channel.id, tab === 'automations', '', supabase);
+  const crewRoutines = useCrewRoutines(channel, eligible, tab === 'automations' && !v2, supabase);
+  const routines = v2 ? NO_ROUTINES : crewRoutines; // v2: 루틴 미러는 아직 없다 — "곧 지원" 안내만(총괄 결정 2026-10-24 (B))
   const closeRef = useRef(onClose); closeRef.current = onClose;
   useEffect(() => {
     mounted.current = true;
@@ -172,27 +184,27 @@ export function WorkPanel({ channel, roomName = null, uid, isAdmin, locked, crew
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   };
-  const body = (<>
-      <header className="work-header"><div><h2>{t('work.title')}</h2><p>{roomName ?? channel.name}</p></div><button className="btn sm" disabled={busy} onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
-      <div className="work-tabs" role="tablist" aria-label={t('work.title')}>{['team', 'automations'].map((key) => <button key={key} type="button" role="tab" aria-selected={tab === key} aria-controls={`work-view-${key}`} id={`work-tab-${key}`} tabIndex={tab === key ? 0 : -1} disabled={busy} onClick={() => { setTab(key); setError(null); setNotice(''); }} onKeyDown={(event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 'team' : event.key === 'End' ? 'automations' : key === 'team' ? 'automations' : 'team'; setTab(next); event.currentTarget.parentElement.querySelector(`#work-tab-${next}`)?.focus(); } }}>{t(`work.tab.${key}`)}</button>)}</div>
-      <div className="work-scroll" role="tabpanel" id={`work-view-${tab}`} aria-labelledby={`work-tab-${tab}`}>
+  const body = (<Db.Provider value={supabase}>
+      <header className="work-header"><div><h2>{t(v2 ? 'work.tab.automations' : 'work.title')}</h2><p>{roomName ?? channel.name}</p></div><button className="btn sm" disabled={busy} onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
+      {!v2 && <div className="work-tabs" role="tablist" aria-label={t('work.title')}>{['team', 'automations'].map((key) => <button key={key} type="button" role="tab" aria-selected={tab === key} aria-controls={`work-view-${key}`} id={`work-tab-${key}`} tabIndex={tab === key ? 0 : -1} disabled={busy} onClick={() => { setTab(key); setError(null); setNotice(''); }} onKeyDown={(event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 'team' : event.key === 'End' ? 'automations' : key === 'team' ? 'automations' : 'team'; setTab(next); event.currentTarget.parentElement.querySelector(`#work-tab-${next}`)?.focus(); } }}>{t(`work.tab.${key}`)}</button>)}</div>}
+      <div className="work-scroll" role={v2 ? undefined : 'tabpanel'} id={`work-view-${tab}`} aria-labelledby={v2 ? undefined : `work-tab-${tab}`}>
         {locked && <p className="work-notice" role="status">{t('org.locked.short')}</p>}
         {error && <p className="work-notice error" role="alert">{errorText(error, t)}</p>}
         {notice && <p className="work-notice" role="status">{notice}</p>}
         {tab === 'team' ? <TeamWork key="team" work={work} channel={channel} crews={eligible.filter((crew) => crew.hosting === 'bot' || (work.capabilities ?? []).some((row) => row.id === crew.id && row.work_protocol >= 1))} uid={uid} isAdmin={isAdmin} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} />
-          : <Automations key="automations" source={automations} routines={routines} channel={channel} roomName={roomName ?? channel.name} crews={eligible} uid={uid} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} setDeleting={setDeleting} setNotice={setNotice} />}
+          : <Automations key="automations" v2={v2} source={automations} routines={routines} channel={channel} roomName={roomName ?? channel.name} crews={eligible} uid={uid} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} setDeleting={setDeleting} setNotice={setNotice} />}
       </div>
-  </>);
+  </Db.Provider>);
   const confirm = deleting && <div className="msgr-action-dialog" role="dialog" aria-modal="true" aria-label={t('automation.delete')}><DangerModal title={t('automation.delete')} description={<>{t('automation.delete.note')}{error && <span className="work-notice error" role="alert">{errorText(error, t)}</span>}</>} requireText={deleting.title} confirmLabel={t('automation.delete')} busy={busy} onClose={() => { if (!busy) { setDeleting(null); setError(null); } }} onConfirm={() => act(() => checked(deleting.kind === 'routine' ? supabase.rpc('msgr_crew_routine_edit', { p_routine: deleting.id, p_op: 'delete' }) : supabase.rpc('msgr_automation_delete', { automation: deleting.id })), () => { setDeleting(null); setNotice(t(deleting.kind === 'routine' ? 'routine.delete.requested' : 'automation.deleted')); })} /></div>;
   if (sheet) return (<div className="msgr-sheetwrap">
     <div className="msgr-scrim clear" onClick={() => { if (!busy && !deleting) onClose(); }} />
-    <aside className="msgr-crewsheet msgr-worksheet" ref={dialog} tabIndex={-1} role="dialog" aria-label={t('work.title')} onKeyDown={keydown} inert={deleting ? true : undefined}>
+    <aside className="msgr-crewsheet msgr-worksheet" ref={dialog} tabIndex={-1} role="dialog" aria-label={t(v2 ? 'work.tab.automations' : 'work.title')} onKeyDown={keydown} inert={deleting ? true : undefined}>
 {body}
     </aside>
     {deleting && createPortal(<div className="shell msgr-work-overlay msgr-work-confirm" onKeyDown={keydown}>{confirm}</div>, document.body)}
   </div>);
   return createPortal(<div className="shell msgr-work-overlay" onKeyDown={keydown} onClick={(event) => { if (event.target === event.currentTarget && !busy && !deleting) onClose(); }}>
-    <section className="msgr-work-panel" ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t('work.title')} inert={deleting ? true : undefined}>
+    <section className="msgr-work-panel" ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t(v2 ? 'work.tab.automations' : 'work.title')} inert={deleting ? true : undefined}>
 {body}
     </section>
     {deleting && confirm}
@@ -200,6 +212,7 @@ export function WorkPanel({ channel, roomName = null, uid, isAdmin, locked, crew
 }
 
 function TeamWork({ work, channel, crews, uid, isAdmin, disabled, busy, act, t, lang }) {
+  const supabase = useDb();
   const [goal, setGoal] = useState('');
   const [completion, setCompletion] = useState('');
   const [lead, setLead] = useState('');
@@ -241,7 +254,8 @@ function TeamWork({ work, channel, crews, uid, isAdmin, disabled, busy, act, t, 
   </>;
 }
 
-function Automations({ source, routines, channel, roomName, crews, uid, disabled, busy, act, t, lang, setDeleting, setNotice }) {
+function Automations({ source, routines, channel, roomName, crews, uid, disabled, busy, act, t, lang, setDeleting, setNotice, v2 = false }) {
+  const supabase = useDb();
   const [editing, setEditing] = useState(null);
   const [editingRoutine, setEditingRoutine] = useState(null);
   const [history, setHistory] = useState(null);
@@ -252,11 +266,11 @@ function Automations({ source, routines, channel, roomName, crews, uid, disabled
   const [expanded, setExpanded] = useState(() => new Set());
   const toggleCard = (id) => setExpanded((cur) => toggleId(cur, id));
   return <>
-    <p className="work-note">{t('automation.intro')}</p>
+    <p className="work-note">{t(v2 ? 'automation.intro.v2' : 'automation.intro')}</p>
     {source.rows !== null && !source.error && <SchedulerStatus t={t} />}
     <div className="work-section-heading"><h3>{t('work.tab.automations')}</h3><div className="work-actions"><button className="btn sm" onClick={() => { source.refresh(); routines.refresh(); }} disabled={busy}>{t('work.refresh')}</button><button className="btn btn-primary sm" disabled={disabled || !crews.length || !!source.error || source.rows === null} onClick={() => setEditing({})}>{t('automation.new')}</button></div></div>
     {!crews.length && <p className="work-notice">{t('work.noCrew')}</p>}
-    {editing && <AutomationForm key={editing.id ?? 'new'} value={editing} crews={crews} channel={channel} roomName={roomName} t={t} disabled={disabled} act={act} onClose={() => setEditing(null)} onSaved={() => { if (!editing.id) source.setPage(0); setEditing(null); setNotice(t('automation.saved')); }} />}
+    {editing && <AutomationForm key={editing.id ?? 'new'} v2={v2} value={editing} crews={crews} channel={channel} roomName={roomName} t={t} disabled={disabled} act={act} onClose={() => setEditing(null)} onSaved={() => { if (!editing.id) source.setPage(0); setEditing(null); setNotice(t('automation.saved')); }} />}
     {editingRoutine && <RoutineForm key={editingRoutine.id} value={editingRoutine} t={t} disabled={disabled} act={act} onClose={() => setEditingRoutine(null)} onSaved={() => { setEditingRoutine(null); setNotice(t('automation.saved')); }} />}
     {source.error && <div className="work-notice error" role="alert"><p>{errorText(source.error, t)}</p><button className="btn sm" onClick={source.refresh}>{t('work.retry')}</button></div>}
     {source.rows === null && <p className="work-note" role="status">{t('ui.loading')}</p>}
@@ -274,7 +288,7 @@ function Automations({ source, routines, channel, roomName, crews, uid, disabled
       <div className="work-actions"><button className="btn sm" onClick={() => setHistory(history === automation.id ? null : automation.id)} aria-expanded={history === automation.id}>{t('automation.history')}</button>
         {automation.created_by === uid && <><button className="btn sm" disabled={disabled} onClick={() => setEditing(automation)}>{t('automation.edit')}</button><button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_automation_set_enabled', { automation: automation.id, enabled: !automation.enabled })))}>{t(automation.enabled ? 'automation.pause' : 'automation.resume')}</button><button className="btn sm" disabled={disabled} onClick={() => { if (!runRequests.current.has(automation.id)) runRequests.current.set(automation.id, crypto.randomUUID()); act(() => checked(supabase.rpc('msgr_automation_run_now', { automation: automation.id, request_id: runRequests.current.get(automation.id) })), () => { runRequests.current.delete(automation.id); setHistory(automation.id); setNotice(t('automation.run.requested')); }); }}>{t('automation.run')}</button><button className="btn sm work-danger" disabled={disabled} onClick={() => setDeleting(automation)}>{t('automation.delete')}</button></>}
       </div>
-      {history === automation.id && <RunHistory automationId={automation.id} own={automation.created_by === uid} channelId={channel.id} crews={crews} t={t} lang={lang} />}
+      {history === automation.id && <RunHistory v2={v2} automationId={automation.id} own={automation.created_by === uid} channelId={channel.id} crews={crews} t={t} lang={lang} />}
       </div>}
     </article>; })}
     {routines.error && <div className="work-notice error" role="alert"><p>{missingSchema(routines.error) ? t('automation.notifications.upgrade') : errorText(routines.error, t)}</p><button className="btn sm" onClick={routines.refresh}>{t('work.retry')}</button></div>}
@@ -324,12 +338,14 @@ function Automations({ source, routines, channel, roomName, crews, uid, disabled
       </div>}
     </article>;
     })}
+    {v2 && <p className="work-note">{t('routine.v2.soon')}</p>}
     <Pages source={source} disabled={busy} t={t} />
   </>;
 }
 
 /** 1-b ③ 보낼 방 고르기 — 이 1:1 대화(소유자와 그 에이전트) 또는 그 에이전트가 들어간 채널만. 서버(_msgr_routine_channel_ok)가 다시 판정한다. */
 function RouteChooser({ routine, channel, t, disabled, act, onSaved }) {
+  const supabase = useDb();
   const [options, setOptions] = useState(null);
   const [value, setValue] = useState('');
   useEffect(() => {
@@ -369,7 +385,8 @@ function RoutineSchedule({ schedule = {}, t }) {
   return <>{t(`routine.kind.${schedule.type === 'weekly' ? 'weekly' : 'daily'}`)} {schedule.type === 'weekly' ? dows.map((day) => t(`routine.day.${day}`)).join(' · ') : ''} {(schedule.times ?? [schedule.time]).filter(Boolean).join(', ')} · {schedule.tz ?? ''}</>;
 }
 
-function AutomationForm({ value, crews, channel, roomName = null, t, disabled, act, onClose, onSaved }) {
+function AutomationForm({ value, crews, channel, roomName = null, t, disabled, act, onClose, onSaved, v2 = false }) {
+  const supabase = useDb();
   const [title, setTitle] = useState(value.title ?? '');
   const [prompt, setPrompt] = useState(value.prompt ?? '');
   const [crew, setCrew] = useState(value.crew_id ?? '');
@@ -386,9 +403,10 @@ function AutomationForm({ value, crews, channel, roomName = null, t, disabled, a
   useEffect(() => {
     let active = true;
     setRoutes(null); setRoutesError(null);
+    if (v2) { setRoutes([]); return () => { active = false; }; } // v2: 알림 대상은 아직 없다 — 선택을 숨기고 빈 값으로 저장
     checked(supabase.rpc('msgr_notification_routes_list')).then((rows) => { if (active) setRoutes(rows ?? []); }, (error) => { if (active) setRoutesError(error); });
     return () => { active = false; };
-  }, [routeRevision]);
+  }, [routeRevision, v2]);
   const form = useRef(null);
   const createRequest = useRef(null);
   useEffect(() => { form.current?.scrollIntoView({ block: 'nearest' }); }, []);
@@ -407,13 +425,13 @@ function AutomationForm({ value, crews, channel, roomName = null, t, disabled, a
     <h3>{t(value.id ? 'automation.edit' : 'automation.new')}</h3>
     <label className="work-field"><span>{t('automation.name')}</span><input value={title} required maxLength={120} onChange={(event) => setTitle(event.target.value)} disabled={disabled} /></label>
     <label className="work-field"><span>{t('automation.prompt')}</span><textarea value={prompt} required maxLength={18000} rows={3} onChange={(event) => setPrompt(event.target.value)} disabled={disabled} /></label>
-    <CrewSelect crews={crews} value={crew} onChange={setCrew} t={t} disabled={disabled} />
+    <CrewSelect crews={crews} value={crew} onChange={setCrew} t={t} disabled={disabled} v2={v2} />
     <div className="work-grid"><label className="work-field"><span>{t('automation.repeat')}</span><select value={kind} onChange={(event) => setKind(event.target.value)} disabled={disabled}>{['daily', 'weekly', 'interval'].map((key) => <option key={key} value={key}>{t(`automation.kind.${key}`)}</option>)}</select></label>
       {kind === 'interval' ? <label className="work-field"><span>{t('automation.minutes')}</span><input type="number" min="5" max="10080" step="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} required disabled={disabled} /></label> : <label className="work-field"><span>{t('automation.time')}</span><input type="time" value={time} onChange={(event) => setTime(event.target.value)} required disabled={disabled} /></label>}</div>
     {kind === 'weekly' && <fieldset className="work-days"><legend>{t('automation.days')}</legend>{[1, 2, 3, 4, 5, 6, 7].map((day) => <label key={day}><input type="checkbox" checked={weekdays.includes(day)} disabled={disabled} onChange={(event) => setWeekdays((current) => event.target.checked ? [...current, day].sort() : current.filter((value) => value !== day))} />{t(`automation.day.${day}`)}</label>)}</fieldset>}
     <label className="work-field"><span>{t('automation.timezone')}</span><input list="work-timezones" value={timezone} onChange={(event) => setTimezone(event.target.value)} required spellCheck={false} disabled={disabled} /><datalist id="work-timezones">{['Asia/Seoul', 'Asia/Tokyo', 'America/New_York', 'America/Los_Angeles', 'Europe/London', 'UTC'].map((zone) => <option key={zone}>{zone}</option>)}</datalist></label>
     <p className="work-note">{t('automation.timezone.note')}</p>
-    <fieldset className="work-notification-routes"><legend>{t('automation.notifications.title')}</legend>
+    {!v2 && <fieldset className="work-notification-routes"><legend>{t('automation.notifications.title')}</legend>
       <p className="work-note">{t('automation.notifications.note')}</p>
       <label className="work-notification-route"><input type="checkbox" checked disabled /><span><strong>{t('automation.notifications.messenger')}</strong><small>{roomName ?? channel.name}</small></span></label>
       {routesError ? <div className="work-notice error" role="alert"><p>{missingSchema(routesError) ? t('automation.notifications.upgrade') : errorText(routesError, t)}</p><button type="button" className="btn sm" disabled={disabled} onClick={() => setRouteRevision((old) => old + 1)}>{t('work.retry')}</button></div>
@@ -423,7 +441,7 @@ function AutomationForm({ value, crews, channel, roomName = null, t, disabled, a
           {routeIds.filter((id) => !routes.some((route) => route.id === id)).map((id) => <label className="work-notification-route" key={id}><input type="checkbox" checked disabled={disabled} onChange={() => setRouteIds((old) => old.filter((value) => value !== id))} /><span>{t('automation.notifications.unavailable')}</span></label>)}
         </>}
       <p className="work-note">{t('automation.notifications.device')}</p>
-    </fieldset>
+    </fieldset>}
     {invalid && <p className="work-notice error" role="alert">{t('work.error.schedule')}</p>}
     <div className="work-actions"><button className="btn btn-primary" disabled={disabled || routes === null || !!routesError || !title.trim() || !prompt.trim() || !crew}>{t('ui.save')}</button><button type="button" className="btn" disabled={disabled} onClick={onClose}>{t('ui.cancel')}</button></div>
   </form>;
@@ -433,6 +451,7 @@ function AutomationForm({ value, crews, channel, roomName = null, t, disabled, a
     스케줄은 단일 시각의 daily/weekly/interval만 편집 가능 — 하루 여러 시각(times[]가 2개 이상)이거나 once(1회 예약)는 제목·지시만 편집하고
     스케줄은 읽기전용으로 둔다(첫 시각만 고쳐 나머지 시각을 지우는 사고를 원천 차단 — 유건 지시). */
 function RoutineForm({ value, t, disabled, act, onClose, onSaved }) {
+  const supabase = useDb();
   const schedule = value.schedule ?? {};
   // raw(메신저 형식으로 못 바꾼 외부 일정)도 once·여러 시각과 같은 취급 — 제목·지시만 편집, 일정은 읽기전용.
   const intervalInRange = Number(schedule.everyMinutes) >= 10 && Number(schedule.everyMinutes) <= 1440; // 외부 에이전트는 10분 미만 간격도 가진다 — 폼 범위 밖이면 일정은 읽기 전용(검수 L-10)
@@ -481,7 +500,8 @@ function RoutineForm({ value, t, disabled, act, onClose, onSaved }) {
   </form>;
 }
 
-function RunHistory({ automationId, own, channelId, crews, t, lang }) {
+function RunHistory({ automationId, own, channelId, crews, t, lang, v2 = false }) {
+  const supabase = useDb();
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
   const [deliveries, setDeliveries] = useState([]);
@@ -519,12 +539,13 @@ function RunHistory({ automationId, own, channelId, crews, t, lang }) {
           const route = routes.find((row) => row.id === id);
           return <p key={id}>{route ? `${t(`automation.notifications.${route.kind}`)} · ${route.label} (${route.ws_id})` : t('automation.notifications.external')} — {t(`automation.delivery.${delivery?.status ?? 'pending'}`)}</p>;
         })}
-      </div>}</div>{run.message_id && <button className="btn sm" onClick={() => setThread({ root: run.message_id, label: t('automation.history') })}>{t('work.discussion')}</button>}</div>)}
+      </div>}</div>{run.message_id && !v2 && <button className="btn sm" onClick={() => setThread({ root: run.message_id, label: t('automation.history') })}>{t('work.discussion')}</button>}</div>)}
     {thread && <Discussion channelId={channelId} thread={thread} crews={crews} t={t} lang={lang} onClose={() => setThread(null)} />}
   </div>;
 }
 
 function Discussion({ channelId, thread, crews, t, lang, onClose }) {
+  const supabase = useDb();
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
   const [revision, setRevision] = useState(0);
@@ -546,6 +567,7 @@ function Discussion({ channelId, thread, crews, t, lang, onClose }) {
 }
 
 function ResumeWork({ run, disabled, act, t }) {
+  const supabase = useDb();
   const [instruction, setInstruction] = useState('');
   const request = useRef(null);
   return <form className="work-form" onSubmit={(event) => {
@@ -556,6 +578,7 @@ function ResumeWork({ run, disabled, act, t }) {
 }
 
 function SchedulerStatus({ t }) {
+  const supabase = useDb();
   const [status, setStatus] = useState(null);
   useEffect(() => {
     let active = true;

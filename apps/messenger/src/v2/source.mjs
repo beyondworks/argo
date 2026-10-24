@@ -46,6 +46,15 @@ const TABLES = {
   msgr_org_members: {
     to: 'msgr2_space_members', cols: { org_id: 'space_id' }, have: ['space_id', 'user_id', 'role', 'display_name', 'joined_at', 'removed_at', 'expires_at'],
   },
+  // 자동화 일정(20261024100000) — 업무 창(work-panel.jsx)이 읽는다. 쓰기는 RPC만(legacy-rpc.mjs). 알림 대상(notification_route_ids)은 v2에 없어 null.
+  msgr_automations: {
+    to: 'msgr2_automations', cols: { org_id: 'space_id', channel_id: 'room_id', crew_id: 'agent_id' },
+    have: ['id', 'space_id', 'room_id', 'agent_id', 'created_by', 'title', 'prompt', 'schedule', 'enabled', 'next_run_at', 'last_run_at', 'last_message_id', 'last_status', 'last_error', 'created_at', 'updated_at', 'deleted_at'],
+  },
+  msgr_automation_runs: {
+    to: 'msgr2_automation_runs',
+    have: ['id', 'automation_id', 'request_id', 'scheduled_for', 'trigger', 'status', 'message_id', 'work_id', 'error', 'created_at', 'finished_at'],
+  },
 };
 
 // 그대로 쓰는 표(설계 1-2절). 옛 앱과 같은 표·같은 정책.
@@ -63,8 +72,7 @@ const RPCS = {
   write: new Set(['msgr_crew_join_decide', // 방·1:1·신고·초대·안 읽음·찾기는 U6d RPC로 바꿔 보낸다(legacy-rpc.mjs LEGACY_RPCS)
     'msgr_restore_org', 'msgr_join_by_domain', 'msgr_mute_crew', 'msgr_unmute_crew', 'msgr_set_member_profile', 'msgr_work_create', 'msgr_work_cancel',
     'msgr_work_resume', 'msgr_request_stop', 'msgr_bot_create', 'msgr_bot_rotate', 'msgr_bot_revoke', 'msgr_bot_rename', 'msgr_bot_set_role',
-    'msgr_bot_set_mirror_all', 'msgr_crew_routine_edit', 'msgr_automation_set_enabled', 'msgr_automation_save_with_notifications',
-    'msgr_automation_run_now', 'msgr_automation_delete', 'msgr_server_link_create', 'msgr_server_link_approve', 'msgr_report_resolve',
+    'msgr_bot_set_mirror_all', 'msgr_crew_routine_edit', 'msgr_server_link_create', 'msgr_server_link_approve', 'msgr_report_resolve',
     'msgr_push_badge_resync']),
 };
 
