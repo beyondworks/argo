@@ -181,7 +181,7 @@ export function crewFaceState({ crew, working = false, asking = false, surprised
   if (surprisedAt && now - surprisedAt < SURPRISE_MS) return 'surprise';
   if (erroredAt && now - erroredAt < ERROR_MS) return 'error';
   if (doneAt && now - doneAt < DONE_MS) return 'done';
-  if (crew && !seenWithin(crew, AWAY_MS, now)) return 'off'; // 받아 온 때 기준(presence-clock.mjs)
+  if (crew && !crew._v2 && !seenWithin(crew, AWAY_MS, now)) return 'off'; // 받아 온 때 기준(presence-clock.mjs). v2는 접속 신호가 없어 잠든 얼굴로 단정하지 않는다(personal-bots.mjs crewOnline)
   return 'idle';
 }
 
