@@ -126,6 +126,7 @@ import { seenWithin, stampFetched, markSeen } from './presence-clock.mjs'; impor
 import { shortcutLabel } from './shortcut.mjs';
 import { koJosa } from './ko-josa.mjs';
 import { reconcilePending, messageEvent, broadcastEvent, onForeground } from './instant-delivery.mjs';
+import { startIdlePoll } from './idle-poll.mjs'; // 끊긴 동안의 보정 조회 박자 — 숨긴 창 0·변화 없으면 5분까지 늘림(2026-10-25)
 import { loadSpaceTotals, readableForNotify, seenOnce, badgeTotal, spaceKey, joinWithBackoff } from './cross-space.mjs'; // 다른 공간의 새 글 — 안 읽음 합계·알림 판단
 import { splitAwayNote, plainPreview } from './msg-text.mjs';
 import { containsProfanity, readProfanityFilterOn, writeProfanityFilterOn, PROFANITY_FILTER_EVENT } from './profanity-filter.mjs';
@@ -7169,11 +7170,13 @@ function Channel({ movedBar = null, pausedCrew = null, pausedNotice = null, onCr
   useEffect(() => { if (uRejoinSeen.current === uRejoin) return; uRejoinSeen.current = uRejoin; if (isPersonal || channel.kind === 'public') return; recover({ rejoined: true }); loadApprovals().catch(() => {}); }, [uRejoin]); // eslint-disable-line react-hooks/exhaustive-deps
   const safety = useContext(SafetyCtx);
   useEffect(() => { if (openRoomBehind({ n: serverUnread, msgs, uid, readUpTo: Math.max(divider, readMark.current), blocked: safety.blocked, mutedCrews: safety.mutedCrewIds })) catchUp().catch(() => {}); }, [serverUnread]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 보정 조회(10s)는 화면에 보이는 방에서 실시간이 끊겼다고 알려진 동안만 돈다(기능 점검 D2 — 숨겨 둔 방·조용한 방에서 10초마다 글·결재를 읽던 것).
+  // 보정 조회는 화면에 보이는 방에서 실시간이 끊겼다고 알려진 동안만 돈다(기능 점검 D2 — 숨겨 둔 방·조용한 방에서 10초마다 글·결재를 읽던 것).
   // 방송이 살아 있으면 새 글은 방송이, 놓친 글은 앞으로 올 때(onForeground)·다시 붙을 때(rt_up)가 따라잡는다.
-  useEffect(() => { if (!onScreen || !rtDown) return undefined; const iv = setInterval(() => { recover(); loadApprovals().catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, rtDown, recover, lastId]); // eslint-disable-line react-hooks/exhaustive-deps — 끊긴 동안 붙은 첨부도(방송이 없다)
+  // 박자(idle-poll.mjs, 2026-10-25 유휴 읽기 줄이기): 창이 숨겨져 있으면 읽지 않고(v2는 백그라운드도 rt_down이라 숨긴 창이 10초마다 읽었다),
+  // 새 글이 없으면 10 → 20 → 40 → 80 → 160 → 300초로 늘린다. 새 글(lastId)이 오면 이 효과가 다시 돌아 10초부터.
+  useEffect(() => { if (!onScreen || !rtDown) return undefined; return startIdlePoll(() => { recover(); loadApprovals().catch(() => {}); }); }, [onScreen, rtDown, recover, lastId]); // eslint-disable-line react-hooks/exhaustive-deps — 끊긴 동안 붙은 첨부도(방송이 없다)
   // 첨부·반응이 빈 묶음 메우기 — 빈 것이 있을 때만 조회한다(없으면 요청 0, 검수 #531 M-1)
-  useEffect(() => { if (!onScreen) return undefined; const iv = setInterval(() => { const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, hydrate]);
+  useEffect(() => { if (!onScreen) return undefined; const iv = setInterval(() => { if (document.visibilityState === 'hidden') return; const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, hydrate]);
   // 결재 결정(MSG-07) — 0행이면 다시 읽어 이미 결정된 결재는 오류 없이 결과만(연타·다른 사람이 먼저), 대기 중일 때만 권한 없음(최종 판정은 서버 msgr_can_decide).
   // 끝나면 결재를 바로 다시 읽는다 — approval 방송을 놓쳐도(끊긴 것을 모를 때) 카드가 '대기'와 눌리는 단추로 남지 않게. 진행 중 단추 끄기는 Slip이 한다
   const decide = async (ap, status) => {

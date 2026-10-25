@@ -57,7 +57,8 @@ function room({ msgs, atts, server = [] }) {
     reloadReacts: async () => {}, reloadMsg: async () => {}, reloadAtts: async (id) => { calls.reloadAtts.push(id); } };
   const fire = (event) => build(eventEffectSrc, { ...scope, event })();
   const uRun = (o = { kind: 'dm', isPersonal: false }) => { const seen = { current: 0 }; return (uRejoin) => build(uEffectSrc, { uRejoin, uRejoinSeen: seen, isPersonal: o.isPersonal, channel: { id: 'ch', kind: o.kind }, catchUp, loadApprovals, recover })(); };
-  const poll = () => { let tick = null; build(downEffectSrc, { onScreen: true, rtDown: true, setInterval: (fn, ms) => { assert.equal(ms, 10_000); tick = fn; return 1; }, clearInterval: () => {}, recover, catchUp, loadApprovals })(); return tick; };
+  // 보정 조회 박자는 idle-poll.mjs(2026-10-25 — 숨긴 창 0·변화 없으면 늘림, test/idle-poll.test.mjs). 여기서는 한 회씩 손으로 돌린다
+  const poll = () => { let tick = null; build(downEffectSrc, { onScreen: true, rtDown: true, startIdlePoll: (fn) => { tick = fn; return () => {}; }, recover, catchUp, loadApprovals })(); return tick; };
   return { live, calls, fire, scope, server, q, supabase, setAtts, clock, hold, reloadAtts, uRun, poll };
 }
 
@@ -143,12 +144,12 @@ test('실시간이 계속 끊긴 동안 — 보정 조회가 업로드 도중에
   r.clock.now += 10_000; tick(); await settle();
   r.clock.now += 10_000; tick(); await settle();
   assert.equal(r.calls.att.length, 2, '대상이 그대로면 10초마다 같은 첨부를 다시 받지 않는다(DB 위생)');
-  assert.equal(r.calls.catchUp, 4, '새 글 따라잡기는 종전대로 10초마다');
+  assert.equal(r.calls.catchUp, 4, '새 글 따라잡기는 보정 조회마다(박자는 idle-poll.mjs)');
   r.clock.now += 60_000; tick(); await settle();
   assert.equal(r.calls.att.length, 3, '1분이 지나면 한 번 더 — 업로드가 오래 걸린 파일');
   r.fire({ kind: 'rt_up', at: NOW }); await settle();
   assert.equal(r.calls.att.length, 4, '다시 붙음은 시각과 관계없이 읽는다');
-  const up = build(downEffectSrc, { onScreen: true, rtDown: false, setInterval: () => assert.fail('끊기지 않았으면 보정 조회 없음'), clearInterval: () => {}, recover: r.scope.recover, catchUp: r.scope.catchUp, loadApprovals: r.scope.loadApprovals })();
+  const up = build(downEffectSrc, { onScreen: true, rtDown: false, startIdlePoll: () => assert.fail('끊기지 않았으면 보정 조회 없음'), recover: r.scope.recover, catchUp: r.scope.catchUp, loadApprovals: r.scope.loadApprovals })();
   assert.equal(up, undefined);
 });
 
