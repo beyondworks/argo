@@ -394,19 +394,39 @@ function renameOr(spec, expr) {
   return String(expr).replace(/(^|,|\()([a-z_]+)\./g, (m, pre, c) => `${pre}${spec.cols?.[c] ?? c}.`);
 }
 
-// 에이전트 열 — avatar_url·bio는 20261025130000(프로필 저장)부터 있다. 그 전 DB(라이브 적용 전)면 칸 없음 오류가 나므로 한 번 빼고 다시 읽고, 그 뒤로는 빼고 읽는다.
+// 에이전트 열 — avatar_path·bio는 20261025130000(프로필 저장)부터 있다. 그 전 DB(라이브 적용 전)면 칸 없음 오류가 나므로 한 번 빼고 다시 읽고, 그 뒤로는 빼고 읽는다.
 const AGENT_COLS = 'id, owner_user_id, slug, display_name, role_text, face, hosting, status, created_at';
-let agentPhotoCol = true;
-const noColumn = (e) => !!e && (e.code === '42703' || e.code === 'PGRST204' || /avatar_url|\bbio\b/.test(String(e.message ?? '')));
-async function readAgents(raw, build) {
-  if (agentPhotoCol) {
-    const r = await build(raw.from('msgr2_agents').select(`${AGENT_COLS}, avatar_url, bio`));
+const noColumn = (e) => !!e && (e.code === '42703' || e.code === 'PGRST204' || /avatar_path|\bbio\b/.test(String(e.message ?? '')));
+async function readAgents(ctx, build) { // ctx.photoCol: 이 클라이언트가 칸 없음을 본 적이 있나(클라이언트마다 — 모듈 전체에 남기지 않는다)
+  const raw = ctx.raw;
+  if (ctx.photoCol !== false) {
+    const r = await build(raw.from('msgr2_agents').select(`${AGENT_COLS}, avatar_path, bio`));
     if (!noColumn(r.error)) return r;
-    agentPhotoCol = false;
+    ctx.photoCol = false;
   }
   return build(raw.from('msgr2_agents').select(AGENT_COLS));
 }
-const PROFILE_KEYS = new Set(['face', 'avatar_url', 'role_text', 'bio']); // 이름(display_name)은 Argo 앱(본체)이 정한다
+const PROFILE_KEYS = new Set(['face', 'avatar_url', 'role_text', 'bio']); // 화면이 보내는 열. 이름(display_name)은 Argo 앱(본체)이 정한다
+// 사진은 DB에 객체 경로(avatars/<uid>/<파일명>)만 둔다(#1163 엄격 검수 B1 — 주소 안 문자열 검사는 외부 호스트·?·#를 통과시켰다).
+// 화면은 공개 주소를 주고받으므로 여기서 바꾼다: 저장 = 자기 프로젝트의 공개 버킷 주소일 때만 경로로, 읽기 = 경로 → 자기 프로젝트 공개 주소.
+const AVATAR_BUCKET = 'msgr-avatars';
+const AVATAR_PATH_RE = /^avatars\/[0-9a-f-]{36}\/[A-Za-z0-9._-]+$/;
+const okAvatarPath = (p) => typeof p === 'string' && p.length <= 300 && AVATAR_PATH_RE.test(p) && !p.includes('..');
+const avatarBase = (raw) => { try { return raw.storage.from(AVATAR_BUCKET).getPublicUrl('').data.publicUrl; } catch { return null; } };
+/** 공개 주소 → 객체 경로. 다른 호스트·쿼리·조각(#)·다른 버킷·모양이 다른 경로면 null */
+export function avatarPathOf(raw, url) {
+  const base = avatarBase(raw);
+  if (!base || typeof url !== 'string') return null;
+  let u; let b;
+  try { u = new URL(url); b = new URL(base); } catch { return null; }
+  if (u.origin !== b.origin || u.search || u.hash || url.includes('#') || url.includes('?')) return null;
+  const prefix = b.pathname.endsWith('/') ? b.pathname : `${b.pathname}/`;
+  if (!u.pathname.startsWith(prefix)) return null;
+  let path; try { path = decodeURIComponent(u.pathname.slice(prefix.length)); } catch { return null; }
+  return okAvatarPath(path) ? path : null;
+}
+/** 객체 경로 → 자기 프로젝트 공개 주소(모양이 다르면 null — 읽을 때도 같은 규칙) */
+export const avatarUrlOf = (raw, path) => (okAvatarPath(path) ? raw.storage.from(AVATAR_BUCKET).getPublicUrl(path).data.publicUrl : null);
 
 /** 에이전트(옛 msgr_crews 모양). 조직 조건(org_id) = 그 팀 공간의 자리(seat), 자리의 allow·allow_users를 붙인다.
     쓰기는 얼굴·사진·직무·소개만(msgr2_agent_set_profile, 주인 앱 기기) — 0.1.65 결함 3·검수 D1: 종전엔 모두 v2_unsupported라 프로필 시트 저장이 전부 실패했다. */
@@ -437,7 +457,7 @@ class CrewBuilder extends Builder {
     let list = [];
     if (!ids || ids.length) { // 자리가 하나도 없으면 자리 있는 에이전트 조회는 하지 않는다(아래 '파견 전'만)
       const seatedStatuses = statuses?.filter((x) => x !== 'available') ?? null; // 자리 있는 에이전트의 상태 조건('available'은 아래 '파견 전'이 따로)
-      const r = await readAgents(raw, (q) => {
+      const r = await readAgents(this.ctx, (q) => {
         if (ids) q = q.in('id', ids);
         if (owner) q = q.eq('owner_user_id', owner);
         return seatedStatuses ? q.in('status', seatedStatuses.length ? seatedStatuses : ['active']) : q.neq('status', 'retired');
@@ -450,7 +470,7 @@ class CrewBuilder extends Builder {
       const { data: sess } = await raw.auth.getSession().catch(() => ({ data: null }));
       const me = sess?.session?.user?.id;
       if (me) {
-        const mine = await readAgents(raw, (q) => q.eq('owner_user_id', me).eq('status', 'active'));
+        const mine = await readAgents(this.ctx, (q) => q.eq('owner_user_id', me).eq('status', 'active'));
         if (!mine.error) list = list.concat((mine.data ?? []).filter((a) => !seats.has(a.id)).map((a) => ({ ...a, status: 'available', _avail: true })));
       }
     }
@@ -464,7 +484,7 @@ class CrewBuilder extends Builder {
     }
     let rows = list.map(({ _avail, ...a }) => { // _avail = 위 '파견 전' 표지(행에 남기지 않는다)
       const seat = seats?.get(a.id);
-      const row = { ...a, org_id: space, allow: seat?.allow ?? 'all', allow_users: seat?.allow_users ?? [], last_seen_at: null, folder: null, avatar_url: a.avatar_url ?? null, bio: a.bio ?? null, _v2: true }; // 접속은 v2:pr:(Presence)로 본다 — 행 시각이 없다
+      const row = { ...a, org_id: space, allow: seat?.allow ?? 'all', allow_users: seat?.allow_users ?? [], last_seen_at: null, folder: null, avatar_url: avatarUrlOf(raw, a.avatar_path), bio: a.bio ?? null, _v2: true }; // 접속은 v2:pr:(Presence)로 본다 — 행 시각이 없다
       for (const c of want) if (c !== '*' && !(c in row)) row[c] = null;
       return row;
     });
@@ -483,9 +503,15 @@ class CrewBuilder extends Builder {
       else return unsupported();
     }
     if (!ids?.length || !keys.length || keys.some((k) => !PROFILE_KEYS.has(k))) return unsupported();
+    const send = { ...patch };
+    if ('avatar_url' in send) {
+      const url = send.avatar_url; delete send.avatar_url;
+      send.avatar_path = url == null ? null : avatarPathOf(this.ctx.raw, url);
+      if (url != null && !send.avatar_path) return { data: null, error: { message: 'msgr2_bad_profile', code: '22023' }, status: 400, count: null }; // 자기 프로젝트 사진 주소가 아니다 — 요청 0
+    }
     const done = [];
     for (const id of ids) {
-      const r = await this.ctx.rpc('msgr2_agent_set_profile', { p_agent: id, p_patch: patch });
+      const r = await this.ctx.rpc('msgr2_agent_set_profile', { p_agent: id, p_patch: send });
       if (r?.error) return { data: null, error: r.error, status: r.status ?? 400, count: null };
       done.push({ id });
     }
