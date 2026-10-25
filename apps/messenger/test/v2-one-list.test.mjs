@@ -113,7 +113,7 @@ test('배선: 폰 v2 아래 탭 4개(대화·에이전트·기억·나), 나 = �
 });
 
 test('배선(분리 검수 반영): 검색은 이름을 붙인 뒤, 옛 조직 에이전트 1:1은 개인 1:1로, 목록 읽기 실패는 다시 시도, 들어간 채널은 한 번 다시 읽기', () => {
-  assert.match(app, /const olShown = oneListPinOrder\(oneListView\(olRows\?\.map\(\(r\) => \(\{ \.\.\.r, _title: olName\(r\) \}\)\), \{ filter: olFilter/, '이름 먼저 — 1:1은 방 이름이 비어 있다');
+  assert.match(app, /const olShown = oneListPinOrder\(oneListView\(olRows\?\.map\(\(r\) => \(\{ \.\.\.r, _title: olName\(r\) \}\)\), \{ filter: oneListChipFilter\(\{ filter: olFilter/, '이름 먼저 — 1:1은 방 이름이 비어 있다(칩 조건은 폰 조직 겹침 보정을 거친다 — 검수 D2)');
   assert.match(app, /const maybeAgentDm = row\.space_kind === 'team' && row\.users === 1 && row\.agents === 1;[^\n]*if \(maybeAgentDm && fn\.redirect\?\.\(row\.room_id, 'list'\)\) return;/);
   assert.match(app, /latestOpen\.current\.redirect = openAgentDmInstead;/);
   assert.match(app, /if \(r\.error\) \{ if \(r\.error\.pro\) setOlPro\(true\); else setOlErr\(true\); return; \}/);

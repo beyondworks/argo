@@ -136,10 +136,11 @@ test('보관 방 결과를 누르면 그 조직으로 옮겨 earlierRoom(읽기 
 test('결과 열기 분기 — 보관 행이 있고 지금 목록에 없는 방만 openArchivedHit, 그 밖은 종전대로 setChId', () => {
   const onOpenSrc = app.match(/<SearchPage [^\n]*?onOpen=\{(\(id, mid\) => \{[^\n]*?\})\} onCrew=/)?.[1];
   assert.ok(onOpenSrc, 'SearchPage onOpen 식');
-  const run = (archived, channels) => {
+  const run = (archived, channels, { isPhone = false, ol = new Map() } = {}) => {
     const log = [];
-    const fn = new Function('searchRes', 'channels', 'openArchivedHit', 'setChId', 'setPage', 'setJump', `return ${onOpenSrc};`)(
-      { archived }, channels, (a, mid) => log.push(['arch', a.channel.id, mid]), (v) => log.push(['ch', v]), () => {}, () => {});
+    const fn = new Function('searchRes', 'channels', 'openArchivedHit', 'setChId', 'setPage', 'setJump', 'isPhone', 'olRoomsRef', 'openOlRow', `return ${onOpenSrc};`)(
+      { archived }, channels, (a, mid) => log.push(['arch', a.channel.id, mid]), (v) => log.push(['ch', v]), () => {}, () => {},
+      isPhone, { current: ol }, (row) => log.push(['ol', row.room_id]));
     fn('arch-mine', 9); return log;
   };
   const a = G.archivedSearchRooms([{ ...ch('arch-mine'), msgr_channel_members: members(['user', ME], ['crew', MY_ORG_CREW]) }], { uid: ME, ownCrewIds: OWN });
@@ -147,4 +148,9 @@ test('결과 열기 분기 — 보관 행이 있고 지금 목록에 없는 방�
   assert.deepEqual(run(a, [{ id: 'arch-mine' }]), [['ch', 'arch-mine']], '그 사이 보관이 풀려 목록에 있으면 종전대로');
   assert.deepEqual(run(new Map(), []), [['ch', 'arch-mine']], '보관 행 없음(옛 결과) — 종전대로');
   assert.deepEqual(run(undefined, []), [['ch', 'arch-mine']]);
+  // 폰 v2 한 목록(검수 D3): 지금 공간 목록에 없는 다른 공간의 방은 한 목록 행처럼 연다. 데스크톱·목록에 있는 방은 종전대로
+  const ol = new Map([['arch-mine', { room_id: 'arch-mine' }]]);
+  assert.deepEqual(run(new Map(), [], { isPhone: true, ol }), [['ol', 'arch-mine']]);
+  assert.deepEqual(run(new Map(), [{ id: 'arch-mine' }], { isPhone: true, ol }), [['ch', 'arch-mine']]);
+  assert.deepEqual(run(new Map(), [], { isPhone: false, ol }), [['ch', 'arch-mine']]);
 });

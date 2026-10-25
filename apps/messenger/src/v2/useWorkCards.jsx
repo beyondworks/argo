@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConfirmModal } from '@argo/ui';
 import { WorkCard } from './WorkCard.jsx';
-import { workCard, stalledGuard } from './work-card.mjs';
+import { workCard, stalledGuard, shownInChat } from './work-card.mjs';
 import { loadWorks, workStatus, cancelWork, decideApproval } from './data.mjs';
 
 const LIVE = ['accepted', 'running', 'awaiting_approval'];
@@ -59,6 +59,7 @@ export function useWorkCards({ enabled, client, machine, chId, uid, event, nameO
     recheckSoon.current = reload(room).finally(() => { for (const k of keys) checked.current.add(k); recheckSoon.current = null; setTick((x) => x + 1); });
   }, [enabled, recheckKeys, reload]);
   const cards = useMemo(() => guarded.map(({ w, g }) => ({ w, card: workCard({ work: g.view, approval: approvalOf(w.id), progress: progress.get(w.id) ?? null, effects: effects.get(w.id) ?? [], uid }) }))
+    .filter((c) => shownInChat(c.card)) // 정상으로 끝난 일은 카드를 남기지 않는다(work-card.mjs shownInChat)
     .sort((a, b) => Date.parse(a.w.created_at) - Date.parse(b.w.created_at)), [guarded.map((x) => x.g.view.lease_until + x.g.view.state).join(), works, approvalOf, progress, effects, uid]); // eslint-disable-line react-hooks/exhaustive-deps
   const ids = useMemo(() => new Set(works.map((w) => w.id)), [works]);
 
