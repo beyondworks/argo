@@ -52,6 +52,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.115': Object.freeze(['updates.note.msgr2Ready', 'updates.note.freeNoMsgrServer', 'updates.note.connStability']),
   // 0.1.116 — orgMemorySplit: 조직 방 대화를 개인 기억에 섞지 않고 조직 칸에, 조직을 나가면 이 PC에서 회수(#1145·#1144)
   '0.1.116': Object.freeze(['updates.note.orgMemorySplit']),
+  // 0.1.117 — syncLighter: 이 PC만 바뀐 동기화 주기에 회사 목록을 다시 받지 않음(#1148) · teamRoomPrivacy: 팀 방 지시·결재 원문을 활동 기록에 남기지 않음(#1150·#1153)
+  '0.1.117': Object.freeze(['updates.note.syncLighter', 'updates.note.teamRoomPrivacy']),
 });
 
 export function stableVersion(value) {
