@@ -79,3 +79,22 @@ test('호스트: 대응표가 정해지면 내 토픽(v2:pr:<나>)에 기기 key
   host.stop();
   assert.deepEqual(published.at(-1), { topic: `v2:pr:${UID}`, key: DEV, state: null });
 });
+
+test('호스트: 일을 받을 수 없는 사건(중단·기기 폐기)이 오면 접속 표시를 내리고, 중단이 풀리면 다시 올린다', async () => {
+  for (const [flip, kind] of [[(sv) => { sv.opts.paused = true; }, 'paused'], [(sv) => { sv.opts.revoked = true; }, 'device_invalid']]) {
+    const { host, published, server } = await bootHost();
+    const up = published.at(-1);
+    assert.ok(up.state?.agents?.length, '시작 때 올림');
+    flip(server);
+    host.link.catchUp();
+    for (let i = 0; i < 200 && published.at(-1)?.state !== null; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.deepEqual(published.at(-1), { topic: `v2:pr:${UID}`, key: DEV, state: null }, `${kind} — 켜짐으로 남지 않는다`);
+    if (kind === 'paused') {
+      server.opts.paused = false;
+      host.link.catchUp();
+      for (let i = 0; i < 200 && published.at(-1)?.state === null; i++) await new Promise((r) => setTimeout(r, 5));
+      assert.deepEqual(published.at(-1), up, '중단이 풀리면(resumed) 다시 올린다');
+    }
+    host.stop();
+  }
+});
