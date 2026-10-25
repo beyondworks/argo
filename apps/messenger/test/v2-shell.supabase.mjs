@@ -187,6 +187,21 @@ const rpcs = {
   msgr2_space_member_remove: ({ p_space, p_user }) => { const m = state.tables.msgr2_space_members.find((x) => x.space_id === p_space && x.user_id === p_user && !x.removed_at); if (!m) return false; m.removed_at = new Date().toISOString(); return true; },
   msgr2_space_display_name_set: ({ p_space, p_name }) => { const m = state.tables.msgr2_space_members.find((x) => x.space_id === p_space && x.user_id === uid); if (!m) return { ok: false, code: 'forbidden' }; m.display_name = String(p_name ?? '').trim() || null; return { ok: true, changed: true }; },
   msgr2_message_edit: ({ p_id, p_body }) => { const m = state.tables.msgr2_messages.find((x) => x.id === p_id); if (!m || m.author_user_id !== uid || m.deleted_at) return { ok: false, code: 'forbidden' }; m.body = p_body; m.edited_at = new Date().toISOString(); return { ok: true }; },
+  // 자동화 일정(20261024100000) — 서버와 같은 인자·같은 거부 이름. 크론은 없다(지금 실행만 글을 넣는다)
+  msgr2_automation_save: ({ p_automation, p_room, p_agent, p_title, p_prompt, p_schedule, p_request_id }) => { const T_ = state.tables; T_.msgr2_automations ??= [];
+    if (!T_.msgr2_room_members.some((m) => m.room_id === p_room && m.member_kind === 'agent' && m.member_id === p_agent && !m.removed_at)) throw Object.assign(new Error('msgr_automation_forbidden'), { code: '42501' });
+    if (p_schedule?.kind === 'interval' && !(p_schedule.minutes >= 5)) throw Object.assign(new Error('msgr_automation_invalid_schedule'), { code: 'P0001' });
+    let a = T_.msgr2_automations.find((x) => x.id === p_automation || (p_request_id && x.create_request_id === p_request_id));
+    const next = new Date(Date.now() + 3600_000).toISOString();
+    if (!a) { a = { id: `c7000000-0000-4000-8000-${String(Date.now()).slice(-12)}`, space_id: T_.msgr2_rooms.find((r) => r.id === p_room)?.space_id, room_id: p_room, created_by: uid, create_request_id: p_request_id, enabled: true, last_run_at: null, last_status: null, last_error: null, created_at: new Date().toISOString(), deleted_at: null }; T_.msgr2_automations.push(a); }
+    Object.assign(a, { agent_id: p_agent, title: p_title, prompt: p_prompt, schedule: p_schedule, next_run_at: next, updated_at: new Date().toISOString() }); return { ...a }; },
+  msgr2_automation_set_enabled: ({ p_automation, p_enabled }) => { const a = state.tables.msgr2_automations.find((x) => x.id === p_automation); a.enabled = p_enabled; return { ...a }; },
+  msgr2_automation_delete: ({ p_automation }) => { const a = state.tables.msgr2_automations.find((x) => x.id === p_automation); a.deleted_at = new Date().toISOString(); a.enabled = false; return true; },
+  msgr2_automation_run_now: ({ p_automation, p_request_id }) => { const T_ = state.tables; const a = T_.msgr2_automations.find((x) => x.id === p_automation); T_.msgr2_automation_runs ??= [];
+    const prev = T_.msgr2_automation_runs.find((r) => r.automation_id === p_automation && p_request_id && r.request_id === p_request_id); if (prev) return prev;
+    const r = { id: `c7100000-0000-4000-8000-${String(Date.now()).slice(-12)}`, automation_id: p_automation, request_id: p_request_id, trigger: 'manual', status: 'queued', scheduled_for: new Date().toISOString(), message_id: null, work_id: null, error: null, created_at: new Date().toISOString(), finished_at: null };
+    T_.msgr2_automation_runs.push(r); Object.assign(a, { last_run_at: r.created_at, last_status: 'queued' }); return r; },
+  msgr2_automation_scheduler_status: () => ({ server_active: true }),
   msgr2_message_delete: ({ p_id }) => { const m = state.tables.msgr2_messages.find((x) => x.id === p_id); if (!m || m.author_user_id !== uid) return { ok: false, code: 'forbidden' }; m.body = ''; m.deleted_at = m.deleted_at ?? new Date().toISOString(); return { ok: true }; },
   // 그대로 쓰는 옛 RPC(설계 1-2절)
   msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: state.namesSplit ? 'cocoball0610' : '민지', handle: 'minji' }],
@@ -259,6 +274,14 @@ if (new URLSearchParams(globalThis.location?.search ?? '').get('names') === 'spl
   state.namesSplit = true;
   for (const m of state.tables.msgr2_space_members) if (m.space_id === T) m.display_name = m.user_id === uid ? '김효율' : 'Coco 팀';
 }
+// 자동화 일정 시험 자료: 에이전트 1:1(DM)의 매일 아침 보고 1개 + 실행 기록 3줄(완료·막힘·만료)
+{ const T_ = state.tables; const AU = 'c7000000-0000-4000-8000-000000000001';
+  T_.msgr2_automations = [{ id: AU, space_id: P, room_id: DM, agent_id: A, created_by: uid, title: '아침 자료 조사 보고', prompt: '어제 나온 업계 소식을 다섯 줄로 정리해 줘', schedule: { kind: 'weekly', time: '09:00', weekdays: [1, 2, 3, 4, 5], timezone: 'Asia/Seoul' },
+    enabled: true, next_run_at: later(600), last_run_at: at(840), last_status: 'completed', last_error: null, created_at: at(9000), updated_at: at(840), deleted_at: null }];
+  T_.msgr2_automation_runs = [
+    { id: 'c7100000-0000-4000-8000-000000000001', automation_id: AU, trigger: 'schedule', status: 'completed', scheduled_for: at(840), message_id: 1, work_id: null, error: null, created_at: at(840), finished_at: at(838) },
+    { id: 'c7100000-0000-4000-8000-000000000002', automation_id: AU, trigger: 'schedule', status: 'failed', scheduled_for: at(2280), message_id: 2, work_id: null, error: 'expired', created_at: at(2280), finished_at: at(2250) },
+    { id: 'c7100000-0000-4000-8000-000000000003', automation_id: AU, trigger: 'manual', status: 'blocked', scheduled_for: at(3000), message_id: null, work_id: null, error: 'pro_required', created_at: at(3000), finished_at: at(3000) }]; }
 if (new URLSearchParams(globalThis.location?.search ?? '').get('admin') === '1') { const me = state.tables.msgr2_space_members.find((m) => m.space_id === T && m.user_id === uid); if (me) me.role = 'admin'; } // ?admin=1 — 나를 이 팀의 관리자로(관리자 전용 설정 화면)
 { const n = Number(new URLSearchParams(globalThis.location?.search ?? '').get('legacybots') || 0); for (let i = 0; i < n; i++) { const slug = `bot-${(0x0804ccfb1680 + i).toString(16).padStart(12, '0')}`; state.tables.msgr2_agents.push({ id: `b0000000-0000-4000-8000-${String(i).padStart(12, '0')}`, owner_user_id: uid, display_name: i % 2 ? slug : '', slug, role_text: null, hosting: 'bot', status: 'active', created_at: at(100 + i) }); } } // ?legacybots=N — 이름 없는 옛 봇 N개(자리 없음, 유건 계정 45개 모양)
 if (new URLSearchParams(globalThis.location?.search ?? '').get('noagents') === '1') { state.tables.msgr2_agents = state.tables.msgr2_agents.filter((a) => a.owner_user_id !== uid); state.tables.msgr2_room_members = state.tables.msgr2_room_members.filter((m) => !(m.member_kind === 'agent' && [A, C].includes(m.member_id))); state.tables.msgr2_agent_seats = state.tables.msgr2_agent_seats.filter((x) => x.agent_id !== A); } // ?noagents=1 — 내 에이전트 0명 계정(빈 안내)

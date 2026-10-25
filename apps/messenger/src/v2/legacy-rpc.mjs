@@ -17,6 +17,13 @@ export function legacyInvite(i) {
     guest_days: i.guest_days ?? null, created_by: i.created_by ?? null, created_at: i.created_at ?? null, target_user_id: i.target_user_id ?? null, _v2: true };
 }
 
+/** v2 자동화 행 → 옛 모양(업무 창이 읽는 열). */
+export function legacyAutomation(x) {
+  if (!x) return x;
+  const { room_id, agent_id, space_id, ...rest } = x;
+  return { ...rest, channel_id: room_id ?? null, crew_id: agent_id ?? null, org_id: space_id ?? null, notification_route_ids: [], _v2: true };
+}
+
 /** 받는 쪽 미리보기(옛 msgr_invite_preview 모양 — InvitePreview가 읽는 열). 이미 멤버면 상태를 already_member로. */
 export function legacyPreview(p) {
   if (!p) return p;
@@ -69,6 +76,14 @@ export const LEGACY_RPCS = {
     const ids = new Set([...(r.data?.messages ?? []).map((m) => m.room_id), ...(r.data?.rooms ?? []).map((x) => x.id)].filter((id) => rooms.has(id)));
     return done([...ids].map((channel_id) => ({ channel_id })));
   },
+  // 자동화 일정(20261024100000 — 업무 창 work-panel.jsx). 옛 인자(automation·channel·crew) → v2(p_*), 돌려받은 행은 옛 열 이름(channel_id·crew_id)으로.
+  // 알림 대상(notification_route_ids)은 v2에 없다 — 업무 창이 v2에서 그 선택을 숨기고, 와도 버린다.
+  msgr_automation_save_with_notifications: async (c, a) => pass(await c.call('msgr2_automation_save', { p_automation: a.automation ?? null, p_room: a.channel, p_agent: a.crew,
+    p_title: a.title, p_prompt: a.prompt, p_schedule: a.schedule, p_request_id: a.request_id ?? null }), legacyAutomation),
+  msgr_automation_set_enabled: async (c, a) => pass(await c.call('msgr2_automation_set_enabled', { p_automation: a.automation, p_enabled: a.enabled }), legacyAutomation),
+  msgr_automation_delete: (c, a) => c.call('msgr2_automation_delete', { p_automation: a.automation }),
+  msgr_automation_run_now: (c, a) => c.call('msgr2_automation_run_now', { p_automation: a.automation, p_request_id: a.request_id ?? null }),
+  msgr_automation_scheduler_status: (c) => c.call('msgr2_automation_scheduler_status', {}),
   // 초대: 미리보기·받기·취소·새 링크로 바꾸기
   msgr_invite_preview: async (c, a) => pass(await c.call('msgr2_invite_preview', { p_code: a.code }), legacyPreview),
   msgr_accept_invite_v2: async (c, a) => {
