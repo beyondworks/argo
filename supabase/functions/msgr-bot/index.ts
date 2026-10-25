@@ -9,6 +9,7 @@
 import { parseRequest, handleLink, parseLinkPath, connectScript, createRejectMemory } from './core.js';
 import { CONNECT_PY } from './connect-bundle.js';
 import { routeOf, handleV2, linkRpcV2, pausedReply } from './v2.js';
+import { pausedHoldMs } from './paused.js';
 import { createWakeHub, wakeTopic } from './wake.js';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
@@ -39,7 +40,10 @@ Deno.serve(async (req) => {
   const peek = parseRequest(req.url, Object.fromEntries(req.headers), null); // 토큰만 본다(본문은 v2일 때만 읽는다)
   const route = routeOf({ method: req.method, path, token: peek.token });
   if (route === 'paused') {
-    const r = pausedReply({ method: req.method, path, userAgent: req.headers.get('user-agent') ?? '' });
+    const userAgent = req.headers.get('user-agent') ?? '';
+    const hold = pausedHoldMs({ path, userAgent, timeout: url.searchParams.get('timeout') }); // 옛 연결 도구가 retry_after를 따르지 않아 — 끊기 전까지 붙잡는다(DB 호출 없음)
+    if (hold > 0) await new Promise((r) => setTimeout(r, hold));
+    const r = pausedReply({ method: req.method, path, userAgent });
     return new Response(r.body, { status: r.status, headers: r.headers });
   }
   if (route === 'connect') {
