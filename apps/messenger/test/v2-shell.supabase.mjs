@@ -226,7 +226,7 @@ export const supabase = {
   // supabase-js(realtime-js RealtimeClient.channel)처럼 같은 토픽의 채널이 있으면 그것을 돌려주고, 가입한 채널에 presence 콜백을 붙이면 던진다(2026-10-23 '모두에게' 화면 깨짐 재현)
   channel: (topic) => {
     const had = state.topics.get(topic)?.values().next().value; if (had) return had;
-    const c = { topic, handlers: [], joined: false, on(kind, filter, cb) { if (c.joined && (kind === 'presence' || kind === 'postgres_changes')) throw new Error(`cannot add \`${kind}\` callbacks for realtime:${topic} after \`subscribe()\`.`); c.handlers.push({ kind, filter, cb }); return c; }, subscribe(cb) { c.joined = true; queueMicrotask(() => cb?.('SUBSCRIBED')); return c; }, presenceState: () => ({}), send: async () => 'ok', unsubscribe: async () => {} };
+    const c = { topic, handlers: [], joined: false, on(kind, filter, cb) { if (c.joined && (kind === 'presence' || kind === 'postgres_changes')) throw new Error(`cannot add \`${kind}\` callbacks for realtime:${topic} after \`subscribe()\`.`); c.handlers.push({ kind, filter, cb }); return c; }, subscribe(cb) { c.joined = true; queueMicrotask(() => cb?.('SUBSCRIBED')); return c; }, presenceState: () => state.presState?.[topic] ?? {}, send: async () => 'ok', unsubscribe: async () => {} };
     if (!state.topics.has(topic)) state.topics.set(topic, new Set()); state.topics.get(topic).add(c); return c;
   },
   removeChannel: async (c) => { state.topics.get(c.topic)?.delete(c); return 'ok'; }, removeAllChannels: async () => { state.topics.clear(); }, getChannels: () => [...state.topics.values()].flatMap((s) => [...s]),
@@ -244,6 +244,8 @@ export const supabase = {
   } },
 };
 // 시험·캡처가 쓰는 대역: 본체의 진행 봉투(v2:wk:), 새 일 표지(v2:u: work)
+// 본체 접속 표시 대역(v2:pr:<주인>, 0.1.65 결함 2 근본 수정): 그 주인 채널의 Presence 상태를 바꾸고 sync를 알린다. agents = 켜진 에이전트 id 목록(빈 배열 = 나감)
+state.presence = (owner, agents) => { const topic = `v2:pr:${owner}`; (state.presState ??= {})[topic] = agents.length ? { 'dev-fixture': [{ v: 1, agents }] } : {}; for (const c of state.topics.get(topic) ?? []) for (const h of c.handlers) if (h.kind === 'presence') h.cb({}); };
 state.progress = (work, stage) => fire(`v2:wk:${work}`, 'envelope', { v: 1, id: 'e', work, seq: 1, type: 'work.progress', at: new Date().toISOString(), data: { stage } });
 state.work = (w) => { const all = state.tables.msgr2_works; const i = all.findIndex((x) => x.id === w.id); if (i >= 0) Object.assign(all[i], w); else all.push(w); fire(`v2:u:${uid}`, 'work', { work: all.find((x) => x.id === w.id) }); };
 state.devices = [

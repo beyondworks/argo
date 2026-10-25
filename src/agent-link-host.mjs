@@ -15,7 +15,7 @@
 //   턴이 끝나면 지운다(동기화 제외, 시작 때 남은 것도 청소). 회수: (재)접속·agent.scope 알림 때 한 번 msgr2_agent_rooms로 묻고 빠진 방의 조직 기억을 지운다(msgr-recall.mjs recallLinkRooms).
 import { createLink } from '../packages/agent-link/link.mjs';
 import { tierPolicy } from '../packages/agent-link/tiers.mjs';
-import { SUPPORTED, LIMITS, OFFER_KINDS } from '../packages/agent-link/contract/v1.mjs';
+import { SUPPORTED, LIMITS, OFFER_KINDS, TOPICS } from '../packages/agent-link/contract/v1.mjs';
 import { msgrMeetingEnabled as msgrMeetingEnabledFlag } from './agent-link-flags.mjs';
 import { workErrorCodeFor as botWorkErrorCode } from './ext-bots-codes.mjs';
 import { mkdir, writeFile, rm, readdir } from 'node:fs/promises';
@@ -151,6 +151,23 @@ export function supabaseTransport(source, { now = () => Date.now() } = {}) {
   const progress = new Map();  // topic → ch(보내기만)
   const released = new Map();  // 닫은 진행 토픽 → 닫은 시각(늦은 진행 방송이 채널을 다시 만들지 않게, 10분 뒤 잊는다)
   const RELEASED_KEEP_MS = 10 * 60_000;
+  // 접속 표시(Realtime Presence, 2026-10-25 메신저 0.1.65 결함 2 근본 수정) — 토픽 v2:pr:<주인>에 이 기기(key)가 맡은 에이전트 id를 track한다.
+  // DB 행을 쓰지 않는다(Presence는 Realtime 메시지). 들어간 직후 1번 + 상태가 바뀔 때만 다시 track. 끊기면 구독과 같은 간격(1→2→5→10분)으로 다시 연다.
+  const pres = new Map();      // topic → { topic, key, state, json, ch, joined, dead, fails, retryAt }
+  function openPresence(p) {
+    const ch = cur.channel(p.topic, { config: { private: true, presence: { key: p.key } } });
+    p.ch = ch; p.joined = false; p.dead = false;
+    ch.subscribe((status) => {
+      if (p.ch !== ch) return;
+      if (status === 'SUBSCRIBED') { p.joined = true; p.fails = 0; p.retryAt = 0; Promise.resolve(ch.track(p.state)).catch(() => {}); }
+      else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        p.joined = false;
+        if (!p.dead) { p.dead = true; p.retryAt = now() + RESUBSCRIBE_BACKOFF_MS[Math.min(p.fails ?? 0, RESUBSCRIBE_BACKOFF_MS.length - 1)]; }
+        if ((p.fails ?? 0) > 0) detachPresence(p);
+      }
+    });
+  }
+  function detachPresence(p) { const ch = p.ch; p.ch = null; p.joined = false; try { if (ch) cur?.removeChannel?.(ch); } catch { /* 무시 */ } }
   function open(sub) {
     const ch = cur.channel(sub.topic, { config: { private: true } });
     ch.on('broadcast', { event: '*' }, (msg) => { const env = unwrapEnvelope(msg?.payload); if (env) sub.onEnvelope(env); });
@@ -171,12 +188,14 @@ export function supabaseTransport(source, { now = () => Date.now() } = {}) {
     for (const sub of subs) { detach(sub); if (!sub.dead) { sub.dead = true; sub.retryAt = 0; sub.onStatus?.('disconnected'); } }
     for (const ch of progress.values()) { try { cur.removeChannel?.(ch); } catch { /* 무시 */ } }
     progress.clear();
+    for (const p of pres.values()) { detachPresence(p); p.dead = true; p.retryAt = 0; }
     cur = null;
   }
   function swap(next) {
     if (!next || next === cur) return;
     const old = cur; cur = next;
     for (const sub of subs) { const och = sub.ch; sub.ch = null; try { if (och) old?.removeChannel?.(och); } catch { /* 닫기 실패 무시 */ } sub.fails = 0; open(sub); }
+    for (const p of pres.values()) { const och = p.ch; p.ch = null; try { if (och) old?.removeChannel?.(och); } catch { /* 무시 */ } p.fails = 0; openPresence(p); } // 새 토큰으로 다시 들어가 track
     for (const ch of progress.values()) { try { old?.removeChannel?.(ch); } catch { /* 무시 */ } }
     progress.clear();
   }
@@ -210,6 +229,11 @@ export function supabaseTransport(source, { now = () => Date.now() } = {}) {
         if (sub.ch) detach(sub); // 끊긴 채 남은 채널을 떼어 realtime-js 자체 재시도를 멈춘다
         if (now() >= (sub.retryAt ?? 0)) due.push(sub);
       }
+      for (const p of pres.values()) { // 접속 표시: 끊긴 채널은 간격이 지났을 때만 다시(요청 확인 없음 — track은 DB를 쓰지 않는다)
+        if (!p.dead || !cur) continue;
+        if (p.ch) detachPresence(p);
+        if (now() >= (p.retryAt ?? 0)) { p.fails = (p.fails ?? 0) + 1; p.retryAt = now() + RESUBSCRIBE_BACKOFF_MS[Math.min(p.fails, RESUBSCRIBE_BACKOFF_MS.length - 1)]; openPresence(p); }
+      }
       if (!due.length) return;
       if (beforeReopen) { try { await beforeReopen(); } catch { /* 확인 실패는 다시 열기를 막지 않는다 — 간격은 그대로 */ } }
       if (!cur) return; // 확인하는 사이 세션이 사라졌다
@@ -239,6 +263,23 @@ export function supabaseTransport(source, { now = () => Date.now() } = {}) {
       progress.delete(topic);
       try { cur?.removeChannel?.(ch); } catch { /* 무시 */ }
     },
+    /** 접속 표시 상태를 둔다. state null = 이 기기가 맡은 에이전트가 없다 → 채널을 닫는다(Presence가 나감을 알린다). 같은 상태면 아무것도 보내지 않는다. */
+    presence(topic, key, state) {
+      const had = pres.get(topic);
+      if (state == null) { if (had) { pres.delete(topic); detachPresence(had); } return; }
+      const json = JSON.stringify(state);
+      if (had && had.key === key) {
+        if (had.json === json) return;
+        had.state = state; had.json = json;
+        if (had.joined && had.ch) Promise.resolve(had.ch.track(state)).catch(() => {});
+        return;
+      }
+      if (had) { pres.delete(topic); detachPresence(had); }
+      const p = { topic, key, state, json, ch: null, joined: false, dead: false, fails: 0, retryAt: 0 };
+      pres.set(topic, p);
+      if (cur) openPresence(p);
+      else client().then(() => { if (pres.get(topic) === p && !p.ch) openPresence(p); }).catch(() => { p.dead = true; });
+    },
     // offer 첨부(#1076): 서명 URL이 아니라 Storage 위치. runner 세션으로 받는다(버킷 정책 = 그 방 일의 리스를 쥔 runner 기기만)
     async download(bucket, path) {
       const { data, error } = await (await client()).storage.from(bucket).download(path);
@@ -251,7 +292,7 @@ export function supabaseTransport(source, { now = () => Date.now() } = {}) {
       if (error) throw Object.assign(new Error('upload failed'), { code: 'upload_failed' });
     },
     // 시험·진단용
-    get openChannels() { return [...subs].filter((x) => x.ch).length + progress.size; },
+    get openChannels() { return [...subs].filter((x) => x.ch).length + progress.size + [...pres.values()].filter((p) => p.ch).length; },
   };
 }
 
@@ -375,6 +416,9 @@ export function createAgentLinkHost(deps) {
   const agents = new Map(); // 서버 에이전트 id → { ws, slug }
   const agentIds = new Set();
   let currentUid = null; // 회의방 요금제 확인(runMeetingOffer)
+  let currentDevice = null; // 접속 표시 key(기기마다 — 같은 주인의 기기 여럿이 서로 덮지 않게)
+  /** 접속 표시(v2:pr:<주인>) — 이 기기가 맡은 에이전트 id(정렬). 비면 내린다. 바뀌었을 때만 보낸다(transport.presence가 같은 상태를 거른다). */
+  const publishPresence = (ids = [...agentIds]) => { if (current?.presence && currentUid && currentDevice) current.presence(TOPICS.presence(currentUid), currentDevice, ids.length ? { v: 1, agents: [...ids].sort() } : null); };
   // pro_required(무료 계정) 쉼 — 다음 플랜 확인(nextPlanAt) 전에는 기기 등록·agent.sync·따라잡기·구독 갱신 요청이 0이다
   let proBlocked = false, nextPlanAt = 0;
   function proBlock() {
@@ -383,6 +427,7 @@ export function createAgentLinkHost(deps) {
     if (timer) { clock.clearTimeout(timer); timer = null; }
     const known = new Map(agents);
     agents.clear(); agentIds.clear();
+    publishPresence([]); // 쉬는 동안은 켜짐으로 보이지 않게
     // 무료가 되어 쉬는 동안에도 조직 기억은 거둔다(분리 검수 I-4) — 쉼에 들어갈 때 한 번. 서버 함수는 Pro를 보지 않고, 갱신된 기존 기기 세션이면 답한다
     runRecall({ known, force: true }).catch((e) => log('recall failed', e.code ?? e.message));
   }
@@ -592,6 +637,8 @@ export function createAgentLinkHost(deps) {
     onEvent(name, detail) {
       if (['update_required', 'device_invalid', 'paused', 'resumed', 'lease_lost', 'report_failed', 'accept_failed', 'pro_required'].includes(name)) log(name, JSON.stringify(detail));
       if (name === 'pro_required') proBlock(); // 무료 계정 — 링크는 이미 멈췄다(link.mjs fatal). 다음 플랜 확인 전까지 다시 열지 않는다
+      if (['update_required', 'device_invalid', 'paused'].includes(name)) publishPresence([]); // 일을 받지 못하는 동안은 켜짐으로 보이지 않게(접속 표시)
+      if (name === 'resumed') publishPresence();
       if (name === 'connected') scheduleRecall(RECALL_CONNECT_MS); // (재)접속마다 한 번 — 꺼져 있던 동안 빠진 방(손님 기한 지남 포함)을 반영한다
       if (name === 'scope_changed') scheduleRecall(RECALL_SCOPE_MS); // 빠짐 알림 — 30초로 묶는다(조직 탈퇴 한 번에 여러 행이 닫혀도 1번)
     },
@@ -619,7 +666,7 @@ export function createAgentLinkHost(deps) {
     if (reg.error || !device) { log('device register failed', reg.error?.code ?? reg.data?.code ?? 'no device_id'); return retryLater(); }
     tries = 0;
     lastResync = clock.now();
-    currentUid = s.uid;
+    currentUid = s.uid; currentDevice = device;
     link = createLink({ transport, host, uid: s.uid, device, agentIds, clock: deps.linkClock });
     // 목록을 못 보내도(중단 스위치·일시 오류 6번) 링크는 연다. 예전에는 여기서 던져 link만 남고 start()가 안 불려, retryLater의 boot가 `link`에서 빠져
     // 해제 뒤에도 구독 0이었다(#1091 검수). 목록은 host.resync가 1분마다 다시 보낸다(대응표가 비어 있는 동안 offer는 받지 않는다)
@@ -649,13 +696,14 @@ export function createAgentLinkHost(deps) {
       if (ag) { agents.set(m.id, { ws: m.ws, slug: m.slug }); agentIds.add(m.id); }
       else if (bt) { agents.set(m.id, { ws: m.ws, slug: m.slug, kind: 'bot', botId: bt.id, name: bt.name }); agentIds.add(m.id); }
     }
+    publishPresence();
     if (catchUpAfterSync) { catchUpAfterSync = false; link.catchUp(); }
     if (recallPending && agents.size) scheduleRecall(0); // 접속 때 대응표가 비어 미뤄 둔 회수
   }
 
   return {
     start() { stopped = false; boot().catch((e) => { log('boot failed', e.message); retryLater(); }); return this; },
-    stop() { stopped = true; if (timer) clock.clearTimeout(timer); timer = null; if (recallTimer) clock.clearTimeout(recallTimer); recallTimer = null; link?.stop(); link = null; },
+    stop() { stopped = true; if (timer) clock.clearTimeout(timer); timer = null; if (recallTimer) clock.clearTimeout(recallTimer); recallTimer = null; publishPresence([]); link?.stop(); link = null; },
     async resync() {
       const gate = await planGate();
       if (gate === 'blocked') return; // 무료 계정 쉼 — 요청 0(플랜 확인만 10분·실패 1분마다)

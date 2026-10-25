@@ -157,7 +157,8 @@ import { markAppReady } from './splash.js';
 import { dropBeforeIdAtY, reorderVisibleInFull } from './drag-reorder.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 import { uploadThenSave } from './avatar-upload.mjs';
-import { twinRelink, twinLeftOrg, twinPaused, twinOrgLabel, crewAddable, crewOnline } from './personal-bots.mjs';
+import { twinRelink, twinLeftOrg, twinPaused, twinOrgLabel, crewAddable, crewOnline, crewPresence } from './personal-bots.mjs';
+import { presenceAgents, presenceOwners } from './v2/presence.mjs';
 import { scrollLeftToCenter } from './nav-scroll.mjs';
 import { toastPlace, toastMaxWidth } from './toast-place.mjs';
 import { FLASH_MS, flashKey, splitFavs, cleanGroupName, groupNameTaken, sortGroups, channelMenu, resolveMenu, menuChannels, menuTalks, groupOfChannel, linkChange, groupDiff, nextGroupPos, searchMenu, toastMs, createGroupFlow } from './phone-lists.mjs';
@@ -255,6 +256,7 @@ function useProfanityFilterOn() {
   useEffect(() => { const h = (e) => setOn(e.detail); window.addEventListener(PROFANITY_FILTER_EVENT, h); return () => window.removeEventListener(PROFANITY_FILTER_EVENT, h); }, []);
   return on;
 }
+const PresenceCtx = createContext(null); // v2 에이전트 켜짐(주인 → 켜진 에이전트 id 집합, v2/presence.mjs) — 구성원 시트 등 Shell 밖 화면이 읽는다
 const AvatarCtx = createContext({ users: {}, crews: {}, looks: null, faceState: () => 'idle', faceFor: (id) => faceOf(id) }); // 프로필 이미지 조회(사람 = msgr_avatars RPC, 에이전트 = msgr_crews.avatar_url, 내 에이전트는 같은 에이전트의 대표 사진) — Av가 userId/crewId로 찾는다. faceState = 사진 없는 크루의 얼굴 표정, faceFor = 그릴 얼굴(crew-face.mjs agentFace — 같은 에이전트는 공간이 달라도 같은 얼굴, 유건 2026-10-05), looks = 내 크루 얼굴 지도(agentLooks)
 /** 얼굴 그림 하나(유건 확정 시안 2026-10-01) — 그림은 crew-face.mjs faceInner(상수로만 만든 SVG 문자열, 오피스와 같은 함수).
  *  motionKey가 있으면 앱 전체 몸짓 스케줄러(face-gestures.mjs — 타이머 하나, 화면에 보이는 얼굴만)에 등록해 쉴 때 2~5초마다 몸짓을 한다. px = 그릴 크기(작은 배치·선 굵기 결정). */
@@ -1818,6 +1820,22 @@ function Shell({ session }) {
     return () => offs.forEach((f) => f());
   }, [v2rt]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { v2rt?.machine.setActiveRoom(chId ?? null); }, [v2rt, chId]); // 보는 방은 배지에서 뺀다
+  // 에이전트 켜짐(2026-10-25 0.1.65 결함 2 근본 수정): 본체가 v2:pr:<주인>에 track한 상태. 앱이 보일 때(ready)만 듣고 주인 수는 상한(PRESENCE_OWNERS_MAX).
+  // 채널은 주인마다 하나(일 화면과 나눠 씀), DB 요청 0. 신호가 없는 주인(옛 본체)은 '모름' — 꺼짐으로 그리지 않는다(personal-bots.mjs crewPresence).
+  const [agentOnline, setAgentOnline] = useState(() => new Map());
+  useEffect(() => {
+    if (!v2rt) return undefined;
+    return v2rt.machine.on('presence', ({ owner, state }) => setAgentOnline((m) => {
+      const next = presenceAgents(state); const prev = m.get(owner);
+      return prev && prev.size === next.size && [...next].every((x) => prev.has(x)) ? m : new Map(m).set(owner, next); // 같으면 그대로(다시 그리지 않게)
+    }));
+  }, [v2rt]);
+  const presenceKey = V2 ? presenceOwners([...(ownCrews?.rows ?? []), ...(myAgents ?? []), ...crews], uid).join(',') : '';
+  useEffect(() => {
+    if (!v2rt || !presenceKey) return undefined;
+    const offs = presenceKey.split(',').map((o) => v2rt.machine.watchPresence(o));
+    return () => offs.forEach((f) => f());
+  }, [v2rt, presenceKey]);
   const [myInvites, setMyInvites] = useState([]); const [myInvitesTick, bumpMyInvites] = useReducer((x) => x + 1, 0); // 받은 초대(v2/my-invites.mjs) — 시작·복귀·초대·공간 사건 때만 다시 읽는다(주기 조회 없음)
   useEffect(() => { let live = true; loadMyInvitesIf({ enabled: V2, uid, ready: () => currentV2()?.ready(), rpc: (fn) => rawSupabase.rpc(fn) }).then((l) => { if (live && l) setMyInvites(l); }, () => {}); return () => { live = false; }; }, [uid, syncEpoch, myInvitesTick]); // eslint-disable-line react-hooks/exhaustive-deps -- 플래그 끔(옛 서버)·로그인 전은 호출 0(loadMyInvitesIf)
   // 한 목록(v2, 메신저 단순화 2단계) — msgr2_inbox 한 번 + 방송으로 행 고치기. 다시 읽는 때: 시작·복귀(syncEpoch)·방 사건·모르는 방의 첫 글(방마다 한 번). 주기 조회 없음
@@ -2988,7 +3006,7 @@ function Shell({ session }) {
   // '내 에이전트' 직접 배치 드래그는 내 소유 크루만(railCompany는 대상 밖, 유건 확정 2026-09-29 #7) — mine 여부로 드래그 속성 자체를 끈다.
   const railRow = (c) => { const mine = c.owner_user_id === uid; const items = crewCtx(c); return (
     <div key={c.id} data-drag-id={c.id} className={`msgr-railrow nomore${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}${twinPaused(c) ? ' paused' : ''}`} onDragStart={mine ? dragStart(c) : undefined} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone && mine && railSort === 'custom'} {...(isPhone ? rowLongPress(c, items, mine ? { onDrop: reorderRailCustom } : null) : {})}>
-      <button type="button" className="item" onClick={() => { dmWithCrew(c.id); setRail(false); }} title={`${c.display_name}${twinOrgLabel(c) ? ` · ${t('rail.twin.org', { org: twinOrgLabel(c) })}` : ` · ${t(`rail.src.${sourceOf(c)}`)}`}${c.role_text ? ` · ${c.role_text}` : ''}${twinRelink(c) ? ` · ${t('rail.relink.title')}` : ''}${twinLeftOrg(c) ? ` · ${t('rail.leftorg.title')}` : ''}`}><Av name={c.display_name} crew size="xs" company={crewTier(c, org) === 'company'} crewId={c.id} /><span className="name">{c.display_name}{!twinOrgLabel(c) && crewHints.get(c.id) && <small className="msgr-namehint">{crewHints.get(c.id)}</small>}</span>{twinOrgLabel(c) && <span className="msgr-orglabel">{twinOrgLabel(c)}</span>}{twinRelink(c) && <span className="msgr-relink">{t('rail.relink')}</span>}{twinLeftOrg(c) && <span className="msgr-relink">{t('rail.leftorg')}</span>}<span className={`msgr-dot${crewOnline(c, AWAY_MS) ? ' mark' : ''}`} /></button>
+      <button type="button" className="item" onClick={() => { dmWithCrew(c.id); setRail(false); }} title={`${c.display_name}${twinOrgLabel(c) ? ` · ${t('rail.twin.org', { org: twinOrgLabel(c) })}` : ` · ${t(`rail.src.${sourceOf(c)}`)}`}${c.role_text ? ` · ${c.role_text}` : ''}${twinRelink(c) ? ` · ${t('rail.relink.title')}` : ''}${twinLeftOrg(c) ? ` · ${t('rail.leftorg.title')}` : ''}`}><Av name={c.display_name} crew size="xs" company={crewTier(c, org) === 'company'} crewId={c.id} /><span className="name">{c.display_name}{!twinOrgLabel(c) && crewHints.get(c.id) && <small className="msgr-namehint">{crewHints.get(c.id)}</small>}</span>{twinOrgLabel(c) && <span className="msgr-orglabel">{twinOrgLabel(c)}</span>}{twinRelink(c) && <span className="msgr-relink">{t('rail.relink')}</span>}{twinLeftOrg(c) && <span className="msgr-relink">{t('rail.leftorg')}</span>}{crewPresence(c, AWAY_MS, Date.now(), agentOnline) !== 'unknown' && <span className={`msgr-dot${crewOnline(c, AWAY_MS, Date.now(), agentOnline) ? ' mark' : ''}`} />}{/* v2 신호 없음(모름)은 점도 그리지 않는다 — 회색 점이 꺼짐으로 읽혔다 */}</button>
     </div>
   ); };
   // 평평한 목록(유건 결정 2026-09-09). 외부 에이전트(헤르메스·오픈클로 봇)가 있을 때만 '외부' 소제목 하나로 아래에 구분한다.
@@ -3137,11 +3155,11 @@ function Shell({ session }) {
   const agentItems = (g) => [
     { icon: 'star', label: t(agentFavOf(g) ? 'phone.agents.fav.remove' : 'phone.agents.fav.add'), run: () => { toggleAgentFav(g).catch(() => {}); } },
   ];
-  const agentRow = (g) => { const on = g.rows.some((r) => crewOnline(r, AWAY_MS)); const st = agentRowState(groupState(g), on); /* 꺼진 에이전트는 '쉬는 중' 대신 '꺼져 있음'(UXM-14) */ const lpId = `agent:${g.key}`; const fav = agentFavOf(g); const def = agentOpenRow(g); return (
+  const agentRow = (g) => { const pres = g.rows.map((r) => crewPresence(r, AWAY_MS, Date.now(), agentOnline)); const on = pres.includes('on'); const gs = groupState(g); const st = !on && gs === 'idle' && pres.includes('unknown') ? 'unknown' : agentRowState(gs, on); /* 꺼진 에이전트는 '쉬는 중' 대신 '꺼져 있음'(UXM-14), v2 신호 없음은 상태 표시 없음 */ const lpId = `agent:${g.key}`; const fav = agentFavOf(g); const def = agentOpenRow(g); return (
     <div key={g.key} className={`msgr-railrow ph-arowwrap${ctx?.trigger === lpId ? ' open' : ''}`} onContextMenu={(e) => { if (Date.now() - (lpStates.current[lpId]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, agentItems(g), lpId); }} {...rowLongPress({ id: lpId }, agentItems(g))}>
       <button type="button" className="item ph-arow" onClick={() => openAgentGroup(g)}>
         <Av name={g.display_name} crew size="kk" crewId={def.id} src={agentLook(def.id, looks, null, def.avatar_url ?? g.avatar_url ?? null).photo ?? null} />
-        <span className="ph-kbody"><span className="ph-kl1"><span className="name">{g.display_name}</span>{fav && <span className="ph-afav" role="img" aria-label={t('phone.agents.fav')}><I name="star" size={12} /></span>}</span><span className="ph-kl2"><span className={`ph-astate ${st}`}><span className={`msgr-dot${on && st !== 'relink' ? ' mark' : ''}`} />{t(`phone.agent.${st}`)}</span>{g.role_text && <span className="snip">{g.role_text}</span>}</span></span>
+        <span className="ph-kbody"><span className="ph-kl1"><span className="name">{g.display_name}</span>{fav && <span className="ph-afav" role="img" aria-label={t('phone.agents.fav')}><I name="star" size={12} /></span>}</span><span className="ph-kl2">{st !== 'unknown' && <span className={`ph-astate ${st}`}><span className={`msgr-dot${on && st !== 'relink' ? ' mark' : ''}`} />{t(`phone.agent.${st}`)}</span>}{g.role_text && <span className="snip">{g.role_text}</span>}</span></span>
       </button>
     </div>); };
   // 데스크톱 v2 레일 '에이전트' 구역 = 내 에이전트 명단(유건 2026-10-22 20:1x "'#일반'에 있을 때랑 '#연구실'에 있을 때 왜 에이전트 목록이 변하는거야?").
@@ -3162,7 +3180,7 @@ function Shell({ session }) {
   const olAgentRow = (c) => { const items = olAgentItems(c); const g = agentGroups.find((x) => x.rows.some((r) => r.id === c.id)); return (
     <div key={c.id} data-drag-id={c.id} className={`msgr-railrow nomore${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}${twinPaused(c) ? ' paused' : ''}`} onContextMenu={(e) => openCtx(e, items, c.id)}
       draggable={railSort === 'custom'} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const id = drag; setDrag(null); if (id && id !== c.id && olMine.some((x) => x.id === id)) olReorderAgents(id, c.id); }}>
-      <button type="button" className="item" onClick={() => (g ? openAgentGroup(g) : openPersonalCrewDm(c.id))} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}${twinRelink(c) ? ` · ${t('rail.relink.title')}` : ''}`}><Av name={c.display_name} crew size="xs" crewId={c.id} /><span className="name">{c.display_name}</span>{twinRelink(c) && <span className="msgr-relink">{t('rail.relink')}</span>}<span className={`msgr-dot${crewOnline(c, AWAY_MS) ? ' mark' : ''}`} /></button>
+      <button type="button" className="item" onClick={() => (g ? openAgentGroup(g) : openPersonalCrewDm(c.id))} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}${twinRelink(c) ? ` · ${t('rail.relink.title')}` : ''}`}><Av name={c.display_name} crew size="xs" crewId={c.id} /><span className="name">{c.display_name}</span>{twinRelink(c) && <span className="msgr-relink">{t('rail.relink')}</span>}{crewPresence(c, AWAY_MS, Date.now(), agentOnline) !== 'unknown' && <span className={`msgr-dot${crewOnline(c, AWAY_MS, Date.now(), agentOnline) ? ' mark' : ''}`} />}{/* v2 신호 없음(모름)은 점도 그리지 않는다 — 회색 점이 꺼짐으로 읽혔다 */}</button>
     </div>); };
   const olAgentsSection = V2 && !isPhone && (<RailSection id="mine" label={`${t('rail.agents')} · ${olMine.length}`} right={<span className="right">{olMine.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}</span>}>
     <div className="msgr-list mine">
@@ -3458,7 +3476,7 @@ function Shell({ session }) {
     </div>
   );
   return (
-    <AvatarCtx.Provider value={avatarCtx}><SafetyCtx.Provider value={safetyCtx}><RunnerCtx.Provider value={openRunner}>
+    <AvatarCtx.Provider value={avatarCtx}><PresenceCtx.Provider value={agentOnline}><SafetyCtx.Provider value={safetyCtx}><RunnerCtx.Provider value={openRunner}>
     <div className={`shell msgr-shell${online ? '' : ' is-offline'}${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && isPhoneRoot(page) ? ' phone-home' : ''}${isPhone && page === 'chat' ? ' phone-chat' : ''}${isPhone && ROOT_PAGES.has(page) ? ' phone-root' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
       {!online && <div className="msgr-offline-bar" role="status">{t('net.offline')}</div>}
       {online && v2StateBar(v2state, v2stuck) && <div className="msgr-offline-bar" role="status">{t(v2StateBar(v2state, v2stuck))}{v2StateBar(v2state, v2stuck) === 'v2.state.unreachable' && <> <button type="button" className="btn sm ghost" onClick={() => { v2rt?.retry(); orgsLoader.retry(); setTick((x) => x + 1); }}>{t('v2.state.retry')}</button></>}</div>}{/* v2 ④ 중단·업데이트 필요·연결할 수 없음(다시 시도) — 오프라인 줄과 같은 자리·모양 */}
@@ -3672,7 +3690,7 @@ function Shell({ session }) {
         ? <PhoneTabs v2 tabs={V2_PHONE_TABS} active={['settings', 'orgsettings'].includes(page) || String(page).startsWith('set-') ? 'me' : rootTab} badges={{ ...tabBadgeN, chats: olUnreadN, me: tabBadgeN.friends ?? 0 }} onPick={(k) => (k === 'me' ? openSettings() : pickRoot(k))} />
         : <PhoneTabs active={rootTab} badges={tabBadgeN} onPick={pickRoot} />)}
     </div>
-    </RunnerCtx.Provider></SafetyCtx.Provider></AvatarCtx.Provider>
+    </RunnerCtx.Provider></SafetyCtx.Provider></PresenceCtx.Provider></AvatarCtx.Provider>
   );
 }
 
@@ -3968,6 +3986,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
 
 /* ─── 채널 시트: 이름·주제(관리자·생성자) · 크루 기억 스위치 · 멤버(비공개·DM: 사람·크루 추가/내보내기, 크루=소유자 동반) · 보관 ─── */
 function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dmName = null, org, uid, isAdmin, policy, members, crews, chMembers, people = [], chCrews = [], ent, myAvailable = [], onDispatch, onInvite, onInviteHere, askAdmin = null, onCrew, onDm, onMention, onWiden, isPersonal = false, needConsent = null, refreshKey = 0, initialAdd = null, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
+  const presenceOnline = useContext(PresenceCtx); // v2 에이전트 켜짐(0.1.65 결함 2 근본 수정)
   const { t } = useT();
   const chAdmins = channel.admin_user_ids ?? [];
   const { canEdit, canAssignAdmins, needsJoin } = channelManage({ channel, uid, isAdmin, joined }); // J-1: 채널 관리자도 설정·멤버 관리 — 단 지금 참여 중일 때만, 관리자 지정은 조직 관리자·생성자만(최종은 RLS msgr_can_manage_channel·서버 트리거, channel-host.mjs)
@@ -4206,11 +4225,11 @@ function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dm
                 )}
               </div>
             ); })}
-            {chCrews.map((c) => { const on = crewOnline(c, AWAY_MS); const company = crewTier(c, org) === 'company'; const key = `c:${c.id}`; return (
+            {chCrews.map((c) => { const pres = crewPresence(c, AWAY_MS, Date.now(), presenceOnline); const on = pres === 'on'; const company = crewTier(c, org) === 'company'; const key = `c:${c.id}`; return (
               <div key={key} className="row">
                 <Av name={c.display_name} crew size="sm" company={company} crewId={c.id} /><span className="name">{c.display_name}</span>
-                <span className="sub">{company ? t('crew.tier.company.sub', { org: org?.name ?? '', role: c.role_text ?? '' }) : t('crew.tier.personal.sub', { name: nameOfUser(c.owner_user_id), role: c.role_text ?? '' })}</span>{!on && <span className="msgr-offline">{t('crew.offline')}</span>}
-                <span className={`msgr-dot${on ? ' mark' : ''}`} title={on ? t('crew.online') : t('crew.away')} />
+                <span className="sub">{company ? t('crew.tier.company.sub', { org: org?.name ?? '', role: c.role_text ?? '' }) : t('crew.tier.personal.sub', { name: nameOfUser(c.owner_user_id), role: c.role_text ?? '' })}</span>{pres === 'off' && <span className="msgr-offline">{t('crew.offline')}</span>}
+                <span className={`msgr-dot${on ? ' mark' : ''}`} title={pres === 'on' ? t('crew.online') : pres === 'off' ? t('crew.away') : undefined} />
                 <span className="msgr-rowmenu-wrap" onClick={(e) => e.stopPropagation()}>
                   {crewMenu(c).length > 0 && <button type="button" className="btn sm ghost" onClick={(e) => openRowMenu(e, key, crewMenu(c))} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={rowMenu?.key === key}><I name="dots" size={13} /></button>}
                 </span>

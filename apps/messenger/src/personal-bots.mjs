@@ -15,7 +15,11 @@ export const twinPaused = (c) => twinRelink(c) || twinLeftOrg(c);
 export const crewAddable = (c) => !twinPaused(c);
 /** 접속 점에 쓸 시각 — 대화할 수 없는 쌍둥이는 조직 봇 행의 접속 시각을 빌려도 점을 켜지 않는다 */
 export const crewSeenAt = (c) => (twinPaused(c) ? null : (c?.last_seen_at ?? null));
-/** 켜짐 판정(점·'꺼져 있음'·잠든 얼굴) — 메신저 v2 에이전트(_v2)는 행에 접속 시각이 없다(source.mjs: 접속은 Presence v2:pr:, 본체 track 미구현).
+/** 켜짐 판정 'on' | 'off' | 'unknown'(점·'꺼져 있음'·잠든 얼굴) — 메신저 v2 에이전트(_v2)는 행에 접속 시각이 없다(source.mjs: 접속은 Presence v2:pr:).
     신호가 없으니 '꺼짐'으로 단정하지 않는다(crewAway·crewAwayNotice와 같은 규칙, 0.1.65 결함 2 — 답하는 에이전트가 전부 '꺼져 있음'·잠든 얼굴이던 것).
     실제로 꺼져 있으면 일 카드가 '받은 에이전트가 없어 끝났습니다'로 알린다. */
-export const crewOnline = (c, awayMs, now = Date.now()) => (twinPaused(c) ? false : c?._v2 ? true : seenWithin(c, awayMs, now, crewSeenAt(c)));
+export const crewPresence = (c, awayMs, now = Date.now(), online = null) => (twinPaused(c) ? 'off'
+  : c?._v2 ? (online?.get(c.owner_user_id)?.has(c.id) ? 'on' : 'unknown') // v2: 본체가 v2:pr:<주인>에 track한 것만 켜짐(v2/presence.mjs). 신호가 없으면(옛 본체·꺼짐·채널 전) 모름
+  : (seenWithin(c, awayMs, now, crewSeenAt(c)) ? 'on' : 'off'));
+/** 켜짐 점(mark)을 켤까 — 켜짐 신호가 있을 때만. 꺼짐 표시('꺼져 있음')는 crewPresence === 'off'일 때만 그린다(모름은 둘 다 그리지 않는다). */
+export const crewOnline = (c, awayMs, now = Date.now(), online = null) => crewPresence(c, awayMs, now, online) === 'on';
