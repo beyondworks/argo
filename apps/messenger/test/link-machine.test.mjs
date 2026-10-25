@@ -629,6 +629,31 @@ test('같은 주인의 일 여러 개(팀 방 \'모두에게\' 멘션): 접속 �
   assert.ok(fake.liveTopics().includes(`v2:pr:${OTHER}`), 'w-6이 아직 본다');
 });
 
+test('보이는 주인들의 접속 표시(0.1.65 결함 2 근본 수정): watchPresence는 ready일 때만 pr:<주인>을 열고 일 화면과 채널을 나눠 쓴다, 뒤로 가면 닫고 돌아오면 다시, 요청 0', async () => {
+  const { m, fake } = setup();
+  const pres = []; m.on('presence', (p) => pres.push(p.owner));
+  const early = m.watchPresence(OTHER); // 시작 전 — ready가 되면 연다
+  await m.start(); await flush();
+  const n = fake.log.length;
+  assert.ok(fake.liveTopics().includes(`v2:pr:${OTHER}`));
+  const offMe = m.watchPresence(UID); await flush();
+  assert.ok(fake.liveTopics().includes(`v2:pr:${UID}`));
+  const offWork = m.watchWork('w-1', { owner: OTHER }); await flush();
+  assert.equal([...fake.channels].filter((c) => c.topic === `v2:pr:${OTHER}`).length, 1, '일 화면과 같은 채널 하나');
+  fake.presenceSync(`v2:pr:${OTHER}`); await flush();
+  assert.deepEqual(pres, [OTHER]);
+  assert.equal(fake.log.length - n, 0, '접속 표시는 REST·RPC 요청 0(채널 열기·받기)');
+  await m.setForeground(false); assert.deepEqual(fake.liveTopics(), [], '백그라운드면 닫는다');
+  await m.setForeground(true); await flush();
+  assert.ok(fake.liveTopics().includes(`v2:pr:${UID}`) && fake.liveTopics().includes(`v2:pr:${OTHER}`), '돌아오면 다시');
+  early(); await flush();
+  assert.ok(fake.liveTopics().includes(`v2:pr:${OTHER}`), '일 화면이 아직 본다');
+  offWork(); await flush();
+  assert.ok(!fake.liveTopics().includes(`v2:pr:${OTHER}`), '아무도 안 보면 닫는다');
+  offMe(); offMe(); await flush();
+  assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`]);
+});
+
 // ── 분리 검수 지적 반영(1~5) ─────────────────────────────────────────────────
 test('검수 1: 따라잡기가 계속 실패해도 간격이 커지고 상한 횟수에서 멈춘다(붙자마자 0으로 돌아가지 않는다)', async () => {
   const { m, fake, clock } = setup();
