@@ -32,7 +32,7 @@ import { InvitesCard as V2InvitesCard } from './v2/InvitesCard.jsx';
 import { v2SearchFound } from './v2/search.mjs';
 import { systemLine as v2SystemLine } from './v2/system-text.mjs';
 import { loadSpaces as v2LoadSpaces, decideApproval as v2DecideApproval } from './v2/data.mjs';
-import { loadOneList, oneListView, oneListOrgs, oneListSpace, oneListBump, oneListSeen, oneListUnread, oneListTitle, oneListPair, oneListPinOrder, oneListSort, oneListAgentFolds, ONE_LIST_FILTERS, ONE_LIST_LIMIT } from './v2/one-list.mjs'; // 한 목록(메신저 단순화 2단계)
+import { loadOneList, oneListView, oneListOrgs, oneListSpace, oneListBump, oneListSeen, oneListUnread, oneListTitle, oneListPair, oneListPinOrder, oneListSort, oneListAgentFolds, oneListChipFilter, ONE_LIST_FILTERS, ONE_LIST_LIMIT } from './v2/one-list.mjs'; // 한 목록(메신저 단순화 2단계)
 import { loadMyApprovals as v2LoadMyApprovals, myApprovalItems as v2ApprovalItems, approvalsNeedReload as v2ApprovalsNeedReload } from './v2/my-approvals.mjs';
 import { spaceList as v2SpaceList, liveSpaceIds as v2LiveSpaceIds } from './v2/spaces.mjs';
 // 메신저 v2(U6c-1b, 옵트인): 플래그가 켜지면 같은 셸이 v2 표를 읽도록 조회 어댑터(v2/source.mjs)를 끼운다. 꺼지면 원래 클라이언트 그대로(아래 코드는 바뀌지 않는다).
@@ -3193,7 +3193,7 @@ function Shell({ session }) {
   const olOrgGated = V2 && (aiConsent === undefined ? !aiConsentFailOpen : !aiConsented);
   const olRows = olOrgGated && ol ? ol.filter((r) => r.space_kind !== 'team') : ol; const olGatedN = ol && olRows ? ol.length - olRows.length : 0;
   const olOrgList = oneListOrgs(olRows);
-  const olShown = oneListPinOrder(oneListView(olRows?.map((r) => ({ ...r, _title: olName(r) })), { filter: olFilter, org: olOrg, q: isPhone ? tabQText : '' }), pinPos); // 이름을 먼저 붙인다 — 1:1은 방 이름이 비어 검색어가 사람·에이전트 이름을 못 찾았다(분리 검수 2)
+  const olShown = oneListPinOrder(oneListView(olRows?.map((r) => ({ ...r, _title: olName(r) })), { filter: oneListChipFilter({ filter: olFilter, org: olOrg, phone: isPhone }), org: olOrg, q: isPhone ? tabQText : '' }), pinPos); // 이름을 먼저 붙인다 — 1:1은 방 이름이 비어 검색어가 사람·에이전트 이름을 못 찾았다(분리 검수 2)
   const olUnreadN = oneListUnread(olRows);
   const olOrgName = olOrg ? (olOrgList.find((o) => o.id === olOrg)?.name ?? '') : null;
   const olOrgBtn = (

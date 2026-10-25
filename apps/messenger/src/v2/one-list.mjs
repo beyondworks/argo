@@ -37,6 +37,9 @@ export function oneListView(rows, { filter = 'all', org = null, q = '' } = {}) {
 }
 
 /** 안 읽음 합계(음소거 제외) — 폰 '대화' 탭 숫자 */
+/** 폰 칩 줄의 실제 거르기(검수 D2, 2026-10-25) — 폰은 칩(전체·안읽음·에이전트)과 조직 고르기가 한 줄이고 강조는 하나만 보인다(조직을 고르면 칩 강조가 꺼진다).
+    그래서 조직이 골라져 있으면 칩 조건은 '전체'로 본다 — 종전엔 '에이전트' 칩 조건이 숨은 채 남아 팀 방이 다 빠졌다. 데스크톱은 칩 강조가 남아 둘 다 건다. */
+export const oneListChipFilter = ({ filter = 'all', org = null, phone = false } = {}) => (phone && org ? 'all' : filter);
 export const oneListUnread = (rows) => (rows ?? []).reduce((n, r) => n + (r.muted ? 0 : (r.unread || 0)), 0);
 
 /** 방송으로 온 새 글 한 개를 목록에 반영. 반환 { rows, known } — known=false면 모르는 방(부르는 쪽이 다시 읽는다).
