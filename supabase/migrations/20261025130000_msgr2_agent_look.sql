@@ -1,0 +1,68 @@
+-- 메신저 v2 에이전트 얼굴·사진 저장(0.1.65 결함 3, 2026-10-25 유건 아이폰 — 프로필 시트에서 모양·색을 고르고 "얼굴 저장"을 눌러도 그대로).
+-- 원인 ① v2에는 에이전트 얼굴·사진을 바꾸는 입구가 없었다. 화면은 옛 msgr_crews를 update했고, v2 조회 어댑터는 그 쓰기를 v2_unsupported로 막았다.
+--      사진 칸(avatar_url)도 msgr2_agents에 없었다.
+-- 원인 ② 본체 동기화(agent.sync → msgr2_agent_sync)는 얼굴을 늘 null로 보낸다(face_hash: null). 서버는 값이 다르면 face를 덮어써,
+--      백필로 옮겨 온 저장 얼굴이 본체가 동기화할 때마다 null이 됐다(옛 msgr_crews 값은 그대로 — 데이터 삭제 아님).
+-- 바꾸는 것:
+--   · msgr2_agents.avatar_url 칸(옛 msgr_crews.avatar_url과 같은 600자 제한).
+--   · msgr2_agent_set_look(p_agent, p_patch) — 앱 기기의 주인만. p_patch 키는 face·avatar_url만, 있는 키만 바꾼다(null = 지우기).
+--     사진 주소는 공개 버킷 msgr-avatars의 자기 폴더(avatars/<uid>/)만 받는다(업로드 정책과 같은 경계 — 남의 주소·추적 주소를 걸지 못하게).
+--     값이 같으면 쓰지 않는다(IS DISTINCT FROM). 돌려주는 값 = 실제로 바꿨는가.
+--   · msgr2_agent_sync — 들어온 face가 null이면 기존 face를 지킨다(본체는 얼굴을 정하지 않는다). 나머지 열은 종전 그대로.
+-- 부하: 사람이 저장을 누를 때만 1회. 주기 호출 없음. 동기화의 쓰기 조건은 좁아지기만 한다(face null → 기존 값과 같다고 본다).
+-- 되돌림: scripts/rollback/20261025130000_msgr2_agent_look.down.sql
+
+alter table public.msgr2_agents add column if not exists avatar_url text check (avatar_url is null or length(avatar_url) <= 600);
+
+create or replace function public.msgr2_agent_set_look(p_agent uuid, p_patch jsonb) returns boolean
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare uid uuid := public._msgr2_need_app(); a public.msgr2_agents; nf jsonb; nu text; prefix text;
+begin
+  perform public._msgr2_need_live();
+  if p_agent is null or jsonb_typeof(p_patch) is distinct from 'object' or p_patch = '{}'::jsonb
+     or exists (select 1 from jsonb_object_keys(p_patch) k where k not in ('face', 'avatar_url')) then
+    raise exception 'msgr2_bad_look' using errcode = '22023';
+  end if;
+  if p_patch ? 'face' and (jsonb_typeof(p_patch->'face') not in ('object', 'null') or length((p_patch->'face')::text) > 256) then
+    raise exception 'msgr2_bad_look' using errcode = '22023';
+  end if;
+  if p_patch ? 'avatar_url' and jsonb_typeof(p_patch->'avatar_url') not in ('string', 'null') then
+    raise exception 'msgr2_bad_look' using errcode = '22023';
+  end if;
+  select * into a from public.msgr2_agents where id = p_agent for update;
+  if not found or a.owner_user_id <> uid or a.status = 'retired' then raise exception 'msgr2_not_owner' using errcode = '42501'; end if;
+  nf := case when p_patch ? 'face' then nullif(p_patch->'face', 'null'::jsonb) else a.face end;
+  nu := case when p_patch ? 'avatar_url' then p_patch->>'avatar_url' else a.avatar_url end;
+  if p_patch ? 'avatar_url' and nu is not null then
+    prefix := '/storage/v1/object/public/msgr-avatars/avatars/' || uid::text || '/';
+    if length(nu) > 600 or nu !~ '^https://[^/?#]+/' or position(prefix in nu) = 0 or nu ~ '\.\.' then
+      raise exception 'msgr2_bad_look' using errcode = '22023';
+    end if;
+  end if;
+  update public.msgr2_agents set face = nf, avatar_url = nu, updated_at = now()
+   where id = p_agent and (face, avatar_url) is distinct from (nf, nu);
+  return found;
+end $$;
+revoke all on function public.msgr2_agent_set_look(uuid, jsonb) from public, anon;
+grant execute on function public.msgr2_agent_set_look(uuid, jsonb) to authenticated;
+
+-- 에이전트 등록(20261020200000 본문) — face만 바뀐다: 들어온 값이 null(SQL·JSON 둘 다)이면 기존 값을 지킨다.
+create or replace function public.msgr2_agent_sync(p_agents jsonb) returns integer
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare uid uuid := auth.uid(); n integer := 0; k integer; a jsonb;
+begin
+  if uid is null then raise exception 'msgr2_signin_required' using errcode = '42501'; end if;
+  if not public._msgr2_device_ok() then raise exception 'msgr2_device_invalid' using errcode = '42501'; end if;
+  if jsonb_typeof(p_agents) is distinct from 'array' or jsonb_array_length(p_agents) > 500 then raise exception 'msgr2_bad_agents' using errcode = '22023'; end if;
+  for a in select * from jsonb_array_elements(p_agents) loop
+    if coalesce(a->>'ws_id', '') = '' or coalesce(a->>'slug', '') = '' then raise exception 'msgr2_bad_agents' using errcode = '22023'; end if;
+    insert into public.msgr2_agents as t (owner_user_id, ws_id, slug, display_name, role_text, face, hosting, status)
+    values (uid, a->>'ws_id', a->>'slug', left(coalesce(a->>'display_name', ''), 80), left(coalesce(a->>'role_text', ''), 200), nullif(a->'face', 'null'::jsonb), -- JSON null(본체가 face_hash null을 보냄)도 SQL null로
+      coalesce(a->>'hosting', 'local'), coalesce(a->>'status', 'active'))
+    on conflict (owner_user_id, ws_id, slug) do update set
+      display_name = excluded.display_name, role_text = excluded.role_text, face = coalesce(excluded.face, t.face), hosting = excluded.hosting, status = excluded.status, updated_at = now()
+    where (t.display_name, t.role_text, t.face, t.hosting, t.status) is distinct from (excluded.display_name, excluded.role_text, coalesce(excluded.face, t.face), excluded.hosting, excluded.status);
+    get diagnostics k = row_count; n := n + k;
+  end loop;
+  return n;
+end $$;
