@@ -21,8 +21,7 @@ test('setInterval은 허용 목록뿐 — 새 주기 호출은 이유와 함께 
     [/setInterval\(\(\) => setTick\(\(x\) => x \+ 1\), 2000\)/, '입력 중 표시 내리기(화면만, 입력 중일 때만)'],
     [/setInterval\(\(\) => setAwaitTick\(\(x\) => x \+ 1\), 5000\)/, '보낸 뒤 대기 표시 단계 전환(화면만, 대기 표시가 있을 때만 — 2026-10-05)'],
     [/setInterval\(\(\) => setTick\(\(x\) => x \+ 1\), 15_000\)/, '시각 표시 다시 그리기(화면만 — 네트워크 효과는 tick에 묶지 않는다)'],
-    [/if \(!onScreen \|\| !rtDown\) return undefined; const iv = setInterval\(/, '보이는 방에서 실시간이 끊겼다고 알려진 동안만 보정 조회'],
-    [/if \(!onScreen\) return undefined; const iv = setInterval\(\(\) => \{ const \{ msgs: ms, atts: at \} = live\.current; const miss/, '빈 첨부·반응이 있을 때만 메우기(없으면 요청 0)'],
+    [/if \(!onScreen\) return undefined; const iv = setInterval\(\(\) => \{ if \(document\.visibilityState === 'hidden'\) return; const \{ msgs: ms, atts: at \} = live\.current; const miss/, '빈 첨부·반응이 있을 때만 메우기(없으면 요청 0, 숨긴 창은 건너뜀)'],
     [/if \(!nodeOn \|\| channel\.kind === 'dm'\) return; loadRequests\(\)\.catch\(\(\) => \{\}\); const iv = setInterval\(/, '방 설정 시트를 연 동안 노드의 크루 만들기 요청 진행(시트를 닫으면 멈춘다)'],
     [/const iv = setInterval\(async \(\) => \{\n\s*const \{ data, error \} = await supabase\.from\('msgr_server_links'\)/, 'VPS 연결을 진행하는 동안만(연결 끝·만료면 멈춘다)'],
     [/const iv = setInterval\(async \(\) => \{\n\s*const \{ data, error \} = await supabase\.rpc\('msgr2_server_link_get'/, 'v2 VPS 연결을 진행하는 동안만 2초(연결 끝·만료면 멈춘다, 최대 15분 — 읽기만)'],
@@ -31,6 +30,8 @@ test('setInterval은 허용 목록뿐 — 새 주기 호출은 이유와 함께 
   const hits = allowed.filter(([re]) => re.test(app)).length;
   assert.equal(found, allowed.length, `App.jsx setInterval ${found}개 — 허용 목록 ${allowed.length}개와 다르다`);
   assert.equal(hits, allowed.length, '허용 목록의 모양이 바뀌었다');
+  // 끊긴 동안의 보정 조회는 setInterval이 아니라 박자 부품(idle-poll.mjs — 숨긴 창 0, 10초 → 5분 늘림, 새 글이면 다시 10초)
+  assert.match(app, /if \(!onScreen \|\| !rtDown\) return undefined; return startIdlePoll\(\(\) => \{ recover\(\); loadApprovals\(\)\.catch\(\(\) => \{\}\); \}\); \}, \[onScreen, rtDown, recover, lastId\]\);/);
   // 다른 파일: 앱 업데이트 확인(DB 아님, 30분 간격 판정)·업무 패널(열린 동안만)
   for (const f of readdirSync(dir).filter((x) => /\.jsx$/.test(x) && x !== 'App.jsx')) {
     const src = readFileSync(new URL(f, dir), 'utf8');
