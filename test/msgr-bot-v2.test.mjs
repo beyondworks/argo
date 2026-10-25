@@ -56,15 +56,18 @@ test('getMe·지원 안 하는 메서드·미러 보고', async () => {
   assert.equal(h.calls.length, 1, '받기만 하는 메서드·지원 안 하는 메서드는 DB를 부르지 않는다');
 });
 
-test('getUpdates 롱폴: 대기 시작 1회 + 5초 간격, 최대 50초 — 빈 50초 대기 RPC 11회, 글이 오면 바로', async () => {
+test('getUpdates 롱폴(깨움을 들을 수 없을 때 — 5초 폴링): 대기 = 요청 timeout + 8초(상한 140초) — 빈 58초 대기 RPC 13회, 글이 오면 바로', async () => {
   const idle = harness({ msgr2_bot_updates: [] });
   const r = await handleV2({ token: V2, method: 'getUpdates', params: { timeout: '50', offset: '0' } }, idle.rpc, idle.opts);
   assert.deepEqual(r.body, { ok: true, result: [] });
-  assert.equal(idle.calls.length, 11); assert.equal(idle.elapsed(), 50_000);
+  assert.equal(idle.calls.length, 13); assert.equal(idle.elapsed(), 58_000, '두 플러그인의 소켓 = timeout + 15초 — 8초 더 잡아도 끊기지 않는다(2026-10-25)');
   assert.deepEqual(idle.calls[0].args, { p_token: V2, p_after: 0, p_lim: 1 });
   const capped = harness({ msgr2_bot_updates: [] });
   await handleV2({ token: V2, method: 'getUpdates', params: { timeout: '600' } }, capped.rpc, capped.opts);
-  assert.equal(capped.elapsed(), 50_000, '50초 상한');
+  assert.equal(capped.elapsed(), 140_000, '140초 상한(엣지 요청 한도 150초 안)');
+  const now0 = harness({ msgr2_bot_updates: [] });
+  await handleV2({ token: V2, method: 'getUpdates', params: { timeout: '0' } }, now0.rpc, now0.opts);
+  assert.equal(now0.elapsed(), 0, 'timeout 0 = 즉시 1회(더하지 않는다)'); assert.equal(now0.calls.length, 1);
   const up = { update_id: 42, message: { message_id: 42, execution_attempt: W, chat: { id: ROOM, kind: 'dm' }, text: 'hi' } };
   const busy = harness({ msgr2_bot_updates: (_a, n) => (n === 3 ? [up] : []) });
   const got = await handleV2({ token: V2, method: 'getUpdates', params: { timeout: '50', offset: '42' } }, busy.rpc, busy.opts);

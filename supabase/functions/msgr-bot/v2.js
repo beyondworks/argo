@@ -4,13 +4,17 @@
 // Hermes가 대화에 쓰는 것만 받는다: getMe · getUpdates(롱폴) · sendMessage(최종 답·보충 글) · sendChatAction(받기만).
 //   reportStatus·setRoutines는 200 {}(저장 안 함 — 성공할 때까지 매분 다시 부르는 미러 루프를 멈춘다, paused.js와 같은 이유).
 //   결재 카드·첨부·예약 작업 편집(requestApproval·getFile·createUpload·attachFile·routineEditDone·ack/expireApproval)은 1단계 밖 — 400.
-// 롱폴 박자는 v1과 같다(core.js POLL_STEPS: 대기 시작 1회 + 5초 간격, 최대 50초). 쉬는 봇 1개 = 엣지 호출 분당 1.2 · RPC 분당 12(읽기만).
+// 롱폴(2026-10-25 쉬는 봇 호출 줄이기): 대기 시작에 RPC 1회, 그 뒤로는 깨움 방송(wake.js, DB 20261025100000)이 올 때만 다시 RPC.
+//   방송이 오지 않으면 대기 끝에 RPC 없이 빈 응답. 깨움을 들을 수 없으면(채널 실패) 종전처럼 5초 간격 RPC.
+//   대기 길이 = 요청한 timeout + 8초(두 플러그인 모두 소켓 = timeout + 15초라 끊기지 않는다), 상한 140초(엣지 요청 한도 150초 안).
+//   쉬는 봇 1개: 옛 어댑터(timeout 50) 엣지 분당 1.03 · RPC 분당 1.03, 새 어댑터(timeout 140) 엣지·RPC 분당 0.43(종전 1.2 · 12).
 import { pausedReply } from './paused.js';
 import { displayText } from './core.js';
 
 export const V2_TOKEN_RE = /^argo_bot_v2[0-9a-f]{48}$/;
 export const isV2Token = (t) => V2_TOKEN_RE.test(String(t ?? ''));
-export const V2_MAX_WAIT_MS = 50_000;
+export const V2_MAX_WAIT_MS = 140_000;
+export const V2_SLACK_MS = 8_000;
 export const V2_POLL_MS = 5_000;
 export const V2_IGNORED = ['reportStatus', 'setRoutines'];
 export const V2_METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', ...V2_IGNORED];
@@ -43,9 +47,10 @@ const ERR = {
 
 /**
  * v2 봇 요청 하나. parsed = core.js parseRequest 결과({ token, method, params }), rpc(fn, args) → JSON(오류는 message에 RPC 예외 이름).
- * opts: sleep·now(시험), maxWaitMs, rejects(core.js createRejectMemory — 무효 토큰을 이 인스턴스에서 DB 없이 거절).
+ * opts: sleep·now(시험), maxWaitMs, rejects(core.js createRejectMemory — 무효 토큰을 이 인스턴스에서 DB 없이 거절),
+ *   listen(topic) → { wait(ms), close() } | null(wake.js createWakeHub — 없거나 null이면 5초 폴링), topicOf(token) → 깨움 토픽(wake.js wakeTopic).
  */
-export async function handleV2({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = V2_MAX_WAIT_MS, rejects = null } = {}) {
+export async function handleV2({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = V2_MAX_WAIT_MS, rejects = null, listen = null, topicOf = null } = {}) {
   if (!isV2Token(token)) return ERR.msgr_bot_unauthorized();
   if (!V2_METHODS.includes(method)) return fail(400, `Bad Request: ${method || '(none)'} is not supported in this version — supported: ${V2_METHODS.join(', ')}`);
   if (V2_IGNORED.includes(method)) return reply(200, {});
@@ -57,10 +62,22 @@ export async function handleV2({ token, method, params = {} }, rpc, { sleep = (m
     }
     if (method === 'getUpdates') {
       const start = now();
-      const deadline = start + Math.min(maxWaitMs, Math.max(0, Number(params.timeout) || 0) * 1000);
+      const asked = Math.max(0, Number(params.timeout) || 0) * 1000;
+      const deadline = start + (asked > 0 ? Math.min(maxWaitMs, asked + V2_SLACK_MS) : 0);
       const known = rejects?.blocked(token);
       if (known) { await sleep(Math.max(0, deadline - now())); return known === 'plan' ? ERR.msgr_bot_plan_required() : ERR.msgr_bot_unauthorized(); }
       const args = { p_token: token, p_after: Math.max(0, (Number(params.offset) || 0) - 1), p_lim: Math.min(10, Math.max(1, Number(params.limit) || 1)) };
+      // 깨움 듣기 — 들어간 뒤에 첫 RPC를 부른다(그 사이에 생긴 일의 방송도 놓치지 않게). 들을 수 없으면 아래 5초 폴링
+      const ear = deadline > now() && listen && topicOf ? await Promise.resolve(topicOf(token)).then((tp) => listen(tp)).catch(() => null) : null;
+      if (ear) {
+        try {
+          for (;;) {
+            const ups = await rpc('msgr2_bot_updates', args);
+            if ((Array.isArray(ups) && ups.length) || now() >= deadline) { rejects?.clear(token); return reply(200, Array.isArray(ups) ? ups : []); }
+            if (!(await ear.wait(deadline - now()))) { rejects?.clear(token); return reply(200, []); } // 대기 끝까지 일이 없다 — RPC 없이 빈 응답
+          }
+        } finally { ear.close(); }
+      }
       for (;;) {
         const ups = await rpc('msgr2_bot_updates', args);
         if ((Array.isArray(ups) && ups.length) || now() >= deadline) { rejects?.clear(token); return reply(200, Array.isArray(ups) ? ups : []); }
