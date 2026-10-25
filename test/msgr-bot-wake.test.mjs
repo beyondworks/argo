@@ -133,3 +133,21 @@ test('측정: 쉬는 봇 1개 60분 — 종전 엣지 1.2·RPC 13.2/분 → 옛 
   assert.ok(total(newAdapter) / total(before) < 0.1, '새 어댑터: 1/10 이하');
   assert.equal(V2_POLL_MS, 5_000, '폴링 갈래 간격은 그대로');
 });
+
+test('경합(#1160 검수): 첫 RPC가 도는 동안 온 방송은 표지로 남아 곧바로 두 번째 RPC — 롱폴 끝까지 기다리지 않는다', { timeout: 3_000 }, async () => { // 표지가 없으면 가짜 타이머를 아무도 돌리지 않아 멈춘다 → 3초에 실패
+  const c = fakeClient(); const tm = fakeTimers();
+  const listen = createWakeHub(c, { setTimer: tm.setTimer, clearTimer: tm.clearTimer });
+  let n = 0; let waited = 0;
+  const hub = async (topic) => { const e = await listen(topic); return e && { wait: (ms) => { waited += 1; return e.wait(ms); }, close: () => e.close() }; };
+  const got = await handleV2({ token: V2, method: 'getUpdates', params: { timeout: '50', offset: '0' } }, async () => {
+    n += 1;
+    if (n === 1) { c.chans[0].fire(); return []; } // RPC 중(wait 밖)에 새 일 방송 — 아직 비어 있는 답
+    return [up(5)];
+  }, { now: () => 0, sleep: async () => {}, listen: hub, topicOf: wakeTopic });
+  assert.equal(n, 2, '방송을 버리지 않고 바로 다시 찾는다');
+  assert.deepEqual(got.body.result, [up(5)]);
+  assert.equal(waited, 1, 'wait()는 표지를 보고 곧바로 true(타이머를 기다리지 않음)');
+  // 표지는 한 번만 쓴다 — 다음 wait는 다시 기다린다
+  const e = await listen('botw:z'); c.chans.at(-1).fire(); assert.equal(await e.wait(1_000), true);
+  const p = e.wait(1_000); tm.run(1_000); assert.equal(await p, false, '표지는 한 번 쓰면 지워진다'); e.close();
+});
