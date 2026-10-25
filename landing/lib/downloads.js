@@ -17,8 +17,17 @@ export const DL = {
   win: `${BASE}/argo-windows-setup.exe`,
 };
 
-// Argo Messenger 다운로드 링크는 두지 않는다 — 2026-10-16 유건 "랜딩 페이지에도 커밍순으로": 안정화를 위해 잠시 쉬는 동안 /messenger는 출시 알림 신청만.
-// 다시 열 때 되살릴 값(release-messenger.yml 고정 파일명, iOS App Store id6810877561)은 git 기록에 있다.
+// Argo Messenger — argo-messenger 최신 릴리스의 고정 파일명(release-messenger.yml, 0.1.63 자산과 같은 이름). 버전을 URL에 박지 않는다(latest 포인터).
+// 2026-10-25 재공개(유건 승인 "공개하라고 뭘 자꾸 물어"): 출시 알림 대신 바로 받기. iOS는 App Store 공개본.
+export const MSGR_RELEASES = 'https://github.com/beyondworks/argo-messenger/releases/latest';
+const MSGR_BASE = `${MSGR_RELEASES}/download`;
+export const MSGR_DL = {
+  silicon: `${MSGR_BASE}/argo-messenger-macos-apple-silicon.dmg`,
+  intel: `${MSGR_BASE}/argo-messenger-macos-intel.dmg`,
+  win: `${MSGR_BASE}/argo-messenger-windows-setup.exe`,
+  android: `${MSGR_BASE}/argo-messenger-android.apk`,
+  ios: 'https://apps.apple.com/kr/app/argo-messenger/id6810877561',
+};
 
 // mac에서 Intel 감지 — WebGL 렌더러 문자열(Chrome 계열에서 유효, Safari는 둘 다 'Apple GPU' → Silicon 기본)
 function isIntelMac() {
