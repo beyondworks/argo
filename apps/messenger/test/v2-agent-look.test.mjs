@@ -1,10 +1,11 @@
-// v2 에이전트 얼굴·사진 저장(0.1.65 결함 3, 2026-10-25 유건 아이폰 — "얼굴 저장"을 눌러도 아바타가 그대로).
+// v2 에이전트 프로필 저장 — 얼굴·사진·직무·소개(0.1.65 결함 3 + 검수 D1, 2026-10-25 유건 아이폰 — "얼굴 저장"을 눌러도 그대로, 직무·소개도 v2_unsupported).
 // 원인: 화면은 옛 msgr_crews를 update하는데 v2 조회 어댑터(CrewBuilder)가 모든 쓰기를 v2_unsupported로 막았다. 사진 칸도 읽지 않았다(avatar_url: null 고정).
-// 지금: 얼굴·사진 update는 에이전트마다 msgr2_agent_set_look(DB 20261025130000) 1회, 목록은 avatar_url을 읽는다(칸이 없는 옛 DB면 빼고 다시 읽는다).
+// 지금: 얼굴·사진·직무·소개 update는 에이전트마다 msgr2_agent_set_profile(DB 20261025130000) 1회, 목록은 avatar_url을 읽는다(칸이 없는 옛 DB면 빼고 다시 읽는다).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createV2Client } from '../src/v2/source.mjs';
 import { saveAgentLook, fillAgentLooks } from '../src/agent-groups.mjs';
+import { readFileSync } from 'node:fs';
 
 const ME = 'u-me';
 const FACE = { v: 2, shape: 3, color: 10 };
@@ -29,12 +30,12 @@ function fakeRaw({ rows = [ag('a1', { face: FACE, avatar_url: PHOTO })], noPhoto
     rpc: async (name, args) => { rpcs.push({ name, args }); return rpcError ? { data: null, error: rpcError } : { data: true, error: null }; } };
 }
 
-test('얼굴 저장: msgr_crews update(face) → msgr2_agent_set_look 1회, 저장한 행 id를 돌려준다(saveAgentLook 그대로)', async () => {
+test('얼굴 저장: msgr_crews update(face) → msgr2_agent_set_profile 1회, 저장한 행 id를 돌려준다(saveAgentLook 그대로)', async () => {
   const raw = fakeRaw(); const c = createV2Client(raw);
   const r = await saveAgentLook(c, 'a1', { face: FACE }, new Map());
   assert.equal(r.error, null);
   assert.deepEqual(r.ids, ['a1']);
-  assert.deepEqual(raw.rpcs, [{ name: 'msgr2_agent_set_look', args: { p_agent: 'a1', p_patch: { face: FACE } } }]);
+  assert.deepEqual(raw.rpcs, [{ name: 'msgr2_agent_set_profile', args: { p_agent: 'a1', p_patch: { face: FACE } } }]);
 });
 
 test('같은 에이전트의 여러 행(looks ids) — 행마다 1회, 사진 지우기(null)도 그대로 보낸다', async () => {
@@ -46,7 +47,7 @@ test('같은 에이전트의 여러 행(looks ids) — 행마다 1회, 사진 �
 });
 
 test('서버 거절(남의 에이전트·옛 DB에 함수 없음)은 오류로 돌려준다 — 화면이 저장됐다고 말하지 않는다', async () => {
-  const raw = fakeRaw({ rpcError: { code: 'PGRST202', message: 'Could not find the function public.msgr2_agent_set_look' } }); const c = createV2Client(raw);
+  const raw = fakeRaw({ rpcError: { code: 'PGRST202', message: 'Could not find the function public.msgr2_agent_set_profile' } }); const c = createV2Client(raw);
   const r = await saveAgentLook(c, 'a1', { face: FACE }, new Map());
   assert.ok(r.error); assert.deepEqual(r.ids, []);
 });
@@ -66,4 +67,28 @@ test('목록: avatar_url을 읽어 사진을 보인다, 칸이 없는 옛 DB면 
   const old = fakeRaw({ noPhotoCol: true });
   const r2 = await createV2Client(old).from('msgr_crews').select('id, avatar_url').eq('id', 'a1').maybeSingle();
   assert.equal(r2.error, null); assert.equal(r2.data.id, 'a1'); assert.equal(r2.data.avatar_url, null);
+});
+
+test('직무·소개(검수 D1): 프로필 시트의 msgr_crews update({role_text}|{bio}) → 같은 RPC, 봇 직무(msgr_bot_set_role)도 같은 입구', async () => {
+  const raw = fakeRaw(); const c = createV2Client(raw);
+  assert.equal((await c.from('msgr_crews').update({ role_text: '총괄' }).eq('id', 'a1').select('id')).error, null);
+  assert.equal((await c.from('msgr_crews').update({ bio: '회의록을 정리합니다' }).eq('id', 'a1')).error, null);
+  assert.equal((await c.rpc('msgr_bot_set_role', { bot_crew: 'b1', new_role_text: '서버 봇' })).error, null);
+  assert.deepEqual(raw.rpcs.map((x) => x.args), [
+    { p_agent: 'a1', p_patch: { role_text: '총괄' } }, { p_agent: 'a1', p_patch: { bio: '회의록을 정리합니다' } }, { p_agent: 'b1', p_patch: { role_text: '서버 봇' } }]);
+  assert.ok(raw.rpcs.every((x) => x.name === 'msgr2_agent_set_profile'));
+  const r = await c.from('msgr_crews').select('id, bio').eq('id', 'a1').maybeSingle();
+  assert.ok('bio' in r.data, '소개를 읽는다(칸 있는 DB)');
+});
+
+test('이름은 메신저에서 바꾸지 않는다 — display_name update는 거절(요청 0)', async () => {
+  const raw = fakeRaw(); const c = createV2Client(raw);
+  assert.equal((await c.from('msgr_crews').update({ display_name: '새 이름', role_text: 'x' }).eq('id', 'a1')).error?.code, 'v2_unsupported');
+  assert.equal(raw.rpcs.length, 0);
+});
+
+test('배선: 프로필 시트의 직무·소개 칸은 msgr_crews update / msgr_bot_set_role을 보낸다(어댑터가 v2로 옮긴다)', () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /supabase\.rpc\('msgr_bot_set_role', \{ bot_crew: crew\.id, new_role_text: v \}\) : await supabase\.from\('msgr_crews'\)\.update\(\{ role_text: v \}\)/);
+  assert.match(app, /supabase\.from\('msgr_crews'\)\.update\(\{ bio: v \}\)\.eq\('id', crew\./);
 });

@@ -112,7 +112,7 @@ test('에이전트: 조직 조건 = 그 팀 공간의 자리(allow 붙임), 파�
   assert.deepEqual(r3.data.map((x) => [x.id, x.status]), [[AG, 'available']]);
   const none = fakeRaw({ msgr2_agent_seats: [] }); const r2 = await createV2Client(none).from('msgr_crews').select('id').eq('org_id', SPACE);
   assert.deepEqual(r2.data, []); assert.deepEqual(none.log.map((e) => e.table), ['msgr2_agent_seats']);
-  assert.equal((await createV2Client(fakeRaw()).from('msgr_crews').update({ bio: 'x' }).eq('id', AG)).error.code, V2_UNSUPPORTED, '에이전트 고치기는 v2 모드에서 아직 없다');
+  assert.equal((await createV2Client(fakeRaw()).from('msgr_crews').update({ display_name: 'x' }).eq('id', AG)).error.code, V2_UNSUPPORTED, '이름은 메신저에서 바꾸지 않는다(얼굴·사진·직무·소개는 msgr2_agent_set_profile — v2-agent-look.test.mjs)');
 });
 
 test('쓰기: 반응은 v2 표로(없는 열은 버림), 방 설정·방 멤버는 U6d RPC로(U6c-2b), 대응 표가 없으면 요청 없이 v2_unsupported', async () => {

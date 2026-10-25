@@ -71,7 +71,7 @@ const RPCS = {
   empty: { msgr_my_badge: 0, msgr_my_ai_consent: null },
   write: new Set(['msgr_crew_join_decide', // 방·1:1·신고·초대·안 읽음·찾기는 U6d RPC로 바꿔 보낸다(legacy-rpc.mjs LEGACY_RPCS)
     'msgr_restore_org', 'msgr_join_by_domain', 'msgr_mute_crew', 'msgr_unmute_crew', 'msgr_set_member_profile', 'msgr_work_create', 'msgr_work_cancel',
-    'msgr_work_resume', 'msgr_request_stop', 'msgr_bot_create', 'msgr_bot_rotate', 'msgr_bot_revoke', 'msgr_bot_rename', 'msgr_bot_set_role',
+    'msgr_work_resume', 'msgr_request_stop', 'msgr_bot_create', 'msgr_bot_rotate', 'msgr_bot_revoke', 'msgr_bot_rename',
     'msgr_bot_set_mirror_all', 'msgr_crew_routine_edit', 'msgr_server_link_create', 'msgr_server_link_approve', 'msgr_report_resolve',
     'msgr_push_badge_resync']),
 };
@@ -394,25 +394,25 @@ function renameOr(spec, expr) {
   return String(expr).replace(/(^|,|\()([a-z_]+)\./g, (m, pre, c) => `${pre}${spec.cols?.[c] ?? c}.`);
 }
 
-// 에이전트 열 — avatar_url은 20261025130000(얼굴·사진 저장)부터 있다. 그 전 DB(라이브 적용 전)면 칸 없음 오류가 나므로 한 번 빼고 다시 읽고, 그 뒤로는 빼고 읽는다.
+// 에이전트 열 — avatar_url·bio는 20261025130000(프로필 저장)부터 있다. 그 전 DB(라이브 적용 전)면 칸 없음 오류가 나므로 한 번 빼고 다시 읽고, 그 뒤로는 빼고 읽는다.
 const AGENT_COLS = 'id, owner_user_id, slug, display_name, role_text, face, hosting, status, created_at';
 let agentPhotoCol = true;
-const noColumn = (e) => !!e && (e.code === '42703' || e.code === 'PGRST204' || /avatar_url/.test(String(e.message ?? '')));
+const noColumn = (e) => !!e && (e.code === '42703' || e.code === 'PGRST204' || /avatar_url|\bbio\b/.test(String(e.message ?? '')));
 async function readAgents(raw, build) {
   if (agentPhotoCol) {
-    const r = await build(raw.from('msgr2_agents').select(`${AGENT_COLS}, avatar_url`));
+    const r = await build(raw.from('msgr2_agents').select(`${AGENT_COLS}, avatar_url, bio`));
     if (!noColumn(r.error)) return r;
     agentPhotoCol = false;
   }
   return build(raw.from('msgr2_agents').select(AGENT_COLS));
 }
-const LOOK_KEYS = new Set(['face', 'avatar_url']);
+const PROFILE_KEYS = new Set(['face', 'avatar_url', 'role_text', 'bio']); // 이름(display_name)은 Argo 앱(본체)이 정한다
 
 /** 에이전트(옛 msgr_crews 모양). 조직 조건(org_id) = 그 팀 공간의 자리(seat), 자리의 allow·allow_users를 붙인다.
-    쓰기는 얼굴·사진만(msgr2_agent_set_look, 주인 앱 기기) — 0.1.65 결함 3: 종전엔 모두 v2_unsupported라 '얼굴 저장'이 아무 일도 하지 않았다. */
+    쓰기는 얼굴·사진·직무·소개만(msgr2_agent_set_profile, 주인 앱 기기) — 0.1.65 결함 3·검수 D1: 종전엔 모두 v2_unsupported라 프로필 시트 저장이 전부 실패했다. */
 class CrewBuilder extends Builder {
   async run() {
-    if (this.verb === 'update') return this.saveLook();
+    if (this.verb === 'update') return this.saveProfile();
     if (this.verb !== 'select') return unsupported();
     const nr = await waitReady(this.ctx); if (nr) return nr;
     const raw = this.ctx.raw;
@@ -464,7 +464,7 @@ class CrewBuilder extends Builder {
     }
     let rows = list.map(({ _avail, ...a }) => { // _avail = 위 '파견 전' 표지(행에 남기지 않는다)
       const seat = seats?.get(a.id);
-      const row = { ...a, org_id: space, allow: seat?.allow ?? 'all', allow_users: seat?.allow_users ?? [], last_seen_at: null, folder: null, avatar_url: a.avatar_url ?? null, bio: null, _v2: true }; // 접속은 v2:pr:(Presence)로 본다 — 행 시각이 없다
+      const row = { ...a, org_id: space, allow: seat?.allow ?? 'all', allow_users: seat?.allow_users ?? [], last_seen_at: null, folder: null, avatar_url: a.avatar_url ?? null, bio: a.bio ?? null, _v2: true }; // 접속은 v2:pr:(Presence)로 본다 — 행 시각이 없다
       for (const c of want) if (c !== '*' && !(c in row)) row[c] = null;
       return row;
     });
@@ -472,8 +472,8 @@ class CrewBuilder extends Builder {
     return { data: rows, error: null, status: 200 };
   }
 
-  /** update({ face?, avatar_url? }).eq|in('id', …) → 에이전트마다 msgr2_agent_set_look 1회. 다른 열·다른 조건(.is 등 — 로그인 때 얼굴 채우기)은 종전대로 거절. */
-  async saveLook() {
+  /** update({ face?, avatar_url?, role_text?, bio? }).eq|in('id', …) → 에이전트마다 msgr2_agent_set_profile 1회. 다른 열(이름 등)·다른 조건(.is — 로그인 때 얼굴 채우기)은 종전대로 거절. */
+  async saveProfile() {
     const patch = this.payload ?? {};
     const keys = Object.keys(patch);
     let ids = null;
@@ -482,10 +482,10 @@ class CrewBuilder extends Builder {
       else if (op === 'in' && args[0] === 'id' && ids == null) ids = [...args[1]];
       else return unsupported();
     }
-    if (!ids?.length || !keys.length || keys.some((k) => !LOOK_KEYS.has(k))) return unsupported();
+    if (!ids?.length || !keys.length || keys.some((k) => !PROFILE_KEYS.has(k))) return unsupported();
     const done = [];
     for (const id of ids) {
-      const r = await this.ctx.rpc('msgr2_agent_set_look', { p_agent: id, p_patch: patch });
+      const r = await this.ctx.rpc('msgr2_agent_set_profile', { p_agent: id, p_patch: patch });
       if (r?.error) return { data: null, error: r.error, status: r.status ?? 400, count: null };
       done.push({ id });
     }

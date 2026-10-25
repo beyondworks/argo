@@ -1,10 +1,10 @@
 -- 되돌림: supabase/migrations/20261025130000_msgr2_agent_look.sql을 걷어 낸다(마이그레이션이 아니다 — 바로 실행하는 파일).
--- 하는 일: ① msgr2_agent_set_look을 지운다(메신저 얼굴·사진 저장이 다시 v2_unsupported가 된다) ② msgr2_agent_sync를 20261020200000 본문으로 되돌린다.
--- 남기는 것: msgr2_agents.avatar_url 칸과 그 값(사진 주소뿐 — 지우면 사람이 고른 사진이 사라진다. 칸이 남아도 옛 코드는 읽지 않는다).
+-- 하는 일: ① msgr2_agent_set_profile을 지운다(메신저 얼굴·사진·직무·소개 저장이 다시 v2_unsupported가 된다) ② msgr2_agent_sync를 20261020200000 본문으로 되돌린다.
+-- 남기는 것: msgr2_agents.avatar_url·bio·role_by_user 칸과 그 값(사람이 고른 사진·소개 — 지우면 사라진다. 칸이 남아도 옛 코드는 읽지 않는다).
 -- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261025130000_msgr2_agent_look.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
-drop function if exists public.msgr2_agent_set_look(uuid, jsonb);
+drop function if exists public.msgr2_agent_set_profile(uuid, jsonb);
 -- 20261020200000 본문
 create or replace function public.msgr2_agent_sync(p_agents jsonb) returns integer
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
