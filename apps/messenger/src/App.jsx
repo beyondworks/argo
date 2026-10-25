@@ -155,6 +155,7 @@ import { fmtDmWhen } from './list-when.mjs';
 import { markAppReady } from './splash.js';
 import { dropBeforeIdAtY, reorderVisibleInFull } from './drag-reorder.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
+import { uploadThenSave } from './avatar-upload.mjs';
 import { twinRelink, twinLeftOrg, twinPaused, twinOrgLabel, crewAddable, crewOnline } from './personal-bots.mjs';
 import { scrollLeftToCenter } from './nav-scroll.mjs';
 import { toastPlace, toastMaxWidth } from './toast-place.mjs';
@@ -280,14 +281,16 @@ async function squareImage(file, size = 256) {
   c.getContext('2d').drawImage(bmp, (bmp.width - s) / 2, (bmp.height - s) / 2, s, s, 0, 0, size, size);
   return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('image'))), 'image/jpeg', 0.88));
 }
-/** 아바타 업로드 — 공개 버킷 msgr-avatars, 자기 폴더(avatars/<uid>/…)만 쓸 수 있다(RLS). 반환 = 공개 URL(캐시 무효화 쿼리 포함). */
+/** 아바타 업로드 — 공개 버킷 msgr-avatars, 자기 폴더(avatars/<uid>/…)만 쓸 수 있다(RLS). 반환 = { url(공개 URL), path(지울 때) }. */
 async function uploadAvatar(uid, key, file) {
   const blob = await squareImage(file);
   const path = `avatars/${uid}/${key}-${Date.now()}.jpg`;
   const up = await supabase.storage.from('msgr-avatars').upload(path, blob, { contentType: 'image/jpeg', upsert: true });
   if (up.error) throw new Error(up.error.message);
-  return supabase.storage.from('msgr-avatars').getPublicUrl(path).data.publicUrl;
+  return { url: supabase.storage.from('msgr-avatars').getPublicUrl(path).data.publicUrl, path };
 }
+/** 올리고 저장 — 저장이 실패하면 올린 파일을 지운다(avatar-upload.mjs). save(url) → 저장했으면 true */
+const uploadAndSave = (uid, key, file, save) => uploadThenSave({ upload: () => uploadAvatar(uid, key, file), save, remove: (path) => supabase.storage.from('msgr-avatars').remove([path]) });
 /** 아바타 편집 줄 — 현재 이미지 + 올리기·지우기(내 계정·에이전트 시트 공용). 사진을 고르면 자르기 화면(AvatarCrop)이 열린다(유건 피드백 4 — 폰·데스크톱 같은 화면). */
 function AvatarEdit({ name, crew = false, crewId = null, url, onUpload, onRemove, busy, t }) {
   const ref = useRef(null);
@@ -3923,7 +3926,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
         <p className="note tier">{tier === 'company' ? t('crew.tier.company.note', { org: org?.name ?? '' }) : t('crew.tier.personal.note', { name: nameOfUser(crew.owner_user_id) })}</p>
         {owner && (<section className="msgr-crewprofile">
           <h3>{t('crew.profile')}</h3>
-          <AvatarEdit name={crew.display_name} crew crewId={crew.id} url={lookPhoto} busy={busy} t={t} onUpload={async (f) => { try { setBusy(true); const url = await uploadAvatar(uid, `crew-${crew.id}`, f); const r = await writeLook({ avatar_url: url }); setBusy(false); if (r.error) return onError(r.error.message); onNote(t(lookNote(r))); onChanged(); } catch (e) { setBusy(false); onError(e.message); } }} onRemove={async () => { const r = await writeLook({ avatar_url: null }); if (r.error) return onError(r.error.message); onNote(t(lookNote(r))); onChanged(); }} />
+          <AvatarEdit name={crew.display_name} crew crewId={crew.id} url={lookPhoto} busy={busy} t={t} onUpload={async (f) => { try { setBusy(true); await uploadAndSave(uid, `crew-${crew.id}`, f, async (url) => { const r = await writeLook({ avatar_url: url }); setBusy(false); if (r.error) { onError(r.error.message); return false; } onNote(t(lookNote(r))); onChanged(); return true; }); } catch (e) { setBusy(false); onError(e.message); } }} onRemove={async () => { const r = await writeLook({ avatar_url: null }); if (r.error) return onError(r.error.message); onNote(t(lookNote(r))); onChanged(); }} />
           <label className="msgr-klabel">{t('crew.face')}</label>
           <FacePicker crew={crew} busy={busy} t={t} onSave={async (face) => { setBusy(true); const r = await writeLook({ face }); setBusy(false); if (r.error) return onError(r.error.message); onNote(t(lookNote(r))); onChanged(); }} />
           <label className="msgr-klabel" htmlFor={`role-${crew.id}`}>{t('crew.role')}</label>
@@ -4432,8 +4435,8 @@ function AccountDeleteCard({ session, onDeleted }) {
 function ProfileCard({ uid, onNote, onError, onAvatar, onSaved, part = 'all' }) { // part(폰 내 설정 하위 화면): 'profile' 사진·아이디·이름 / 'privacy' 찾기·요청 허용 / 'quiet' 조용한 시간 — 저장은 늘 행 전체(읽어 온 값 그대로 + 바꾼 칸)
   const { t } = useT();
   const [p, setP] = useState(null); const [busy, setBusy] = useState(false); const [draft, setDraft] = useState({ handle: '', display_name: '', email_search: true, handle_search: true, accept_requests: true, quiet_from: null, quiet_to: null });
-  const setAvatar = async (url) => { setBusy(true); const res = await supabase.from('msgr_profiles').upsert({ user_id: uid, avatar_url: url }).select('*').single(); setBusy(false); if (res.error) return onError(res.error.message); setP(res.data); onNote(t('profile.saved')); onAvatar?.(); };
-  const upAvatar = async (f) => { try { setBusy(true); const url = await uploadAvatar(uid, 'me', f); await setAvatar(url); } catch (e) { setBusy(false); onError(e.message); } };
+  const setAvatar = async (url) => { setBusy(true); const res = await supabase.from('msgr_profiles').upsert({ user_id: uid, avatar_url: url }).select('*').single(); setBusy(false); if (res.error) { onError(res.error.message); return false; } setP(res.data); onNote(t('profile.saved')); onAvatar?.(); return true; };
+  const upAvatar = async (f) => { try { setBusy(true); await uploadAndSave(uid, 'me', f, setAvatar); } catch (e) { setBusy(false); onError(e.message); } };
   useEffect(() => { q(supabase.from('msgr_profiles').select('*').eq('user_id', uid).maybeSingle()).then((row) => { setP(row ?? {}); if (row) setDraft({ handle: row.handle ?? '', display_name: row.display_name ?? '', email_search: !!row.email_search, handle_search: row.handle_search !== false, accept_requests: row.accept_requests !== false, quiet_from: row.quiet_from ?? null, quiet_to: row.quiet_to ?? null }); }).catch((e) => onError(e.message)); }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps
   const handleOk = !draft.handle || /^[a-z0-9][a-z0-9_.]{2,23}$/.test(draft.handle);
   const save = async () => {
@@ -5652,9 +5655,10 @@ function PersonalAgentCard({ crewId, uid, onClose, onNote, onError, onChanged, s
     const look = saveLook && Object.keys(patch).every((k) => k === 'face' || k === 'avatar_url'); // 얼굴·사진은 같은 에이전트의 내 행 전부에(유건 2026-10-05) — 이름·역할·소개·허용은 이 행만(종전)
     const r = look ? await saveLook(crewId, patch) : await supabase.from('msgr_crews').update(patch).eq('id', crewId).select('id');
     setBusy(false);
-    if (r.error) return onError(/msgr_not_allowed/.test(r.error.message) ? t('agentcard.lock.twin') : friendlyErr(r.error.message, t));
-    if (!(look ? r.ids : r.data)?.length) return onError(t('agentcard.notOwner'));
+    if (r.error) { onError(/msgr_not_allowed/.test(r.error.message) ? t('agentcard.lock.twin') : friendlyErr(r.error.message, t)); return false; }
+    if (!(look ? r.ids : r.data)?.length) { onError(t('agentcard.notOwner')); return false; }
     onNote(t(look && r.onlyHere ? 'crew.look.onlyHere' : okKey)); await load(); onChanged?.(); // 대표가 아닌 이 행만 저장됐으면 따로 알린다(분리 검수 2026-10-05 #6)
+    return true; // 사진 올리기(uploadAndSave)가 저장 실패 때 올린 파일을 지운다
   };
   const locks = personalCardLocks(crew);
   const lockNote = (why) => <span className="ph-lockwhy"><I name="lock" size={12} />{t(why === 'twin' ? 'agentcard.lock.twin' : 'agentcard.lock.argo')}</span>;
@@ -5672,7 +5676,7 @@ function PersonalAgentCard({ crewId, uid, onClose, onNote, onError, onChanged, s
             <h3>{t('crew.profile')}</h3>
             <label className="msgr-klabel">{t('agentcard.name')}</label>
             <div className="ph-lockedfield"><span>{crew.display_name}</span>{lockNote(locks.name)}</div>
-            <AvatarEdit name={crew.display_name} crew crewId={crew.id} url={agentLook(crew.id, looks, crew.face, crew.avatar_url ?? null).photo ?? null} busy={busy} t={t} onUpload={async (f) => { try { setBusy(true); const url = await uploadAvatar(uid, `crew-${crew.id}`, f); setBusy(false); await save({ avatar_url: url }); } catch (e) { setBusy(false); onError(e.message); } }} onRemove={() => save({ avatar_url: null })} />
+            <AvatarEdit name={crew.display_name} crew crewId={crew.id} url={agentLook(crew.id, looks, crew.face, crew.avatar_url ?? null).photo ?? null} busy={busy} t={t} onUpload={async (f) => { try { setBusy(true); await uploadAndSave(uid, `crew-${crew.id}`, f, (url) => { setBusy(false); return save({ avatar_url: url }); }); } catch (e) { setBusy(false); onError(e.message); } }} onRemove={() => save({ avatar_url: null })} />
             <label className="msgr-klabel">{t('crew.face')}</label>
             <FacePicker crew={crew} busy={busy} t={t} onSave={(face) => save({ face })} />
             <label className="msgr-klabel" htmlFor={`prole-${crew.id}`}>{t('crew.role')}</label>
