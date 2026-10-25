@@ -1,0 +1,118 @@
+// 메신저 v2 에이전트 프로필 저장 — 얼굴·사진·직무·소개(20261025130000, 0.1.65 결함 3 + 검수 D1)을 실제 Postgres에서 본다.
+// 경우: 주인 앱 기기 얼굴 저장·사진 저장·지우기, 같은 값 다시 = 쓰기 0(xmin), 남의 에이전트·본체 기기·기기 없음·은퇴 에이전트 거절,
+// 잘못된 키·모양, 사진은 객체 경로(avatars/<uid>/<파일명>)만 — 전체 주소·외부 호스트·?·#·..·남의 폴더 거절(#1163 엄격 검수 B1),
+// 본체 동기화(face_hash null)가 저장한 얼굴을 지키는지(종전엔 null로 덮음), 되돌림은 저장 함수만 지우고 동기화 보호는 남는지(B3).
+// 실행: bash scripts/billing-pg-drill.sh test/msgr2-agent-look-pg.test.mjs
+import test, { before } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { setup, seedDevice } from './helpers/msgr2-work-pg.mjs';
+
+const DB = process.env.ARGO_PG_TEST_URL;
+const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/msgr2-agent-look-pg.test.mjs';
+const DOWN = fileURLToPath(new URL('../scripts/rollback/20261025130000_msgr2_agent_look.down.sql', import.meta.url));
+const MIG = fileURLToPath(new URL('../supabase/migrations/20261025130000_msgr2_agent_look.sql', import.meta.url));
+const U = { A: 'e2000000-0000-4000-8000-00000000000a', B: 'e2000000-0000-4000-8000-00000000000b' };
+const FACE = { v: 2, shape: 3, color: 10 };
+const photo = (uid) => `avatars/${uid}/crew-x-1.jpg`; // 객체 경로(공개 주소는 앱이 만든다)
+let db, appA, runA, appB; const G = {};
+
+const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+const agent = (owner, slug, status = 'active') => db.sql('insert into public.msgr2_agents (owner_user_id, ws_id, slug, display_name, status) values (' + q(owner) + ", 'ws', " + q(slug) + ', ' + q(slug) + ', ' + q(status) + ') returning id');
+const setLook = (dev, ag, patch) => db.as(dev.uid, dev.sid, `select public.msgr2_agent_set_profile(${q(ag)}, ${db.lit(patch)})`);
+const setLookErr = (dev, ag, patch) => db.asErr(dev.uid, dev.sid, `select public.msgr2_agent_set_profile(${q(ag)}, ${db.lit(patch)})`);
+const row = (ag) => JSON.parse(db.sql(`select json_build_object('face', face, 'avatar_path', avatar_path) from public.msgr2_agents where id = ${q(ag)}`));
+const prof = (ag) => JSON.parse(db.sql(`select json_build_object('role', role_text, 'bio', bio, 'by_user', role_by_user, 'name', display_name) from public.msgr2_agents where id = ${q(ag)}`));
+const sync = (dev, list) => db.as(dev.uid, dev.sid, `select public.msgr2_agent_sync(${db.lit(list)})`);
+
+before(() => {
+  if (!DB) return;
+  db = setup(DB);
+  appA = seedDevice(db, U.A, 'app'); runA = seedDevice(db, U.A, 'runner'); appB = seedDevice(db, U.B, 'app');
+  G.A = agent(U.A, 'pepper'); G.B = agent(U.B, 'other'); G.R = agent(U.A, 'old', 'retired');
+});
+
+test('주인 앱 기기: 얼굴 저장 → 목록이 읽는 행이 바뀐다, 같은 값 다시 = 쓰기 0', { skip }, () => {
+  assert.equal(setLook(appA, G.A, { face: FACE }), 't');
+  assert.deepEqual(row(G.A).face, FACE);
+  const x = db.xmins('msgr2_agents', `id = ${q(G.A)}`);
+  assert.equal(setLook(appA, G.A, { face: FACE }), 'f', '바뀐 것 없음');
+  assert.equal(db.xmins('msgr2_agents', `id = ${q(G.A)}`), x, '같은 값은 쓰지 않는다(xmin 그대로)');
+});
+
+test('사진: 자기 폴더 객체 경로만 저장, null로 지우기, 얼굴은 그대로, 같은 값 쓰기 0', { skip }, () => {
+  assert.equal(setLook(appA, G.A, { avatar_path: photo(U.A) }), 't');
+  assert.deepEqual(row(G.A), { face: FACE, avatar_path: photo(U.A) });
+  const x = db.xmins('msgr2_agents', `id = ${q(G.A)}`);
+  assert.equal(setLook(appA, G.A, { avatar_path: photo(U.A) }), 'f'); assert.equal(db.xmins('msgr2_agents', `id = ${q(G.A)}`), x);
+  assert.equal(setLook(appA, G.A, { avatar_path: null }), 't');
+  assert.deepEqual(row(G.A), { face: FACE, avatar_path: null });
+  const pub = `/storage/v1/object/public/msgr-avatars/avatars/${U.A}/t.png`;
+  for (const bad of [`https://evil.example${pub}`, `https://proj.supabase.co${pub}?y=1`, `https://proj.supabase.co${pub}#/x`, // 엄격 검수 B1이 저장된 세 형태
+    `https://proj.supabase.co${pub}`, photo(U.B), `avatars/${U.A}/../${U.B}/a.jpg`, `avatars/${U.A}/a.jpg?y=1`, `avatars/${U.A}/a.jpg#x`, `avatars/${U.A}/sub/a.jpg`,
+    `avatars/${U.A}/`, `/avatars/${U.A}/a.jpg`, `avatars/${U.A}/${'a'.repeat(300)}.jpg`]) {
+    assert.match(setLookErr(appA, G.A, { avatar_path: bad }) ?? '', /msgr2_bad_profile/, bad.slice(0, 70));
+  }
+  assert.match(setLookErr(appA, G.A, { avatar_url: photo(U.A) }) ?? '', /msgr2_bad_profile/, '옛 키(avatar_url)는 받지 않는다');
+  assert.match(db.raw(['-c', `update public.msgr2_agents set avatar_path = 'https://evil.example/x.png' where id = ${q(G.B)}`]).stderr, /check/i, '칸 검사도 같은 모양만');
+});
+
+test('거절: 남의 에이전트·본체 기기·은퇴 에이전트·잘못된 키와 모양', { skip }, () => {
+  assert.match(setLookErr(appB, G.A, { face: FACE }) ?? '', /msgr2_not_owner/);
+  assert.match(setLookErr(runA, G.A, { face: FACE }) ?? '', /msgr2_app_device_required/, '앱 기기만');
+  assert.match(setLookErr({ uid: U.A, sid: null }, G.A, { face: FACE }) ?? '', /msgr2_app_device_required/, '기기 없음');
+  assert.match(setLookErr(appA, G.R, { face: FACE }) ?? '', /msgr2_not_owner/, '은퇴');
+  for (const bad of [{}, { display_name: 'x' }, { face: 'blue' }, { face: { pad: 'x'.repeat(300) } }, { avatar_path: 3 }]) {
+    assert.match(setLookErr(appA, G.A, bad) ?? '', /msgr2_bad_profile/, JSON.stringify(bad).slice(0, 40));
+  }
+  assert.deepEqual(row(G.B).face, null, '남의 행은 그대로');
+});
+
+test('직무·소개: 주인이 저장·지우기, 이름은 바꾸지 않는다, 길이 넘으면 거절, 남의 에이전트 거절', { skip }, () => {
+  assert.equal(setLook(appA, G.A, { role_text: ' 총괄 비서 ', bio: '회의록을 정리합니다' }), 't');
+  assert.deepEqual(prof(G.A), { role: '총괄 비서', bio: '회의록을 정리합니다', by_user: true, name: 'pepper' });
+  assert.equal(setLook(appA, G.A, { bio: '' }), 't'); assert.equal(prof(G.A).bio, null, '빈 소개 = 지움');
+  assert.match(setLookErr(appA, G.A, { bio: 'x'.repeat(301) }) ?? '', /msgr2_bad_profile/);
+  assert.match(setLookErr(appA, G.A, { display_name: '새 이름' }) ?? '', /msgr2_bad_profile/, '이름은 Argo 앱에서');
+  assert.match(setLookErr(appB, G.A, { role_text: 'x' }) ?? '', /msgr2_not_owner/);
+  assert.match(setLookErr(appA, G.A, { role_text: 3 }) ?? '', /msgr2_bad_profile/);
+});
+
+test('본체 동기화: 사람이 고친 직무는 덮지 않는다(쓰기 0), 고친 적 없는 에이전트는 종전대로 본체 직무', { skip }, () => {
+  const fresh = agent(U.A, 'fresh');
+  assert.equal(sync(runA, [{ ws_id: 'ws', slug: 'fresh', display_name: 'fresh', role_text: '본체 직무' }]), '1');
+  assert.equal(prof(fresh).role, '본체 직무');
+  setLook(appA, G.A, { role_text: '사람이 고친 직무' });
+  const x = db.xmins('msgr2_agents', `id = ${q(G.A)}`);
+  assert.equal(sync(runA, [{ ws_id: 'ws', slug: 'pepper', display_name: 'pepper', role_text: '본체 직무', face: null }]), '0');
+  assert.equal(db.xmins('msgr2_agents', `id = ${q(G.A)}`), x, '쓰기 0');
+  assert.equal(prof(G.A).role, '사람이 고친 직무');
+});
+
+test('본체 동기화: face_hash null(JSON null)을 보내도 저장한 얼굴을 지킨다 — 이름·역할은 종전대로 바뀐다', { skip }, () => {
+  setLook(appA, G.A, { face: FACE });
+  const before = db.xmins('msgr2_agents', `id = ${q(G.A)}`);
+  assert.equal(sync(runA, [{ ws_id: 'ws', slug: 'pepper', display_name: 'pepper', role_text: 'x', face: null }]), '0', '바뀐 것 없음 = 쓰기 0(직무는 사람이 고친 값)');
+  assert.equal(db.xmins('msgr2_agents', `id = ${q(G.A)}`), before);
+  assert.equal(sync(runA, [{ ws_id: 'ws', slug: 'pepper', display_name: '페퍼', role_text: '총괄' }]), '1', 'face 키 없음(SQL null) — 이름은 바뀐다');
+  assert.deepEqual(row(G.A).face, FACE);
+  assert.equal(db.sql(`select display_name || '/' || role_text from public.msgr2_agents where id = ${q(G.A)}`), '페퍼/사람이 고친 직무', '이름은 본체, 직무는 사람이 고친 값');
+  const other = { v: 2, shape: 1, color: 2 };
+  sync(runA, [{ ws_id: 'ws', slug: 'pepper', display_name: '페퍼', role_text: '총괄', face: other }]);
+  assert.deepEqual(row(G.A).face, other, '본체가 얼굴을 보내면 그 값');
+});
+
+test('되돌림(B3): 저장 함수만 사라지고, 동기화 보호와 칸·값은 남는다 — 되돌린 뒤 본체 동기화도 사람이 저장한 얼굴·직무를 지우지 않는다, 다시 적용하면 원상', { skip }, () => {
+  setLook(appA, G.A, { face: FACE, avatar_path: photo(U.A), role_text: '사람 직무', bio: '소개' });
+  db.psql(['-v', 'ON_ERROR_STOP=1', '-f', DOWN]);
+  assert.equal(db.sql("select count(*) from pg_proc where proname = 'msgr2_agent_set_profile'"), '0');
+  for (const col of ['avatar_path', 'bio', 'role_by_user']) assert.equal(db.sql(`select count(*) from information_schema.columns where table_name = 'msgr2_agents' and column_name = '${col}'`), '1', col);
+  assert.deepEqual(row(G.A), { face: FACE, avatar_path: photo(U.A) }, '값은 남긴다');
+  sync(runA, [{ ws_id: 'ws', slug: 'pepper', display_name: '페퍼', role_text: '본체 직무', face: null }]);
+  assert.deepEqual(row(G.A).face, FACE, '되돌린 뒤에도 본체 동기화가 저장한 얼굴을 지우지 않는다');
+  assert.equal(prof(G.A).role, '사람 직무', '사람이 고친 직무도');
+  db.psql(['-v', 'ON_ERROR_STOP=1', '-c', readFileSync(MIG, 'utf8')]);
+  assert.equal(setLook(appA, G.A, { face: FACE }), 'f', '다시 적용 — 얼굴이 그대로 남아 같은 값은 쓰기 0');
+  assert.equal(setLook(appA, G.A, { face: { v: 2, shape: 0, color: 0 } }), 't');
+});

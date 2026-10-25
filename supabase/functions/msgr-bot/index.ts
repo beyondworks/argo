@@ -4,14 +4,20 @@
 //   /bot<argo_bot_v2…>/<m>  → v2 봇(v2.js handleV2 + msgr2_bot_* RPC)
 //   그 밖(옛 v1 토큰 등)      → 일시 중단 응답(paused.js) — DB·외부 호출 없음. 옛 연결 도구가 다시 폴링하지 않게(2026-10-16 중단판 그대로).
 // RPC는 anon 키로 부른다(토큰·연결 코드가 자격 — v1과 같은 방식). 권한·정책은 DB가 판정한다. 비밀값: SUPABASE_URL·SUPABASE_ANON_KEY(엣지 기본값).
+// 롱폴 깨움(2026-10-25): 같은 anon 키로 Realtime 비공개 채널 'botw:…'(토큰에서 계산, wake.js)만 듣는다 — 받기 정책 msgr2_bot_wake_recv(20261025100000).
 // 배포(맥 one): `supabase functions deploy msgr-bot --no-verify-jwt` — 봇·스크립트는 Supabase JWT가 없다.
 import { parseRequest, handleLink, parseLinkPath, connectScript, createRejectMemory } from './core.js';
 import { CONNECT_PY } from './connect-bundle.js';
 import { routeOf, handleV2, linkRpcV2, pausedReply } from './v2.js';
+import { createWakeHub, wakeTopic } from './wake.js';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const rejects = createRejectMemory(); // 무효 토큰 거부 기억 — 이 인스턴스 메모리(core.js 주석). DB에 쓰지 않는다
+// 인스턴스 하나에 Realtime 연결 하나(채널은 롱폴마다 토픽별로 나눠 쓴다). 들어가기에 실패하면 처리기가 5초 폴링으로 돌아간다
+const realtime = createClient(SUPABASE_URL, ANON, { auth: { persistSession: false, autoRefreshToken: false } });
+const listen = createWakeHub(realtime);
 
 async function rpc(fn: string, args: Record<string, unknown>) {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
@@ -45,6 +51,6 @@ Deno.serve(async (req) => {
     const { status, body: out } = await handleLink(parseLinkPath(req.url) ?? '', (body && typeof body === 'object' ? body : {}) as Record<string, unknown>, linkRpcV2(rpc));
     return json(status, out);
   }
-  const { status, body: out } = await handleV2(parseRequest(req.url, Object.fromEntries(req.headers), body), rpc, { rejects });
+  const { status, body: out } = await handleV2(parseRequest(req.url, Object.fromEntries(req.headers), body), rpc, { rejects, listen, topicOf: wakeTopic });
   return json(status, out);
 });

@@ -114,6 +114,7 @@ const rpcs = {
   msgr2_device_revoke: ({ p_device }) => { const d = state.devices.find((x) => x.id === p_device); if (!d || d.revoked_at) return false; d.revoked_at = new Date().toISOString(); d.state = 'revoked'; if (d.is_current) setTimeout(() => fire(`v2:u:${uid}`, 'device_revoked', { device_id: d.id }), 50); return true; },
   // U6d(방·공간·초대·안 읽음·찾기·신고) 대역 — 메모리 표를 바꾸고 v2:u: 방 사건을 보낸다
   // 개인 방 목록(나 기준): 개인 종류 공간의 내 1:1·그룹방 — 친구가 연 방은 친구의 개인 공간(PM)에 있다(U6d·U8)
+  msgr2_agent_set_profile: ({ p_agent, p_patch }) => { const a = state.tables.msgr2_agents.find((x) => x.id === p_agent); if (!a || a.owner_user_id !== uid) throw Object.assign(new Error('msgr2_not_owner'), { code: '42501' }); if ('face' in p_patch) a.face = p_patch.face; if ('avatar_path' in p_patch) a.avatar_path = p_patch.avatar_path; if ('role_text' in p_patch) a.role_text = p_patch.role_text ?? ''; if ('bio' in p_patch) a.bio = p_patch.bio; return true; }, // 20261025130000 대역(프로필 저장)
   msgr2_dm_list: ({ p_include_groups }) => { const T_ = state.tables; const personal = new Set(T_.msgr2_spaces.filter((x) => x.kind === 'personal').map((x) => x.id)); return T_.msgr2_rooms.filter((r) => personal.has(r.space_id) && !r.archived_at && (r.kind === 'direct' || (p_include_groups && r.kind === 'private')) && T_.msgr2_room_members.some((m) => m.room_id === r.id && m.member_kind === 'user' && m.member_id === uid && !m.removed_at)).map((r) => { const mem = T_.msgr2_room_members.filter((m) => m.room_id === r.id && !m.removed_at); const other = r.kind === 'direct' ? mem.find((m) => m.member_kind === 'user' && m.member_id !== uid)?.member_id ?? null : null; const last = T_.msgr2_messages.filter((m) => m.room_id === r.id && m.kind !== 'system').sort((a, b) => b.id - a.id)[0]; return { room_id: r.id, space_id: r.space_id, kind: r.kind, name: r.name ?? '', other_user_id: other, other_name: other === mate ? '민지' : null, members: mem.map((m) => ({ kind: m.member_kind, id: m.member_id, name: m.member_kind === 'agent' ? T_.msgr2_agents.find((a) => a.id === m.member_id)?.display_name : m.member_id === uid ? '유건' : '민지' })), agent_id: null, last_id: last?.id ?? null, last_at: last?.created_at ?? r.created_at, last_body: last?.body ?? '', created_by: r.created_by ?? uid }; }); },
   // 한 목록(메신저 단순화 2단계) — 서버 msgr2_inbox(20261022160000)와 같은 열·같은 판정: 내 활동 멤버 방, 보관·지운 공간 제외, 팀은 활동 공간 멤버만, 고정 → 최근 활동 순, 상한 200
   msgr2_inbox: ({ p_limit = 200 } = {}) => {
@@ -225,7 +226,7 @@ export const supabase = {
   // supabase-js(realtime-js RealtimeClient.channel)처럼 같은 토픽의 채널이 있으면 그것을 돌려주고, 가입한 채널에 presence 콜백을 붙이면 던진다(2026-10-23 '모두에게' 화면 깨짐 재현)
   channel: (topic) => {
     const had = state.topics.get(topic)?.values().next().value; if (had) return had;
-    const c = { topic, handlers: [], joined: false, on(kind, filter, cb) { if (c.joined && (kind === 'presence' || kind === 'postgres_changes')) throw new Error(`cannot add \`${kind}\` callbacks for realtime:${topic} after \`subscribe()\`.`); c.handlers.push({ kind, filter, cb }); return c; }, subscribe(cb) { c.joined = true; queueMicrotask(() => cb?.('SUBSCRIBED')); return c; }, presenceState: () => ({}), send: async () => 'ok', unsubscribe: async () => {} };
+    const c = { topic, handlers: [], joined: false, on(kind, filter, cb) { if (c.joined && (kind === 'presence' || kind === 'postgres_changes')) throw new Error(`cannot add \`${kind}\` callbacks for realtime:${topic} after \`subscribe()\`.`); c.handlers.push({ kind, filter, cb }); return c; }, subscribe(cb) { c.joined = true; queueMicrotask(() => cb?.('SUBSCRIBED')); return c; }, presenceState: () => state.presState?.[topic] ?? {}, send: async () => 'ok', unsubscribe: async () => {} };
     if (!state.topics.has(topic)) state.topics.set(topic, new Set()); state.topics.get(topic).add(c); return c;
   },
   removeChannel: async (c) => { state.topics.get(c.topic)?.delete(c); return 'ok'; }, removeAllChannels: async () => { state.topics.clear(); }, getChannels: () => [...state.topics.values()].flatMap((s) => [...s]),
@@ -234,14 +235,17 @@ export const supabase = {
     const known = (name) => bucket === 'msgr' && !String(name).startsWith('msgr/') && state.tables.msgr2_attachments.some((a) => a.storage_path === `msgr/${name}`);
     const bad = (name) => ({ data: null, error: { message: `Object not found: ${bucket}/${name}`, statusCode: '400' }, status: 400 });
     return {
-      upload: async (path) => { call({ storage: 'upload', bucket, path }); return bucket === 'msgr' && !String(path).startsWith('msgr/') ? { data: { path }, error: null } : bad(path); },
+      upload: async (path) => { call({ storage: 'upload', bucket, path }); if (bucket === 'msgr-avatars') { (state.avatars ??= new Set()).add(path); return { data: { path }, error: null }; } return bucket === 'msgr' && !String(path).startsWith('msgr/') ? { data: { path }, error: null } : bad(path); },
+      getPublicUrl: (path) => ({ data: { publicUrl: `https://fixture.supabase.co/storage/v1/object/public/${bucket}/${path}` } }), // 사진(msgr-avatars) 대역 — 공개 주소 ↔ 경로(#1163 B1)
       list: async () => ({ data: [], error: null }),
-      remove: async (paths) => { call({ storage: 'remove', bucket, paths }); return (paths ?? []).every(known) ? { data: paths.map((name) => ({ name })), error: null } : bad(paths.find((p) => !known(p))); },
+      remove: async (paths) => { call({ storage: 'remove', bucket, paths }); if (bucket === 'msgr-avatars') { for (const x of paths ?? []) state.avatars?.delete(x); return { data: (paths ?? []).map((name) => ({ name })), error: null }; } return (paths ?? []).every(known) ? { data: paths.map((name) => ({ name })), error: null } : bad(paths.find((p) => !known(p))); },
       createSignedUrl: async (path) => { call({ storage: 'sign', bucket, path }); return known(path) ? { data: { signedUrl: 'data:text/plain,fixture' }, error: null } : bad(path); },
     };
   } },
 };
 // 시험·캡처가 쓰는 대역: 본체의 진행 봉투(v2:wk:), 새 일 표지(v2:u: work)
+// 본체 접속 표시 대역(v2:pr:<주인>, 0.1.65 결함 2 근본 수정): 그 주인 채널의 Presence 상태를 바꾸고 sync를 알린다. agents = 켜진 에이전트 id 목록(빈 배열 = 나감)
+state.presence = (owner, agents) => { const topic = `v2:pr:${owner}`; (state.presState ??= {})[topic] = agents.length ? { 'dev-fixture': [{ v: 1, agents }] } : {}; for (const c of state.topics.get(topic) ?? []) for (const h of c.handlers) if (h.kind === 'presence') h.cb({}); };
 state.progress = (work, stage) => fire(`v2:wk:${work}`, 'envelope', { v: 1, id: 'e', work, seq: 1, type: 'work.progress', at: new Date().toISOString(), data: { stage } });
 state.work = (w) => { const all = state.tables.msgr2_works; const i = all.findIndex((x) => x.id === w.id); if (i >= 0) Object.assign(all[i], w); else all.push(w); fire(`v2:u:${uid}`, 'work', { work: all.find((x) => x.id === w.id) }); };
 state.devices = [

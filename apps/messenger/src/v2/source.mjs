@@ -71,7 +71,7 @@ const RPCS = {
   empty: { msgr_my_badge: 0, msgr_my_ai_consent: null },
   write: new Set(['msgr_crew_join_decide', // 방·1:1·신고·초대·안 읽음·찾기는 U6d RPC로 바꿔 보낸다(legacy-rpc.mjs LEGACY_RPCS)
     'msgr_restore_org', 'msgr_join_by_domain', 'msgr_mute_crew', 'msgr_unmute_crew', 'msgr_set_member_profile', 'msgr_work_create', 'msgr_work_cancel',
-    'msgr_work_resume', 'msgr_request_stop', 'msgr_bot_create', 'msgr_bot_rotate', 'msgr_bot_revoke', 'msgr_bot_rename', 'msgr_bot_set_role',
+    'msgr_work_resume', 'msgr_request_stop', 'msgr_bot_create', 'msgr_bot_rotate', 'msgr_bot_revoke', 'msgr_bot_rename',
     'msgr_bot_set_mirror_all', 'msgr_crew_routine_edit', 'msgr_server_link_create', 'msgr_server_link_approve', 'msgr_report_resolve',
     'msgr_push_badge_resync']),
 };
@@ -394,9 +394,45 @@ function renameOr(spec, expr) {
   return String(expr).replace(/(^|,|\()([a-z_]+)\./g, (m, pre, c) => `${pre}${spec.cols?.[c] ?? c}.`);
 }
 
-/** 에이전트(옛 msgr_crews 모양). 조직 조건(org_id) = 그 팀 공간의 자리(seat), 자리의 allow·allow_users를 붙인다. */
+// 에이전트 열 — avatar_path·bio는 20261025130000(프로필 저장)부터 있다. 그 전 DB(라이브 적용 전)면 칸 없음 오류가 나므로 한 번 빼고 다시 읽고, 그 뒤로는 빼고 읽는다.
+const AGENT_COLS = 'id, owner_user_id, slug, display_name, role_text, face, hosting, status, created_at';
+const noColumn = (e) => !!e && (e.code === '42703' || e.code === 'PGRST204' || /avatar_path|\bbio\b/.test(String(e.message ?? '')));
+async function readAgents(ctx, build) { // ctx.photoCol: 이 클라이언트가 칸 없음을 본 적이 있나(클라이언트마다 — 모듈 전체에 남기지 않는다)
+  const raw = ctx.raw;
+  if (ctx.photoCol !== false) {
+    const r = await build(raw.from('msgr2_agents').select(`${AGENT_COLS}, avatar_path, bio`));
+    if (!noColumn(r.error)) return r;
+    ctx.photoCol = false;
+  }
+  return build(raw.from('msgr2_agents').select(AGENT_COLS));
+}
+const PROFILE_KEYS = new Set(['face', 'avatar_url', 'role_text', 'bio']); // 화면이 보내는 열. 이름(display_name)은 Argo 앱(본체)이 정한다
+// 사진은 DB에 객체 경로(avatars/<uid>/<파일명>)만 둔다(#1163 엄격 검수 B1 — 주소 안 문자열 검사는 외부 호스트·?·#를 통과시켰다).
+// 화면은 공개 주소를 주고받으므로 여기서 바꾼다: 저장 = 자기 프로젝트의 공개 버킷 주소일 때만 경로로, 읽기 = 경로 → 자기 프로젝트 공개 주소.
+const AVATAR_BUCKET = 'msgr-avatars';
+const AVATAR_PATH_RE = /^avatars\/[0-9a-f-]{36}\/[A-Za-z0-9._-]+$/;
+const okAvatarPath = (p) => typeof p === 'string' && p.length <= 300 && AVATAR_PATH_RE.test(p) && !p.includes('..');
+const avatarBase = (raw) => { try { return raw.storage.from(AVATAR_BUCKET).getPublicUrl('').data.publicUrl; } catch { return null; } };
+/** 공개 주소 → 객체 경로. 다른 호스트·쿼리·조각(#)·다른 버킷·모양이 다른 경로면 null */
+export function avatarPathOf(raw, url) {
+  const base = avatarBase(raw);
+  if (!base || typeof url !== 'string') return null;
+  let u; let b;
+  try { u = new URL(url); b = new URL(base); } catch { return null; }
+  if (u.origin !== b.origin || u.search || u.hash || url.includes('#') || url.includes('?')) return null;
+  const prefix = b.pathname.endsWith('/') ? b.pathname : `${b.pathname}/`;
+  if (!u.pathname.startsWith(prefix)) return null;
+  let path; try { path = decodeURIComponent(u.pathname.slice(prefix.length)); } catch { return null; }
+  return okAvatarPath(path) ? path : null;
+}
+/** 객체 경로 → 자기 프로젝트 공개 주소(모양이 다르면 null — 읽을 때도 같은 규칙) */
+export const avatarUrlOf = (raw, path) => (okAvatarPath(path) ? raw.storage.from(AVATAR_BUCKET).getPublicUrl(path).data.publicUrl : null);
+
+/** 에이전트(옛 msgr_crews 모양). 조직 조건(org_id) = 그 팀 공간의 자리(seat), 자리의 allow·allow_users를 붙인다.
+    쓰기는 얼굴·사진·직무·소개만(msgr2_agent_set_profile, 주인 앱 기기) — 0.1.65 결함 3·검수 D1: 종전엔 모두 v2_unsupported라 프로필 시트 저장이 전부 실패했다. */
 class CrewBuilder extends Builder {
   async run() {
+    if (this.verb === 'update') return this.saveProfile();
     if (this.verb !== 'select') return unsupported();
     const nr = await waitReady(this.ctx); if (nr) return nr;
     const raw = this.ctx.raw;
@@ -420,13 +456,12 @@ class CrewBuilder extends Builder {
     }
     let list = [];
     if (!ids || ids.length) { // 자리가 하나도 없으면 자리 있는 에이전트 조회는 하지 않는다(아래 '파견 전'만)
-      let q = raw.from('msgr2_agents').select('id, owner_user_id, slug, display_name, role_text, face, hosting, status, created_at');
-      if (ids) q = q.in('id', ids);
-      if (owner) q = q.eq('owner_user_id', owner);
       const seatedStatuses = statuses?.filter((x) => x !== 'available') ?? null; // 자리 있는 에이전트의 상태 조건('available'은 아래 '파견 전'이 따로)
-      if (seatedStatuses) q = q.in('status', seatedStatuses.length ? seatedStatuses : ['active']);
-      else q = q.neq('status', 'retired');
-      const r = await q;
+      const r = await readAgents(this.ctx, (q) => {
+        if (ids) q = q.in('id', ids);
+        if (owner) q = q.eq('owner_user_id', owner);
+        return seatedStatuses ? q.in('status', seatedStatuses.length ? seatedStatuses : ['active']) : q.neq('status', 'retired');
+      });
       if (r.error) return r;
       list = r.data ?? [];
     }
@@ -435,7 +470,7 @@ class CrewBuilder extends Builder {
       const { data: sess } = await raw.auth.getSession().catch(() => ({ data: null }));
       const me = sess?.session?.user?.id;
       if (me) {
-        const mine = await raw.from('msgr2_agents').select('id, owner_user_id, slug, display_name, role_text, face, hosting, status, created_at').eq('owner_user_id', me).eq('status', 'active');
+        const mine = await readAgents(this.ctx, (q) => q.eq('owner_user_id', me).eq('status', 'active'));
         if (!mine.error) list = list.concat((mine.data ?? []).filter((a) => !seats.has(a.id)).map((a) => ({ ...a, status: 'available', _avail: true })));
       }
     }
@@ -449,12 +484,38 @@ class CrewBuilder extends Builder {
     }
     let rows = list.map(({ _avail, ...a }) => { // _avail = 위 '파견 전' 표지(행에 남기지 않는다)
       const seat = seats?.get(a.id);
-      const row = { ...a, org_id: space, allow: seat?.allow ?? 'all', allow_users: seat?.allow_users ?? [], last_seen_at: null, folder: null, avatar_url: null, bio: null, _v2: true }; // 접속은 v2:pr:(Presence)로 본다 — 행 시각이 없다
+      const row = { ...a, org_id: space, allow: seat?.allow ?? 'all', allow_users: seat?.allow_users ?? [], last_seen_at: null, folder: null, avatar_url: avatarUrlOf(raw, a.avatar_path), bio: a.bio ?? null, _v2: true }; // 접속은 v2:pr:(Presence)로 본다 — 행 시각이 없다
       for (const c of want) if (c !== '*' && !(c in row)) row[c] = null;
       return row;
     });
     if (this.one) rows = rows[0] ?? null;
     return { data: rows, error: null, status: 200 };
+  }
+
+  /** update({ face?, avatar_url?, role_text?, bio? }).eq|in('id', …) → 에이전트마다 msgr2_agent_set_profile 1회. 다른 열(이름 등)·다른 조건(.is — 로그인 때 얼굴 채우기)은 종전대로 거절. */
+  async saveProfile() {
+    const patch = this.payload ?? {};
+    const keys = Object.keys(patch);
+    let ids = null;
+    for (const [op, args] of this.ops) {
+      if (op === 'eq' && args[0] === 'id' && ids == null) ids = [args[1]];
+      else if (op === 'in' && args[0] === 'id' && ids == null) ids = [...args[1]];
+      else return unsupported();
+    }
+    if (!ids?.length || !keys.length || keys.some((k) => !PROFILE_KEYS.has(k))) return unsupported();
+    const send = { ...patch };
+    if ('avatar_url' in send) {
+      const url = send.avatar_url; delete send.avatar_url;
+      send.avatar_path = url == null ? null : avatarPathOf(this.ctx.raw, url);
+      if (url != null && !send.avatar_path) return { data: null, error: { message: 'msgr2_bad_profile', code: '22023' }, status: 400, count: null }; // 자기 프로젝트 사진 주소가 아니다 — 요청 0
+    }
+    const done = [];
+    for (const id of ids) {
+      const r = await this.ctx.rpc('msgr2_agent_set_profile', { p_agent: id, p_patch: send });
+      if (r?.error) return { data: null, error: r.error, status: r.status ?? 400, count: null };
+      done.push({ id });
+    }
+    return { data: this.writeSelect ? done : null, error: null, status: 200 };
   }
 }
 

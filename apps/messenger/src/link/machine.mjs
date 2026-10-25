@@ -118,6 +118,7 @@ export function createLinkMachine(opts) {
     for (const w of watched.values()) { for (const ch of w.chans) { try { client.removeChannel(ch); } catch { /* 이미 닫힘 */ } } w.chans = []; w.pr = false; }
     for (const p of presence.values()) { try { client.removeChannel(p.ch); } catch { /* 이미 닫힘 */ } }
     presence.clear();
+    for (const o of owners.values()) o.pr = false;
     closeSpaces();
   }
   function closeSpaces() {
@@ -372,6 +373,7 @@ export function createLinkMachine(opts) {
     attempts = 0;
     setState(STATES.ready);
     for (const id of watched.keys()) joinWork(id);
+    joinOwners();
     if (pushToken !== sentPush) void syncPush(); // 등록 중에 토큰이 왔다
   }
 
@@ -551,18 +553,35 @@ export function createLinkMachine(opts) {
     });
     ch.subscribe(() => {}); // 끊기면 u:가 다시 붙을 때 함께 다시 가입한다(따로 재시도하지 않는다)
     w.chans.push(ch);
-    if (w.owner && !w.pr) {
-      let p = presence.get(w.owner);
-      if (!p) {
-        const owner = w.owner;
-        const pr = client.channel(names.presenceTopic(owner), { config: { private: true } });
-        pr.on('presence', { event: 'sync' }, () => emit('presence', { owner, state: pr.presenceState?.() ?? {} }));
-        pr.subscribe(() => {});
-        p = { ch: pr, refs: 0 };
-        presence.set(owner, p);
-      }
-      p.refs++; w.pr = true;
+    if (w.owner && !w.pr) { holdPresence(w.owner); w.pr = true; }
+  }
+  /** 주인 접속 표시 채널을 하나 더 잡는다(없으면 연다). ready일 때만 부른다. */
+  function holdPresence(owner) {
+    let p = presence.get(owner);
+    if (!p) {
+      const pr = client.channel(names.presenceTopic(owner), { config: { private: true } });
+      pr.on('presence', { event: 'sync' }, () => emit('presence', { owner, state: pr.presenceState?.() ?? {} }));
+      pr.subscribe(() => {});
+      p = { ch: pr, refs: 0 };
+      presence.set(owner, p);
     }
+    p.refs++;
+  }
+  // 화면이 보는 주인들의 접속 표시(2026-10-25 메신저 0.1.65 결함 2 근본 수정 — 에이전트 탭·목록의 켜짐). 일 화면과 같은 채널을 나눠 쓴다.
+  // 앱이 보일 때(ready)만 들어간다 — 백그라운드면 closeWorks가 닫고, 다시 ready가 되면 다시 들어간다. 주인 수 상한은 부르는 쪽(App)이 둔다.
+  const owners = new Map(); // owner → { refs, pr }
+  function joinOwners() { if (state !== STATES.ready) return; for (const [owner, o] of owners) if (!o.pr) { holdPresence(owner); o.pr = true; } }
+  function watchPresence(owner) {
+    if (!owner || terminal()) return () => {};
+    let o = owners.get(owner);
+    if (!o) { o = { owner, refs: 0, pr: false }; owners.set(owner, o); }
+    o.refs++; joinOwners();
+    let done = false;
+    return () => {
+      if (done) return; done = true;
+      if (--o.refs > 0) return;
+      owners.delete(owner); releasePresence(o);
+    };
   }
   /** 이 일이 잡은 주인 접속 표시를 놓는다 — 그 주인을 보는 일이 더 없으면 채널을 닫는다.
       바로 닫지 않고 한 박자 뒤(마이크로태스크)에 닫는다: 화면(useWorkCards)은 진행 중인 일 목록이 바뀔 때 모두 놓았다가 곧바로 다시 잡는다.
@@ -696,12 +715,13 @@ export function createLinkMachine(opts) {
     if (stopped) return;
     epoch++; clearTimer(); closeWorks(); closeUser(); wakeSleeps();
     for (const id of [...watched.keys()]) watched.delete(id);
+    owners.clear();
     stopped = true;
     setState(STATES.disconnected, 'stopped');
   }
 
   return {
-    start, stop, setForeground, nudge, retry, send, setPushToken, dropPushToken, resumePush, watchWork, setActiveRoom, clearMore, setSpaces, on,
+    start, stop, setForeground, nudge, retry, send, setPushToken, dropPushToken, resumePush, watchWork, watchPresence, setActiveRoom, clearMore, setSpaces, on,
     getState: () => state, getSnapshot: snapshot,
   };
 }

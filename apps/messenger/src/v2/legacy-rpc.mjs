@@ -33,6 +33,8 @@ export function legacyPreview(p) {
 }
 
 export const LEGACY_RPCS = {
+  // 외부 에이전트(봇) 직무 — v2는 에이전트 행 하나(msgr2_agents)라 사람 에이전트와 같은 입구(20261025130000, 검수 D1)
+  msgr_bot_set_role: (c, a) => c.call('msgr2_agent_set_profile', { p_agent: a.bot_crew, p_patch: { role_text: a.new_role_text ?? '' } }),
   // 신고(사람 글·에이전트 명의 글 — 시스템 글·내 글은 서버가 거절)
   msgr_report_message: (c, a) => c.call('msgr2_report_message', { p_message: a.msg, p_reason: a.reason ?? null }),
   // 팀 공간의 방·1:1 만들기. 옛 dm(사람 한 명) → 팀 1:1(짝당 하나), 그 밖의 dm(여럿·에이전트) → 비공개 방

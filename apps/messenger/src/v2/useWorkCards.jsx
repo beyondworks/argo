@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConfirmModal } from '@argo/ui';
 import { WorkCard } from './WorkCard.jsx';
-import { workCard, showInChat, stalledGuard } from './work-card.mjs';
+import { workCard, stalledGuard, shownInChat } from './work-card.mjs';
 import { loadWorks, workStatus, cancelWork, decideApproval } from './data.mjs';
 
 const LIVE = ['accepted', 'running', 'awaiting_approval'];
@@ -59,9 +59,9 @@ export function useWorkCards({ enabled, client, machine, chId, uid, event, nameO
     recheckSoon.current = reload(room).finally(() => { for (const k of keys) checked.current.add(k); recheckSoon.current = null; setTick((x) => x + 1); });
   }, [enabled, recheckKeys, reload]);
   const cards = useMemo(() => guarded.map(({ w, g }) => ({ w, card: workCard({ work: g.view, approval: approvalOf(w.id), progress: progress.get(w.id) ?? null, effects: effects.get(w.id) ?? [], uid }) }))
+    .filter((c) => shownInChat(c.card)) // 정상으로 끝난 일은 카드를 남기지 않는다(work-card.mjs shownInChat)
     .sort((a, b) => Date.parse(a.w.created_at) - Date.parse(b.w.created_at)), [guarded.map((x) => x.g.view.lease_until + x.g.view.state).join(), works, approvalOf, progress, effects, uid]); // eslint-disable-line react-hooks/exhaustive-deps
   const ids = useMemo(() => new Set(works.map((w) => w.id)), [works]);
-  const chatCards = useMemo(() => cards.filter((c) => showInChat(c.card)), [cards]); // 대화에 놓는 카드 — 끝난 일 카드는 뺀다(결과 글이 남는다)
 
   const decide = async (card, decision) => {
     if (busy || !card.approval) return;
@@ -84,14 +84,14 @@ export function useWorkCards({ enabled, client, machine, chId, uid, event, nameO
     /** 그리기 한 번의 시작 — 어느 카드를 이미 놓았는지 비운다 */
     begin: () => { placed.current = new Set(); },
     /** 시킨 글을 못 찾은 카드 중 이 글보다 먼저 생긴 것(시각 자리) */
-    before: (m, sourceIds) => (enabled ? chatCards.filter((c) => !placed.current.has(c.w.id) && !sourceIds.has(Number(c.w.source_message_id)) && Date.parse(c.w.created_at) < Date.parse(m.created_at)).map((c) => (placed.current.add(c.w.id), render(c))) : []),
+    before: (m, sourceIds) => (enabled ? cards.filter((c) => !placed.current.has(c.w.id) && !sourceIds.has(Number(c.w.source_message_id)) && Date.parse(c.w.created_at) < Date.parse(m.created_at)).map((c) => (placed.current.add(c.w.id), render(c))) : []),
     /** 이 글이 시킨 일의 카드(바로 아래) */
-    after: (m) => (enabled ? chatCards.filter((c) => !placed.current.has(c.w.id) && Number(c.w.source_message_id) === Number(m.id)).map((c) => (placed.current.add(c.w.id), render(c))) : []),
+    after: (m) => (enabled ? cards.filter((c) => !placed.current.has(c.w.id) && Number(c.w.source_message_id) === Number(m.id)).map((c) => (placed.current.add(c.w.id), render(c))) : []),
     /** 결재 대기 카드 수와 카드(방 '결재' 탭 — 옛 결재 행은 v2에서 비어 있다, UX 정리 P1 2026-10-22). 읽기 추가 없음 */
     pendingCount: enabled ? cards.filter((c) => c.card.phase === 'approval').length : 0,
     approvalRows: () => (enabled ? cards.filter((c) => c.card.phase === 'approval').map(render) : []),
     /** 아직 놓지 않은 카드(목록 끝) */
-    rest: () => (enabled ? chatCards.filter((c) => !placed.current.has(c.w.id)).map((c) => (placed.current.add(c.w.id), render(c))) : []),
+    rest: () => (enabled ? cards.filter((c) => !placed.current.has(c.w.id)).map((c) => (placed.current.add(c.w.id), render(c))) : []),
     modal: enabled && cancelAsk ? <ConfirmModal key="v2-cancel" title={t('v2.work.cancel.title')} description={t('v2.work.cancel.desc')} confirmLabel={t('v2.work.cancel.confirm')} busy={busy === `${cancelAsk.workId}:cancel`} onConfirm={doCancel} onClose={() => setCancelAsk(null)} /> : null,
   };
 }

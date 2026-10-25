@@ -28,7 +28,7 @@ function lastBodies() {
   return fns;
 }
 function serverSends() {
-  const out = { u: new Set(), s: new Set(), w: new Set(), other: [] };
+  const out = { u: new Set(), s: new Set(), w: new Set(), bot: new Set(), other: [] };
   for (const [name, { file, body }] of lastBodies()) {
     for (const m of body.matchAll(/_msgr2_send_u\s*\([^,]+,\s*'([a-z_]+)'/g)) out.u.add(m[1]);
     for (const m of body.matchAll(/_msgr2_send_s\s*\([^,]+,\s*'([a-z_]+)'/g)) out.s.add(m[1]);
@@ -37,6 +37,9 @@ function serverSends() {
     for (const m of body.matchAll(/realtime\.send\s*\(([\s\S]*?)\)\s*;/g)) {
       const args = m[1];
       if (['_msgr2_send_u', '_msgr2_send_s', '_msgr2_send_w'].includes(name)) continue;
+      // 봇 깨움(20261025100000): 토픽은 토큰 해시에서 계산한 'botw:…' — 엣지(msgr-bot wake.js)만 듣는다
+      const bw = /^\s*'\{\}'::jsonb\s*,\s*'([a-z_]+)'\s*,\s*public\._msgr2_bot_wake_topic\(/.exec(args);
+      if (name === '_msgr2_bot_wake' && bw) { out.bot.add(bw[1]); continue; }
       const ev = /,\s*'([a-z_]+)'\s*,\s*'(v2:[a-z]+:|[a-z]+:)'/.exec(args);
       if (!ev) { out.other.push(`${file}:${name}`); continue; }
       const topic = ev[2];
@@ -81,4 +84,13 @@ test('v2:w: — 서버는 봉투 type을 event로 보내고 본체는 모든 eve
   assert.match(host, /ch\.on\('broadcast', \{ event: '\*' \}, \(msg\) => \{ const env = unwrapEnvelope\(msg\?\.payload\)/);
   assert.doesNotMatch(host, /ch\.on\('broadcast', \{ event: 'envelope' \}/, '종전 결함 모양(event envelope만 받기)');
   assert.deepEqual(other, [], '토픽을 가르지 못한 realtime.send 직접 호출');
+});
+
+test('botw: — 서버가 봇 깨움 토픽으로 보내는 event는 엣지(wake.js)가 듣는 event 하나뿐이고, 본문은 비어 있다', () => {
+  const { bot } = serverSends();
+  const wake = readFileSync(`${ROOT}supabase/functions/msgr-bot/wake.js`, 'utf8');
+  const m = /\.on\('broadcast', \{ event: '([a-z_]+)' \}/.exec(wake);
+  assert.ok(m, 'wake.js 듣기');
+  assert.deepEqual([...bot], [m[1]], '서버가 보내는 깨움 event = 엣지가 듣는 event');
+  assert.match(lastBodies().get('_msgr2_bot_wake').body, /realtime\.send\('\{\}'::jsonb/, '일 내용·방 id를 싣지 않는다');
 });

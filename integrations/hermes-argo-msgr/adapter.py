@@ -48,8 +48,9 @@ from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageTyp
 
 logger = logging.getLogger(__name__)
 
-_POLL_TIMEOUT_S = 50          # server caps at 50 (2026-10-14 — was 20/25). An older server caps at 25 and answers earlier: still correct, just more polls.
-                              # Idle long polls dominated the edge invocation bill (~23s per bot). Incoming messages still arrive within the server's 5s poll step.
+_POLL_TIMEOUT_S = 140         # 2026-10-25: server holds up to timeout + 8s (cap 140s, under the 150s edge limit) and wakes on a broadcast when work arrives,
+                              # so a longer poll costs no delivery delay — it only cuts idle calls (idle bot: ~0.43 edge calls/min vs 1.2 at 50s).
+                              # Older servers cap at 50 (or 25) and answer earlier: still correct, just more polls. Socket timeout below = this + 15s.
 _BACKOFF_MAX_S = 30
 # 실측(2026-09-23, VPS 11개 봇 76시간 로그): 실패하는 getUpdates 호출은 3.34초(p10 3.28 / p90 4.57)에
 # 일정하게 죽는다 — 서버측 Postgres statement_timeout(≈3초)이 msgr_bot_updates_with_delivery RPC를 끊는 것.

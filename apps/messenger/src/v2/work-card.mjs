@@ -39,9 +39,9 @@ export function workCard({ work, approval = null, progress = null, effects = [],
   };
 }
 
-/** 대화에 카드를 놓는가 — 끝난 일('○○의 일 · 끝났습니다')은 놓지 않는다(결과 글이 대화에 남는다, 유건 사용 검수 2026-10-24).
-    진행·결재 대기·실패·취소·만료·결과 모름은 그대로 놓는다(할 일이나 이유가 있다). 결재 탭 개수는 이 거르기와 무관 */
-export const showInChat = (card) => card?.phase !== 'done';
+/** 채팅에 카드를 남기는가 — 정상으로 끝난 일(done)은 남기지 않는다. 에이전트 답 말풍선이 결과다(유건 2026-10-25 "“00의 일. 끝났습니다.” 이 문구 안 뜨게 해줘").
+    진행 중(받기 기다림·받음·생각하는 중)·결재 대기·실패·취소·받은 에이전트 없음·결과 모름은 사용자가 알아야 하므로 남긴다. */
+export const shownInChat = (card) => card.phase !== 'done';
 
 /** 리스 길이(서버 설정 msgr2_lease_s 기본 600초). 리스 연장(accept 다시 보내기)은 방송이 없어, 화면이 받은 lease_until은 오래된 값일 수 있다. */
 export const LEASE_MS = 600_000;
