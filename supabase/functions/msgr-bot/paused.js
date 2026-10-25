@@ -15,6 +15,25 @@ const json = (status, body, extra = {}) => ({ status, headers: { 'Content-Type':
 const refuse = (status, label) => json(status, { ok: false, error_code: status, description: `${label}: ${PAUSED_REASON}`, parameters: { retry_after: PAUSED_RETRY_S } },
   { 'Retry-After': String(PAUSED_RETRY_S) });
 
+// 응답을 늦게 주기(2026-10-25 남은 옛 v1 토큰 호출 줄이기 — 맥 one 운영 10분: node getUpdates 429 214건(2곳)·Python getMe 401 41건(1곳)).
+//   retry_after를 따르지 않는 옛 연결 도구가 남았다 — OpenClaw ≤0.3.3은 429에 1→30초 사다리(받기 요청 timeout=20, 35초에 스스로 끊음),
+//   Hermes는 401에서 멈추지만 Hermes 게이트웨이가 약 15초마다 다시 연결한다(getMe, urllib 30초). 그래서 같은 응답을 클라이언트가 끊기 전까지 붙잡았다가 준다.
+//   DB·외부 호출 없음(타이머만 — CPU 0). 엣지 벽시계 상한(150초) 아래. 새 연결 도구(retry_after를 따르는 0.3.4+·0.3.7+)는 받은 뒤 1시간을 쉰다(종전 그대로).
+export const HOLD_MAX_MS = 140_000;       // 엣지 150초 아래(v2 롱폴과 같은 상한)
+export const HOLD_SLACK_S = 8;            // 받기: 요청 timeout + 8초(클라이언트는 timeout + 15초에 끊는다 — OpenClaw·Hermes 모두)
+export const HOLD_GETME_MS = 20_000;      // Python getMe: urllib 기본 30초보다 짧게
+/** 이 중단 응답을 내기 전에 붙잡을 시간(ms). query = URL 검색값(getUpdates의 timeout). */
+export function pausedHoldMs({ path = '/', userAgent = '', timeout = null } = {}) {
+  if (/\/connect\/?$/.test(path) || /\/link\//.test(path)) return 0;
+  const botMethod = (path.split('/').filter(Boolean).pop() ?? '').replace(/[^A-Za-z]/g, '');
+  if (botMethod === 'getUpdates') {
+    const t = Number(timeout);
+    return Number.isFinite(t) && t > 0 ? Math.min((t + HOLD_SLACK_S) * 1000, HOLD_MAX_MS) : 0; // timeout을 안 보낸 클라이언트는 곧바로(끊는 시각을 모른다)
+  }
+  if (botMethod === 'getMe' && !/^node\b/i.test(userAgent)) return HOLD_GETME_MS; // node getMe는 200(멈춤 표지 봇)으로 곧바로 — 받기에서 붙잡는다
+  return 0;
+}
+
 /** @param {{ method?: string, path?: string, userAgent?: string }} req — method = HTTP 메서드, path = URL 경로 */
 export function pausedReply({ method = 'GET', path = '/', userAgent = '' } = {}) {
   if (/\/connect\/?$/.test(path) || /\/link\//.test(path)) return { status: 410, headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: `${PAUSED_REASON}\n` }; // VPS 서버 연결 스크립트·보고
