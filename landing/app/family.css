@@ -746,6 +746,8 @@ html:has(.p-office) ::selection {
 }
 .m-get .m-actions { margin: 34px 0 18px; }
 .m-get .download-note a { color: inherit; text-decoration: underline; }
+.p-messenger .m-get .download-note { text-wrap: balance; }
+.p-messenger .m-get .download-note a { white-space: nowrap; } /* 폰 폭에서 'Intel Mac'·'Android APK'가 줄 끝에서 쪼개지지 않게(2026-10-25) */
 
 @media (max-width: 1080px) {
   .m-hero { grid-template-columns: 1fr; }
@@ -1377,6 +1379,15 @@ html[lang='ko'] .fam-page :is(.m-display, .fam-title, .m-get-title) {
 .p-messenger .m-crowd-faces { gap: 14px; }
 :is(.p-messenger, .p-office) .m-get-title { font-size: clamp(34px, 3.6vw, 56px); font-weight: 740; line-height: 1.05; letter-spacing: -0.032em; margin-bottom: 14px; }
 .p-messenger .m-get .m-actions { justify-content: center; margin: 28px 0 16px; }
+.p-messenger .m-get .m-get-plan { margin: 0 0 10px; font-size: 15px; line-height: 1.5; color: var(--fg-2); } /* 2026-10-25 재공개 — 'Pro 플랜에서 사용할 수 있습니다' 한 줄(버튼 아래, 직링크 위) */
+/* 버튼 넷이 한 줄에 안 들어가는 폭에서는 3+1로 꺾여 하나만 혼자 남는다(버튼 쌓임) — 2×2 같은 폭 격자, 폰 폭은 한 줄에 하나(2026-10-25) */
+@media (max-width: 1100px) {
+  .p-messenger .m-get .m-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: min(100%, 680px); }
+  .p-messenger .m-get .m-actions .fam-btn { justify-content: center; }
+}
+@media (max-width: 600px) {
+  .p-messenger .m-get .m-actions { grid-template-columns: minmax(0, 1fr); width: min(100%, 360px); }
+}
 
 @media (max-width: 940px) {
   .p-messenger .cv-v-row,
@@ -1419,7 +1430,7 @@ html[lang='ko'] .fam-page :is(.ph-name em, .ph-head span, .ph figcaption) { lett
 .p-messenger .hero-3d .m-hero-copy { position: relative; z-index: 1; gap: 22px; max-width: min(540px, 33vw); } /* 필름의 빈 자리(42%)보다 좁게 — 첫 장면 카드와 닿지 않게 */
 .p-messenger .m-display { font-size: clamp(38px, 3.6vw, 64px); font-weight: 740; line-height: 1.06; letter-spacing: -0.032em; text-wrap: balance; }
 .p-messenger .m-hero .fam-lede { max-width: 46ch; }
-.p-messenger .m-platforms { line-height: 1.8; }
+.p-messenger .m-platforms { line-height: 1.8; display: block; text-wrap: balance; } /* 폰 폭에서 마지막 줄에 한 단어(ANDROID)만 남지 않게 */
 @media (max-width: 1080px) {
   .p-messenger .m-hero.hero-3d { display: block; min-height: 0; }
   .p-messenger .hero-3d .m-hero-copy { max-width: 620px; }
@@ -1859,5 +1870,4 @@ html[lang='ko'] .fam-page :is(.ph-name em, .ph-head span, .ph figcaption) { lett
   opacity: 0.62;
 }
 .family-card .fc-name .family-soon { font-size: 11px; vertical-align: middle; margin-left: 10px; color: var(--fg-3); opacity: 1; }
-.p-messenger .m-get .o-wait-form { margin-inline: auto; width: min(100%, 560px); }
 @media (max-width: 640px) { .family-switch .family-soon { display: none; } } /* 좁은 화면의 스위처는 이름만 — 카드·페이지 표지가 대신 알린다 */
