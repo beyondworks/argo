@@ -370,6 +370,8 @@ const DICT = {
   'updates.note.freeNoMsgrServer': ["무료 계정은 메신저 서버에 아무것도 저장하지 않습니다.", "Free accounts store nothing on the Messenger server."],
   'updates.note.connStability': ["연결 안정성과 보안을 높였습니다.", "Improved connection stability and security."],
   'updates.note.orgMemorySplit': ["조직 방 대화는 개인 기억에 섞지 않고 조직 칸에 따로 둡니다. 조직을 나가면 그 조직의 대화 기록이 이 PC에서도 지워집니다.", "Conversations in organization rooms are no longer mixed into your personal memory; they're kept in a separate organization section. When you leave an organization, its conversation records are removed from this PC too."],
+  'updates.note.syncLighter': ["이 PC에서만 바뀐 내용을 동기화할 때 불필요한 다운로드를 줄였습니다.", "Syncing changes made only on this PC now skips unneeded downloads."],
+  'updates.note.teamRoomPrivacy': ["팀 방에서 보낸 지시와 결재 원문은 활동 기록에 남기지 않습니다.", "Instructions and approvals sent in team rooms are no longer written to the activity log."],
   'updates.note.msgrPausedSettings': ["메신저가 일시 중단된 동안 설정에서 메신저 항목을 숨기고, 출시 알림 신청과 옮겨 둔 메신저 기록 폴더 열기만 보여 줍니다.", "While Messenger is paused, Settings hides the Messenger items and shows only the sign-up for launch notifications and a link to open the archived Messenger history folder."],
   'updates.note.idleLess': ["에이전트가 쉬는 동안 서버에 보내는 요청을 더 줄였습니다. 그래서 첫 알림이 조금(약 30초) 늦게 올 수 있습니다.", "Agents now send even fewer requests to the server while idle, so the first notification may arrive a little later (about 30 seconds)."],
   'updates.note.msgrQuiet': ["에이전트가 쉬는 동안 서버에 보내는 확인을 크게 줄였습니다. 새 조직·채널에 올라온 글에는 더 빨리 반응합니다.", "Agents now check the server far less while idle, and respond faster to messages in new organizations and channels."],
