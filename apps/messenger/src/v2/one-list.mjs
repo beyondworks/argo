@@ -28,13 +28,16 @@ export function oneListOrgs(rows) {
 /** 거르개. filter: all | unread(음소거 제외 안 읽음) | agents(에이전트와의 대화), org: 조직 id(그 조직 방만) 또는 null
     agents = 에이전트 1:1(peer_kind agent) 또는 사람은 나뿐이고 에이전트가 있는 방(내 에이전트 회의방·팀 공간 에이전트 1:1).
     사람이 둘 이상인 방은 에이전트가 들어 있어도 빼낸다 — 에이전트가 파견된 팀 채널·사람 방이 다 나와 칩이 '전체'와 다르지 않았다(유건 사용 검수 2026-10-23). */
-export function oneListView(rows, { filter = 'all', org = null, q = '' } = {}) {
+export function oneListView(rows, { filter = 'all', org = null, q = '', hit = null } = {}) { // hit(row): 서버 본문 찾기에서 맞은 방(검수 D3 — 폰 검색이 방 이름만 걸렀다)
   const needle = String(q ?? '').trim().toLowerCase();
   return (rows ?? []).filter((r) => (!org || (r.space_kind === 'team' && r.space_id === org))
     && (filter !== 'unread' || (r.unread > 0 && !r.muted))
     && (filter !== 'agents' || r.peer_kind === 'agent' || (r.agents > 0 && (r.users ?? 0) <= 1))
-    && (!needle || String(r._title ?? r.room_name ?? '').toLowerCase().includes(needle) || String(r.space_name ?? '').toLowerCase().includes(needle)));
+    && (!needle || String(r._title ?? r.room_name ?? '').toLowerCase().includes(needle) || String(r.space_name ?? '').toLowerCase().includes(needle) || !!hit?.(r)));
 }
+
+/** 서버 본문 찾기(msgr2_search) 결과 → 맞은 방 id 집합. 한 목록은 공간을 섞으므로 공간으로 거르지 않는다(옛 msgr_tab_search 번역은 지금 공간의 방만 남겼다). */
+export const oneListSearchHits = (data) => new Set([...(data?.messages ?? []).map((m) => m.room_id), ...(data?.rooms ?? []).map((x) => x.id)].filter(Boolean));
 
 /** 안 읽음 합계(음소거 제외) — 폰 '대화' 탭 숫자 */
 /** 폰 칩 줄의 실제 거르기(검수 D2, 2026-10-25) — 폰은 칩(전체·안읽음·에이전트)과 조직 고르기가 한 줄이고 강조는 하나만 보인다(조직을 고르면 칩 강조가 꺼진다).

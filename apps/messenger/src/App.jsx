@@ -32,7 +32,7 @@ import { InvitesCard as V2InvitesCard } from './v2/InvitesCard.jsx';
 import { v2SearchFound } from './v2/search.mjs';
 import { systemLine as v2SystemLine } from './v2/system-text.mjs';
 import { loadSpaces as v2LoadSpaces, decideApproval as v2DecideApproval } from './v2/data.mjs';
-import { loadOneList, oneListView, oneListOrgs, oneListSpace, oneListBump, oneListSeen, oneListUnread, oneListTitle, oneListPair, oneListPinOrder, oneListSort, oneListAgentFolds, oneListChipFilter, ONE_LIST_FILTERS, ONE_LIST_LIMIT } from './v2/one-list.mjs'; // 한 목록(메신저 단순화 2단계)
+import { loadOneList, oneListView, oneListOrgs, oneListSpace, oneListBump, oneListSeen, oneListUnread, oneListTitle, oneListPair, oneListPinOrder, oneListSort, oneListAgentFolds, oneListChipFilter, oneListSearchHits, ONE_LIST_FILTERS, ONE_LIST_LIMIT } from './v2/one-list.mjs'; // 한 목록(메신저 단순화 2단계)
 import { loadMyApprovals as v2LoadMyApprovals, myApprovalItems as v2ApprovalItems, approvalsNeedReload as v2ApprovalsNeedReload } from './v2/my-approvals.mjs';
 import { spaceList as v2SpaceList, liveSpaceIds as v2LiveSpaceIds } from './v2/spaces.mjs';
 // 메신저 v2(U6c-1b, 옵트인): 플래그가 켜지면 같은 셸이 v2 표를 읽도록 조회 어댑터(v2/source.mjs)를 끼운다. 꺼지면 원래 클라이언트 그대로(아래 코드는 바뀌지 않는다).
@@ -1124,6 +1124,7 @@ function Shell({ session }) {
     const on = (e) => { if (e.key !== 'Escape' || e.defaultPrevented || e.target.closest?.('input, textarea, [role="dialog"], [role="menu"]')) return; leaveSearch(); };
     window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on);
   }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  const olRoomsRef = useRef(new Map()); // v2 한 목록의 방(id → 행) — 폰 '전체에서 찾기'는 공간을 섞은 한 목록 기준으로 찾고 연다(검수 D3)
   const runSearch = async (raw) => {
     const qs = raw.trim(); if (!qs || !org) { setSearchRes(null); return; }
     setPage('search'); setRail(false); setSearchRes(null); setSearchBusy(true); const seq = ++searchSeq.current; // 조회 중에는 옛 결과·첫 안내문 대신 '찾는 중'(검수 E: 연결이 끊기면 20초 가까이 첫 안내문이 그대로였다)
@@ -1139,7 +1140,7 @@ function Shell({ session }) {
     const archived = isPersonal ? await archivedQ : null;
     const mineIds = archived ? [...archived.values()].filter((a) => a.mine).map((a) => a.channel.id) : [];
     const scoped = isPersonal ? (mineIds.length ? base.or(`org_id.is.null,channel_id.in.(${mineIds.join(',')})`) : base.is('org_id', null)) : base.eq('org_id', org.id);
-    const { msgs, more, failed } = await fetchSearchRows(() => V2 ? v2SearchFound(supabase, qs, new Set([...channels, ...previewChannels].map((c) => c.id))) /* v2: 서버 msgr2_search 한 번(U6d) */ : q(scoped.is('deleted_at', null).ilike('body', like).order('id', { ascending: false }).limit(SEARCH_LIMIT + 1)), SEARCH_LIMIT, (e) => pushDiag('search', e?.message ?? e)); // 실패를 빈 결과로 삼키지 않는다 — failed면 결과 위에 '일부만 보입니다'(검수 E, 2026-10-01)
+    const { msgs, more, failed } = await fetchSearchRows(() => V2 ? v2SearchFound(supabase, qs, new Set([...channels, ...previewChannels].map((c) => c.id).concat(isPhone ? [...olRoomsRef.current.keys()] : []))) /* v2: 서버 msgr2_search 한 번(U6d) */ : q(scoped.is('deleted_at', null).ilike('body', like).order('id', { ascending: false }).limit(SEARCH_LIMIT + 1)), SEARCH_LIMIT, (e) => pushDiag('search', e?.message ?? e)); // 실패를 빈 결과로 삼키지 않는다 — failed면 결과 위에 '일부만 보입니다'(검수 E, 2026-10-01)
     if (seq !== searchSeq.current) return; setSearchBusy(false);
     if (activeOrg.current !== org.id) return;
     const lc = qs.toLowerCase();
@@ -2709,6 +2710,11 @@ function Shell({ session }) {
     if (!tabBodyQ || !uid) { setTabHits(null); return undefined; }
     const space = orgId; let off = false;
     const timer = setTimeout(async () => {
+      if (V2) { // 한 목록은 공간을 섞는다 — 공간으로 거르지 않고 서버 본문 찾기 한 번(검수 D3, 2026-10-25: 폰 검색이 방 이름만 걸렀다)
+        const data = await q(supabase.rpc('msgr2_search', { p_q: tabBodyQ, p_limit: 50 })).catch((e) => { pushDiag('tab-search', e?.message ?? e); return null; });
+        if (!off) setTabHits({ space: '*', q: tabBodyQ, ids: oneListSearchHits(data) });
+        return;
+      }
       const rows = await q(supabase.rpc('msgr_tab_search', { org: space === PERSONAL ? null : space, q: tabBodyQ })).catch((e) => { pushDiag('tab-search', e?.message ?? e); return []; }); // 방마다 최근 500개 글 안에서만 — 더 오래된 글은 '전체에서 찾기'로
       if (off) return;
       setTabHits({ space, q: tabBodyQ, ids: new Set((rows ?? []).map((r) => r.channel_id)) });
@@ -3192,8 +3198,10 @@ function Shell({ session }) {
   // AI 이용 동의 전·조회 중엔 조직 방을 목록에서 뺀다(App Store 5.1.2 재검수 M-5, 유건 2026-09-27 — 동의 전엔 조직 공간 전체를 막는다. 동의는 계정 하나에 하나라 공간과 상관없이 같은 판정)
   const olOrgGated = V2 && (aiConsent === undefined ? !aiConsentFailOpen : !aiConsented);
   const olRows = olOrgGated && ol ? ol.filter((r) => r.space_kind !== 'team') : ol; const olGatedN = ol && olRows ? ol.length - olRows.length : 0;
+  olRoomsRef.current = new Map((V2 ? olRows ?? [] : []).map((r) => [r.room_id, r]));
   const olOrgList = oneListOrgs(olRows);
-  const olShown = oneListPinOrder(oneListView(olRows?.map((r) => ({ ...r, _title: olName(r) })), { filter: oneListChipFilter({ filter: olFilter, org: olOrg, phone: isPhone }), org: olOrg, q: isPhone ? tabQText : '' }), pinPos); // 이름을 먼저 붙인다 — 1:1은 방 이름이 비어 검색어가 사람·에이전트 이름을 못 찾았다(분리 검수 2)
+  const olBodyHit = (r) => !!tabHits && tabHits.space === '*' && tabHits.q === tabBodyQ && tabHits.ids.has(r.room_id); // v2 한 목록의 본문 찾기 일치(검수 D3)
+  const olShown = oneListPinOrder(oneListView(olRows?.map((r) => ({ ...r, _title: olName(r) })), { filter: oneListChipFilter({ filter: olFilter, org: olOrg, phone: isPhone }), org: olOrg, q: isPhone ? tabQText : '', hit: isPhone ? olBodyHit : null }), pinPos); // 이름을 먼저 붙인다 — 1:1은 방 이름이 비어 검색어가 사람·에이전트 이름을 못 찾았다(분리 검수 2)
   const olUnreadN = oneListUnread(olRows);
   const olOrgName = olOrg ? (olOrgList.find((o) => o.id === olOrg)?.name ?? '') : null;
   const olOrgBtn = (
@@ -3371,7 +3379,7 @@ function Shell({ session }) {
           <div className="ph-chiprow"><div className="ph-chips" role="radiogroup" aria-label={t('onelist.filter')}>{ONE_LIST_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={!olOrg && olFilter === k} className={!olOrg && olFilter === k ? 'active' : ''} onClick={() => { setOlFilter(k); setOlOrg(null); }}>{k === 'unread' && olUnreadN ? t('phone.chip.unread', { n: olUnreadN }) : t(`onelist.chip.${k}`)}</button>)}{olOrgPick}</div></div>{olOrgMenuEl}
           {olNewChForm}{olBrowse}
           <div className="msgr-list ph-rooms ph-ol">{olShown.map(olPhoneRow)}</div>
-          {ol === null && olLoadNote}{olEmpty}{olGateNote}{olMoreNote}
+          {ol === null && olLoadNote}{tabQText.trim() ? searchFoot(olShown.length > 0) : olEmpty}{olGateNote}{olMoreNote}{/* 검색 중이면 '전체에서 찾기'(SearchPage) — 0.1.64 폰 검색과 같게(검수 D3) */}
         </>)}
         {rootTab === 'chats' && !V2 && (<>
           {!tabQText.trim() && approvalItems.length > 0 && apCard}{/* 결재가 있을 때만 채팅 탭 맨 위에도 — 결재를 찾으러 에이전트 탭까지 가지 않게 */}
@@ -3637,7 +3645,7 @@ function Shell({ session }) {
         ) : page === 'activity' && org ? (
           <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} previewChannels={previewChannels} members={members} crews={crews} nameCrews={shownCrews} nameOfUser={nameOfUser} dmName={dmName} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'search' && org ? (
-          <SearchPage res={searchRes} busy={searchBusy} channels={[...channels, ...previewChannels, ...[...(searchRes?.archived?.values() ?? [])].map((a) => a.channel)]} members={members} crews={shownCrews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, mid) => { const a = searchRes?.archived?.get(id); if (a && !channels.some((c) => c.id === id)) { openArchivedHit(a, mid); return; } setChId(id); setPage('chat'); setJump(mid ? { ch: id, mid } : null); }} onCrew={openers.search} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} phoneQ={isPhone ? { q: searchQ, set: setSearchQ, run: runSearch } : null} />
+          <SearchPage res={searchRes} busy={searchBusy} channels={[...channels, ...previewChannels, ...[...(searchRes?.archived?.values() ?? [])].map((a) => a.channel), ...(isPhone ? [...olRoomsRef.current.values()].filter((r) => !channels.some((c) => c.id === r.room_id)).map((r) => ({ id: r.room_id, kind: 'ol', name: olName(r) })) : [])]} members={members} crews={shownCrews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, mid) => { const a = searchRes?.archived?.get(id); if (a && !channels.some((c) => c.id === id)) { openArchivedHit(a, mid); return; } const olr = isPhone && !channels.some((c) => c.id === id) ? olRoomsRef.current.get(id) : null; if (olr) { openOlRow(olr); return; } /* 다른 공간의 방 — 한 목록 행처럼 연다(검수 D3) */ setChId(id); setPage('chat'); setJump(mid ? { ch: id, mid } : null); }} onCrew={openers.search} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} phoneQ={isPhone ? { q: searchQ, set: setSearchQ, run: runSearch } : null} />
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={shownCrews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (it?.kind === 'invite') { void joinByCode(it.inviteCode); return; } if (!id) { if (it?.kind === 'system') { if (isAdmin) { setPage('settings'); setSettingsTab('org'); } return; } setPage('settings'); setSettingsTab('friends'); return; } if (!it?.joinReq && openAgentDmInstead(id, 'inbox')) return; if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' || page === 'orgsettings' || (isPhone && page.startsWith('set-')) ? (
@@ -4772,7 +4780,7 @@ function SearchPage({ res, busy = false, channels, crews, nameOfUser, dmName, on
   const phone = useIsPhone();
   const { blocked, mutedCrewIds } = useContext(SafetyCtx); // 차단한 사람·숨긴 크루의 글은 검색 결과에서 뺀다(검수 M4)
   if (res) res = { ...res, msgs: res.msgs.filter((m) => !(m.author_kind === 'user' && blocked.has(m.author_user_id)) && !(m.author_kind === 'crew' && mutedCrewIds.has(m.crew_id))) };
-  const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
+  const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : c.kind === 'ol' ? c.name : `#${c.name}`; }; // 'ol' = 다른 공간의 한 목록 방(폰, 이름이 이미 붙어 있다 — 검수 D3)
   const who = (m) => m.author_kind === 'crew' ? (crews.find((c) => c.id === m.crew_id)?.display_name ?? t('org.crew')) : nameOfUser(m.author_user_id);
   const mark = (text) => { if (!res?.q) return text; const i = text.toLowerCase().indexOf(res.q.toLowerCase()); if (i < 0) return text.slice(0, 160); const s = Math.max(0, i - 40); return <>{s > 0 ? '…' : ''}{text.slice(s, i)}<mark>{text.slice(i, i + res.q.length)}</mark>{text.slice(i + res.q.length, i + res.q.length + 120)}</>; };
   const total = res ? res.msgs.length + res.people.length + res.agents.length + res.channels.length : 0;
