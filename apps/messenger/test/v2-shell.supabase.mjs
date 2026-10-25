@@ -205,8 +205,8 @@ const rpcs = {
   msgr2_automation_scheduler_status: () => ({ server_active: true }),
   msgr2_message_delete: ({ p_id }) => { const m = state.tables.msgr2_messages.find((x) => x.id === p_id); if (!m || m.author_user_id !== uid) return { ok: false, code: 'forbidden' }; m.body = ''; m.deleted_at = m.deleted_at ?? new Date().toISOString(); return { ok: true }; },
   // 그대로 쓰는 옛 RPC(설계 1-2절)
-  msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: '민지', handle: 'minji' }],
-  msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => ({ user_id: id, display_name: id === uid ? '유건' : '민지' })),
+  msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: state.namesSplit ? 'cocoball0610' : '민지', handle: 'minji' }],
+  msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => { const n = state.namesSplit ? (id === uid ? 'leankim' : 'cocoball0610') : (id === uid ? '유건' : '민지'); return { user_id: id, name: n, display_name: n }; }), // 서버(msgr_person_label)와 같이 name = 프로필 이름 → 이메일 앞부분
   msgr_friend_request: () => 'sent', msgr_find_user: () => [{ user_id: '9b2d4f10-0000-4000-8000-000000000003', display_name: '지수', handle: 'jisu' }],
   msgr_my_hidden_users: () => [], msgr_my_blocked: () => [], my_plan: () => ({ plan: 'pro' }) /* 서버 my_plan은 {plan, …} 객체(src/entitlement.mjs effectivePlanOf) */, msgr_my_ai_consent: () => new URLSearchParams(globalThis.location?.search ?? '').get('noconsent') !== '1', /* ?noconsent=1 = AI 이용 동의 전 계정(한 목록이 조직 방을 빼는지) */
 };
@@ -274,6 +274,10 @@ state.free = new URLSearchParams(globalThis.location?.search ?? '').get('free') 
     { id: 303, room_id: FDM, author_kind: 'user', author_user_id: mate, kind: 'text', body: '내일 점심 같이 해요', meta: {}, mentions: [], created_at: at(90) });
   T_.msgr2_prefs.push({ room_id: GEN, user_id: uid, muted: false, pinned: true }); }
 
+if (new URLSearchParams(globalThis.location?.search ?? '').get('names') === 'split') { // 같은 사람의 팀 안 이름과 프로필 이름이 다르다(유건 사용 검수 2026-10-24: 레일 이름이 선택한 방에 따라 바뀜)
+  state.namesSplit = true;
+  for (const m of state.tables.msgr2_space_members) if (m.space_id === T) m.display_name = m.user_id === uid ? '김효율' : 'Coco 팀';
+}
 // 자동화 일정 시험 자료: 에이전트 1:1(DM)의 매일 아침 보고 1개 + 실행 기록 3줄(완료·막힘·만료)
 { const T_ = state.tables; const AU = 'c7000000-0000-4000-8000-000000000001';
   T_.msgr2_automations = [{ id: AU, space_id: P, room_id: DM, agent_id: A, created_by: uid, title: '아침 자료 조사 보고', prompt: '어제 나온 업계 소식을 다섯 줄로 정리해 줘', schedule: { kind: 'weekly', time: '09:00', weekdays: [1, 2, 3, 4, 5], timezone: 'Asia/Seoul' },

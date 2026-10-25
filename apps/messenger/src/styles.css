@@ -1094,6 +1094,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-side .msgr-search { height: 34px; }
 .msgr-side .msgr-search input { font-size: 14px; }
 .msgr-side .msgr-foot { font-size: 14px; }
+.msgr-shell:not(.msgr-phone) .msgr-side .msgr-foot { column-gap: 2px; } .msgr-shell:not(.msgr-phone) .msgr-side .msgr-foot .me { margin-right: 6px; } /* 이름 자리를 넓힌다 — 아이콘 단추 사이 8px 간격 때문에 이름 칸이 37px라 'leankim'도 말줄임이었다(유건 사용 검수 2026-10-24). 아주 긴 이름은 한 줄 말줄임 + title */
 .msgr-side .msgr-badge { font-size: 11.5px; min-width: 20px; height: 20px; }
 .msgr-sort { font-size: 13px; opacity: 1; height: 26px; padding: 0 8px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--card-2); color: var(--fg-2); }
 @media (hover: hover) { .msgr-sort:hover { color: var(--fg); border-color: var(--border); } } .msgr-sort:active { color: var(--fg); border-color: var(--border); }

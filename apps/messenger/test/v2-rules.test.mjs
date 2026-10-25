@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { v2Enabled, V2_FLAG_KEY } from '../src/v2/flag.mjs';
 import { spaceList, liveSpaceIds, pickStartSpace } from '../src/v2/spaces.mjs';
 import { systemLine, LIMIT_KINDS } from '../src/v2/system-text.mjs';
-import { workCard, timeline, PHASES } from '../src/v2/work-card.mjs';
+import { workCard, timeline, PHASES, shownInChat } from '../src/v2/work-card.mjs';
 import { mentionsOf } from '../src/v2/data.mjs';
 import { DICT } from '../src/i18n.js';
 import { WORK_ERROR_CODES, STATES, DERIVED_STATES } from '../../../packages/agent-link/contract/v1.mjs';
@@ -231,4 +231,9 @@ test('#1086 검수 2: 모든 기기 로그아웃 — 다른 기기 먼저, 이 �
   calls.length = 0;
   assert.equal(await revokeAllDevices(view, async (id) => { calls.push(id); if (id === 'me') throw new Error('net'); return true; }), 'self_failed');
   await assert.rejects(revokeAllDevices(view, async (id) => { if (id === 'a') throw new Error('net'); return true; }));
+});
+
+test('대화에 놓는 카드: 끝난 일(done)은 빼고 진행·결재 대기·실패·취소·만료·결과 모름은 놓는다(유건 사용 검수 2026-10-24 — 같은 규칙은 #1162 shownInChat 하나로 합침)', () => {
+  for (const phase of ['waiting', 'received', 'working', 'approval', 'failed', 'cancelled', 'expired', 'unknown']) assert.equal(shownInChat({ phase }), true, phase);
+  assert.equal(shownInChat({ phase: 'done' }), false);
 });
