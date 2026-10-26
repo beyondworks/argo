@@ -1200,6 +1200,8 @@ button.price-cta:disabled {
 .checkout-error {
   color: #f0a59a;
 }
+.checkout-fine { text-wrap: pretty; } /* 마지막 줄에 한 단어만 남지 않게 */
+.checkout-fine + .checkout-fine { margin-top: 8px; } /* 가입 안내와 Apple 계정 안내를 띄운다(2026-10-26) */
 .checkout-account {
   margin-top: 14px;
   font-family: var(--mono);

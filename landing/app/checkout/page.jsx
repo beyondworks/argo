@@ -81,6 +81,7 @@ export default function CheckoutPage() {
             <button type="button" className="price-cta" onClick={() => login('github')} disabled={busy}>{t('checkout.github')}</button>
           </div>
           <p className="checkout-fine">{t('checkout.signupNote')}</p>
+          <p className="checkout-fine">{t('checkout.appleNote')}</p>
         </>
       )}
       {state === 'already' && account && (
