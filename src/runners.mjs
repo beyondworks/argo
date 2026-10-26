@@ -139,7 +139,8 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     (export: 회귀 테스트용) */
 export const codexJsonMode = (cmd, env = process.env) => !!cmd?.pinned && env.ARGO_CODEX_JSON !== '0';
 
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, onSteerable = null, onEvent = null }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, onSteerable = null, onEvent = null, msgrGate = null }) {
+  // msgrGate — 메신저 문맥 턴의 결재 목적지(codex app-server 판정자에만 쓴다, codex-appserver.mjs makeApprovalJudge)
   // onEvent — codex 이벤트(exec JSONL·app-server 알림)를 받는 쪽(chat.mjs 작업 과정). 표시용이라 실패해도 턴과 무관하다.
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는 oneshot.mjs의
@@ -157,7 +158,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
     // 실패 번역은 exec 경로와 **같은 cliTurnFailure**를 태운다(분리 검수 MEDIUM-4: 안내가 러너
     // 경로별로 갈리지 않게). 한도(limitReached)·중단(aborted)은 이미 정직한 오류라 그대로 통과.
     try {
-      return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers, onSteerable, onEvent });
+      return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers, onSteerable, onEvent, msgrGate });
     } catch (e) {
       if (e.limitReached || e.aborted) throw e;
       const t = cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: e.stage ?? 'exec', kind });

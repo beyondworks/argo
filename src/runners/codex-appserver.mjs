@@ -38,8 +38,12 @@ export const codexEffortValue = codexModelEffort;
     자신이 한다). exec는 Bash 판정(명령 문자열 리터럴 방어), 패치는 경로별 Write 판정.
     반환: 'accept' | 'decline'. 판정 불가(경로 미상·게이트 예외)는 decline — fail-closed.
     (export: 회귀 테스트용) */
-export function makeApprovalJudge(wsRoot, { workRoots = [], lang = 'ko' } = {}) {
-  const gate = makePermissionGate(null, null, wsRoot, null, lang, workRoots);
+export function makeApprovalJudge(wsRoot, { workRoots = [], lang = 'ko', msgrGate = null } = {}) {
+  // msgrGate = { wsId, slug, from, msgr } — 메신저 문맥 턴이면 SDK 경로와 같은 게이트(D28: 고위험 셸은 결재 카드를 만들고 막는다,
+  // 승인된 같은 명령은 한 번 허용). 없으면(데스크톱 턴) 종전 그대로 회사·크루 없이 리터럴 방어만(2026-10-26 총괄 감사 축 A).
+  const gate = msgrGate?.wsId && msgrGate.msgr
+    ? makePermissionGate(msgrGate.wsId, msgrGate.slug ?? null, wsRoot, msgrGate.from ?? null, lang, workRoots, { msgr: msgrGate.msgr })
+    : makePermissionGate(null, null, wsRoot, null, lang, workRoots);
   return async function judge(kind, payload) {
     try {
       if (kind === 'exec') {
@@ -214,7 +218,7 @@ export function runAppServerSession({ input, output, prompt, model = '', unsetMo
 
 /** app-server 엔진 1턴 — externalExec의 codex 분기와 같은 인자 계약(홈 격리·auth 반입/회수·MCP 주입
     전부 동일 경로 재사용), 실행 방식만 exec→app-server. ARGO_CODEX_ENGINE=appserver일 때만 탄다. */
-export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko', onSteerable = null, onEvent = null }) {
+export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko', onSteerable = null, onEvent = null, msgrGate = null }) {
   const dir = await mkdtemp(join(tmpdir(), 'argo-codex-as-'));
   let auth = null, child = null, ownership = null;
   let ownershipUnverified = false;
@@ -255,7 +259,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
       runAppServerSession({
         input: child.stdin, output: child.stdout,
         prompt, model, unsetModel, effort, cwd, timeoutMs, signal, onSteerable, onEvent,
-        judge: makeApprovalJudge(cwd, { workRoots, lang }),
+        judge: makeApprovalJudge(cwd, { workRoots, lang, msgrGate }),
       }),
       childFail,
     ]);

@@ -142,6 +142,16 @@ export function shellGateMsgr(mirrorCtx, fallback = null) { // fallback = 문맥
   try { return messengerOrigin(mirrorCtx) ?? {}; } catch { return {}; }
 }
 
+/** 메신저 문맥 CLI 턴의 셸 제한(2026-10-26 총괄 감사 축 A) — 러너 자체 셸이 Argo 게이트를 지나지 않는 경로(codex exec·gemini·
+    antigravity)는 고위험 셸을 결재 카드로 가로챌 수 없다. 그래서 메신저 지시로는 셸을 끈다: gemini는 셸 도구 제외(caps.shell),
+    antigravity는 --sandbox(caps.shell), codex exec는 read-only 샌드박스(readOnly — 파일 쓰기도 막힌다). 게이트를 지나는 codex
+    app-server는 판정자에 메신저 목적지를 넘겨 SDK와 같은 결재 카드를 띄우므로 제한하지 않는다. 데스크톱 턴(msgr 없음)은 종전 그대로.
+    caps는 프롬프트 안내(commonDirectives)에도 같은 값을 써서 "할 수 없다"를 정직하게 알린다. (export: 회귀 테스트용) */
+export function cliMsgrShellLimit({ runner, gated = false, msgr = null, caps = null }) {
+  if (!msgr || gated) return { caps, readOnly: false, limited: false };
+  return { caps: { ...(caps ?? {}), shell: false, ...(runner === 'codex' ? { fs: false } : {}) }, readOnly: runner === 'codex', limited: true };
+}
+
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
 function messengerColleagues(ctx, hop) {
   if (ctx?.kind !== 'msgr' || hop >= 2) return [];
@@ -1813,6 +1823,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       }
       // 러너 자체 셸·파일 도구가 Argo 게이트를 지나는지 — codex app-server 엔진만(승인 요청마다 게이트 판정). exec 경로는 danger-full-access라 게이트 밖(분리 검수 LOW-8)
       const cliGated = runner === 'codex' && process.env.ARGO_CODEX_ENGINE === 'appserver';
+      const cliLimit = cliMsgrShellLimit({ runner, gated: cliGated, msgr: gateMsgr, caps: cliCaps }); // 메신저 지시 + 게이트 밖 엔진이면 셸을 끈다
+      const cliMsgrGate = cliGated && gateMsgr ? { wsId, slug: agentSlug, from: from ?? notOwnerDirect, msgr: gateMsgr } : null; // app-server 판정자 → 결재 카드
       const cliTools = !!crewBridge;
       const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server, ...(crewBridge ? { crew: crewBridge.server } : {}) } : null;
       const cliMcp = cliMcpServers ? Object.keys(cliMcpServers).filter((k) => k !== 'crew') : []; // 안내 목록은 외부 MCP만(SDK connectedMcp와 같게 — crew는 도구 안내로 따로 나간다)
@@ -1821,7 +1833,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliSelfNote = await selfNoteFor(); // CLI 러너는 세션을 잇지 않고 맥락을 매번 다시 싣는다 — 최근 글 그대로
       const promptWith = (ctx) => `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors, userName: turnUser })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource, fullAuto })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors, userName: turnUser })}${orgRules}${commonDirectives({ caps: cliLimit.caps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource, fullAuto })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
 ${ctx ? `\n${ctx}` : ''}
 ${cliSelfNote}${sharedBlock || (source === 'session' ? newMsgHead(source, lang) : (lang === 'en' ? "## User's new instruction\n" : '## 사용자의 새 지시\n'))}${userMsg}${attNote}${runnerNote}
 
@@ -1862,13 +1874,13 @@ ${lang === 'en'
       const runPrompt = promptFor(withEarly);
       try {
         __turnControl.check();
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: turnEffort, workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliLimit.caps, readOnly: cliLimit.readOnly, msgrGate: cliMsgrGate, effort: turnEffort, workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
       } catch (e) {
         const gated = !!(effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated); // 오버레이 반영(MEDIUM-3)
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliLimit.caps, readOnly: cliLimit.readOnly, msgrGate: cliMsgrGate, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
@@ -1891,7 +1903,7 @@ ${lang === 'en'
         const segNotes = seg.directives.length || seg.bad.length ? await runDirectives(wsId, agentSlug, seg.directives, { lang, bad: seg.bad, hop, chain, toolHop, results: [], mirrorCtx, delegationRelaxed: lim.relaxed, delegationTree: tree, counters: turnCounters, fullAuto, origin: notOwnerDirect, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }) : [];
         doneText = [doneText, seg.directives.length || seg.bad.length ? [seg.clean, segNotes.join('\n')].filter(Boolean).join('\n\n') : reply].filter(Boolean).join('\n\n');
         try {
-          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: promptFor((ctx) => cliSteerPrompt(withEarly(ctx), doneText, texts, lang)), cred, signal: ac.signal, caps: cliCaps, effort: usedModel ? turnEffort : (meta.effort ?? ''), workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent }) ?? '';
+          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: promptFor((ctx) => cliSteerPrompt(withEarly(ctx), doneText, texts, lang)), cred, signal: ac.signal, caps: cliLimit.caps, readOnly: cliLimit.readOnly, msgrGate: cliMsgrGate, effort: usedModel ? turnEffort : (meta.effort ?? ''), workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent }) ?? '';
         } catch (e) {
           if (abortReg.wasAborted() || e?.aborted) throw e;
           steerFailed = { texts, reason: String(e?.message || e).slice(0, 400) };
