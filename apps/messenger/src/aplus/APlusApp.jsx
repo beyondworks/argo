@@ -7,7 +7,7 @@ import { useLang } from '@argo/i18n';
 import { t as tm } from '../i18n.js';
 import { I } from '../icons.jsx';
 import { openExternalUrl } from '../media-io.js'; // 결제 링크 — Tauri 웹뷰는 target=_blank를 무시한다(재공개 전 검수 F3)
-import { watchLinkState, accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, meetingPickable, deriveRun, errorKey, limitKey, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_MIN, MEETING_ROUNDS, TITLE_MAX, BOT_KINDS } from './model.mjs';
+import { watchLinkState, accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, meetingPickable, deriveRun, errorKey, limitKey, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_MIN, MEETING_ROUNDS, TITLE_MAX, BOT_KINDS, DELETED_USER } from './model.mjs';
 import { usePeople, PeopleList, PeopleActions, PeopleSheets } from './People.jsx';
 import { addFiles, canSend, toUpload, formatBytes, fileIcon, isImage, legacyRoom, peopleErrorKey, createReadMarker } from './people.mjs';
 import './aplus.css';
@@ -225,7 +225,7 @@ function Chat({ t, source, roomId, title, sub, paused = false, meeting = null, p
     setSending(true);
     try { const r = await source.send(roomId, body, files); if (r?.ok === false) setErr(t(errorKey(r.code) ?? peopleErrorKey({ code: r.code, details: r.detail }) ?? 'aplus.chat.sendFailed')); else { setDraft(''); setFiles([]); setFileErr(''); } } finally { setSending(false); }
   };
-  const authorName = (m) => nameOf(m.author);
+  const authorName = (m) => (m.author === DELETED_USER ? t('user.deleted') : nameOf(m.author));
   return (
     <div className="ap-chat">
       <header className="ap-chathead">

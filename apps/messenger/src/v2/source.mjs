@@ -127,6 +127,8 @@ export function toLegacyRow(table, row, want) {
   }
   if (table === 'msgr_messages') {
     if ('author_kind' in out && out.author_kind === 'agent') out.author_kind = 'crew';
+    // 계정 삭제가 익명화한 사람 글(서버 20261026120000: system·작성자 없음·meta.deleted_user) — 옛 화면은 작성자 id null인 사람 글을 "탈퇴한 사용자"로 그린다
+    if (out.author_kind === 'system' && out.meta?.deleted_user === true && out.kind !== 'system') { out.author_kind = 'user'; out.author_user_id = null; }
     if ('kind' in out && out.kind === 'card') out.kind = 'approval_card';
     if ('mentions' in out) out.mentions = Array.isArray(out.mentions) ? out.mentions.map((id) => ({ kind: 'crew', id })) : [];
     out._v2 = true; // 시스템 글(meta.code)을 사전 문구로 그리는 표지(App.jsx)

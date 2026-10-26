@@ -7,6 +7,10 @@ export const MEETING_MIN = 2; // 1명이면 1:1과 같다
 export const MEETING_MAX = 5; // 위험 R11 — 서버도 S ≤ 5를 강제한다
 export const MEETING_ROUNDS = 2; // room.mjs DELEGATION_LIMITS.on.rounds — 회의방은 2 고정(풀림 4는 쓰지 않음)
 export const TITLE_MAX = 60;
+export const DELETED_USER = '@deleted'; // 계정 삭제로 익명화된 사람 글의 글쓴이(서버 meta.deleted_user) — 화면은 "탈퇴한 사용자"로 그린다
+/** v2 글 행의 글쓴이: 'me' · 사람 uid · 에이전트 id · 'system' · DELETED_USER(계정 삭제가 익명화한 사람 글 — system·작성자 없음·meta.deleted_user, 서버 20261026120000). */
+export const msgAuthor = (m, uid) => (m.author_kind === 'user' ? (m.author_user_id === uid ? 'me' : m.author_user_id)
+  : m.author_kind === 'system' ? (m.meta?.deleted_user === true && m.kind !== 'system' ? DELETED_USER : 'system') : m.author_agent_id);
 export const BOT_KINDS = Object.freeze(['hermes', 'openclaw']); // 봇 주소·키는 서버에 없고 내 PC Argo에만 있다(약속 v1.1, #1116) — 앱은 연결을 안내만 한다
 
 /** 서버 판정 플랜('pro'|'trial'|'free'|null) → 'open'(메신저 사용) | 'free'(Pro 안내, 서버 요청 0) | 'unknown'(확인 못 함, 사람이 다시 확인). */
