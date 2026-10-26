@@ -114,3 +114,21 @@ test('app-server 판정자: 메신저 목적지가 있으면 rm -rf를 거절하
   const cards = (await loadApprovals(ws)).filter((a) => a.payload?.shell);
   assert.deepEqual(cards.map((a) => [a.slug, a.payload.shell, a.payload.rule, a.msgr?.channelId]), [['alpha', 'rm -rf ./old-reports', 'recursive-delete', 'ch-1']]);
 });
+
+test('gemini 셸 끈 턴의 전용 홈: 로그인 파일만 복사하고, CLI가 갱신한 로그인은 회사 홈으로 돌려놓고 지운다(회사 홈 settings 경합 회피, 분리 검수 M1)', async () => {
+  const { geminiPrivateTurnHome } = await import('../src/runners/gemini.mjs');
+  const { readFile: rf, stat } = await import('node:fs/promises');
+  const base = await mkdtemp(join(tmpdir(), 'argo-gemini-base-'));
+  await mkdir(join(base, '.gemini'), { recursive: true });
+  await writeFile(join(base, '.gemini', 'oauth_creds.json'), '{"refresh_token":"old"}');
+  await writeFile(join(base, '.gemini', 'settings.json'), '{"tools":{"exclude":[]}}'); // 다른 턴이 쓴 셸 켜짐 설정
+  const own = await geminiPrivateTurnHome(base);
+  assert.notEqual(own.home, base);
+  assert.equal(await rf(join(own.home, '.gemini', 'oauth_creds.json'), 'utf8'), '{"refresh_token":"old"}', '로그인 복사');
+  await assert.rejects(stat(join(own.home, '.gemini', 'settings.json')), '회사 홈 settings는 가져오지 않는다(이번 턴이 따로 쓴다)');
+  await writeFile(join(own.home, '.gemini', 'oauth_creds.json'), '{"refresh_token":"new"}'); // CLI가 토큰을 갱신
+  await own.done();
+  assert.equal(await rf(join(base, '.gemini', 'oauth_creds.json'), 'utf8'), '{"refresh_token":"new"}', '갱신 로그인을 회사 홈으로');
+  assert.equal(await rf(join(base, '.gemini', 'settings.json'), 'utf8'), '{"tools":{"exclude":[]}}', '회사 홈 settings는 건드리지 않는다');
+  await assert.rejects(stat(own.home), '임시 홈 삭제');
+});
