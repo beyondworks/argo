@@ -127,10 +127,12 @@ export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabas
       return null;
     }
   };
+  let authEpoch = 0; // 로그아웃·계정 전환마다 올린다 — 큐 밖에서 읽은 세션이 그 뒤에 도착하면 버린다
   const handleAuthNow = async (event, session) => {
-    if (event === 'SIGNED_OUT' || !session) { await stopActive(true); return; }
+    if (event === 'SIGNED_OUT' || !session) { authEpoch += 1; await stopActive(true); return; }
     const userId = session.user?.id;
     if (active?.userId === userId) return;
+    authEpoch += 1;
     await start(session);
   };
   const updateContextNow = async () => {
@@ -140,20 +142,21 @@ export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabas
   };
   // 네이티브가 /auth/v1/token 영구 거부(400·401)를 받고 스스로 멈췄다(native_realtime.rs report_rejected).
   // 갱신 주인을 JS로 돌린다: JS 자동 갱신이 자기 토큰으로 다시 해 보고, 그것도 거부면 auth-js가 SIGNED_OUT을 내
-  // 로그아웃 경로로 간다. 거부된 토큰을 돌려줘 큐 밖에서 resumeAfterRejection이 이어받게 한다.
+  // 로그아웃 경로로 간다. 거부된 토큰과 그때의 authEpoch를 돌려줘 큐 밖에서 resumeAfterRejection이 이어받게 한다.
   const handleNativeRejectedNow = async (payload) => {
     if (!active || payload?.generation !== active.generation) return null;
-    const rejectedToken = active.refreshToken;
+    const rejected = { refreshToken: active.refreshToken, epoch: authEpoch };
     await stopActive(true);
-    return rejectedToken;
+    return rejected;
   };
   // JS가 이미 더 새 토큰을 들고 있으면(JS가 먼저 갱신해 네이티브 토큰이 뒤처진 경우) 그 세션으로 네이티브를 다시 띄운다.
   // getSession은 SIGNED_OUT 구독자를 기다릴 수 있어 큐 밖에서 부른다(큐 안이면 handleAuth('SIGNED_OUT')와 서로 기다린다).
-  const resumeAfterRejection = async (rejectedToken) => {
-    if (!rejectedToken) return;
+  const resumeAfterRejection = async (rejected) => {
+    if (!rejected) return;
     const { data } = await auth.getSession();
     const session = data?.session;
-    if (session?.refresh_token && session.refresh_token !== rejectedToken) await enqueue(() => handleAuthNow('SIGNED_IN', session));
+    if (!session?.refresh_token || session.refresh_token === rejected.refreshToken) return;
+    await enqueue(() => (rejected.epoch === authEpoch && !active ? handleAuthNow('SIGNED_IN', session) : undefined));
   };
   const reconcileNow = async () => {
     if (!active) return null;

@@ -147,3 +147,26 @@ test('focus reconcile hands over a rejection whose event the hidden window misse
   assert.equal(calls.at(-2)[0], 'startAutoRefresh', 'JS takes refresh ownership back');
   assert.equal(calls.at(-1)[0], 'getSession');
 });
+
+test('sign-out or account switch while the rejected session is being read wins over the restart', async () => {
+  for (const [event, next] of [['SIGNED_OUT', null], ['SIGNED_IN', { user: { id: 'fixture-other' }, access_token: 'b', refresh_token: 'r-other', expires_at: 2_000_000_000 }]]) {
+    const calls = [];
+    let release;
+    const reading = new Promise((resolve) => { release = resolve; });
+    const auth = {
+      stopAutoRefresh: () => calls.push(['stopAutoRefresh']),
+      startAutoRefresh: () => calls.push(['startAutoRefresh']),
+      // 큐 밖 getSession이 도는 사이 사용자가 로그아웃하거나 다른 계정으로 바꾼다.
+      getSession: async () => { await reading; return { data: { session: { user: { id: 'fixture-user' }, access_token: 'a2', refresh_token: 'r-newer', expires_at: 2_000_000_000 } }, error: null }; },
+    };
+    const coordinator = coordinatorFor(auth, nativeInvoke(calls));
+    await coordinator.handleAuth('SIGNED_IN', { user: { id: 'fixture-user' }, access_token: 'a', refresh_token: 'r', expires_at: 2_000_000_000 });
+    const resumed = coordinator.handleNativeRejected({ generation: 1 });
+    await settle();
+    await coordinator.handleAuth(event, next);
+    release();
+    await resumed;
+    const starts = named(calls, 'native_realtime_start').map(([, args]) => args.session.userId);
+    assert.deepEqual(starts, event === 'SIGNED_OUT' ? ['fixture-user'] : ['fixture-user', 'fixture-other'], event);
+  }
+});
