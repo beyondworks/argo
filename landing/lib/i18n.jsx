@@ -262,7 +262,9 @@ const DICT = {
   'checkout.planLabel': ['선택한 요금제', 'Selected plan'],
   'checkout.plan.monthly': ['월간 $12', 'Monthly $12'],
   'checkout.plan.yearly': ['연간 $120', 'Yearly $120'],
-  'checkout.lede': ['Pro는 Argo 계정에 붙습니다. 앱에서 쓰는 계정으로 로그인하면, 결제가 끝나는 즉시 그 계정이 Pro가 되고 Argo Messenger도 같은 계정으로 쓸 수 있습니다.', 'Pro belongs to an Argo account. Sign in with the account you use in the app and it becomes Pro the moment checkout completes — Argo Messenger works on that same account too.'],
+  'checkout.lede': ['Pro는 Argo 계정에 붙습니다. Argo·Argo Messenger에서 쓰는 것과 같은 계정으로 로그인해 결제하세요. 결제가 끝나는 즉시 그 계정이 Pro가 되고, 두 앱에서 함께 쓸 수 있습니다.', 'Pro belongs to an Argo account. Sign in with the same account you use in Argo and Argo Messenger, then pay. It becomes Pro the moment checkout completes, in both apps.'],
+  // 메신저는 Apple 로그인도 받지만 이 페이지는 Google·GitHub만(login('google'|'github')) — Apple 계정은 메신저 앱 설정의 '내 플랜'(PlanCard, iOS는 구매 경로 없음)에서 같은 상품으로 결제한다
+  'checkout.appleNote': ['Argo Messenger에 Apple로 로그인해 쓰는 계정은 이 페이지에서 결제할 수 없습니다. 메신저 맥·윈도우·Android 앱의 설정\u00a0›\u00a0내\u00a0플랜에서\u00a0결제하세요. iOS 앱에서는 결제할 수 없습니다.', 'If you sign in to Argo Messenger with Apple, you can’t pay on this page. Pay from Settings\u00a0›\u00a0My\u00a0plan in the Messenger app on Mac, Windows or Android. Payment isn’t available in the iOS app.'],
   'checkout.google': ['Google로 로그인', 'Continue with Google'],
   'checkout.github': ['GitHub로 로그인', 'Continue with GitHub'],
   'checkout.signupNote': ['계정이 없으면 이 단계에서 바로 만들어집니다. 앱에서도 같은 방법(Google·GitHub)으로 로그인하세요.', 'No account yet? One is created right here. Sign in to the app the same way (Google or GitHub).'],
@@ -424,7 +426,7 @@ const DICT = {
   'msgr.price.ent.p': ['문의', 'Contact us'],
   'msgr.price.ent.b': ['보안 검토, 배포 방식, 계약이 필요한 회사를 위한 상담입니다.', 'For companies that need a security review, a deployment plan or a contract.'],
   'msgr.price.ent.cta': ['도입 문의', 'Contact sales'],
-  'msgr.price.note': ['결제 전에 Argo 계정으로 로그인합니다. 결제가 끝나면 그 계정으로 Argo Messenger에 바로 로그인해 쓸 수 있습니다.', 'You sign in to your Argo account before checkout. Once paid, sign in to Argo Messenger with the same account and start right away.'],
+  'msgr.price.note': ['결제 전에 메신저에서 쓰는 것과 같은 Google·GitHub 계정으로 로그인합니다. Apple로 로그인해 쓰는 계정은 메신저 맥·윈도우·Android 앱의 설정\u00a0›\u00a0내\u00a0플랜에서\u00a0결제하세요.', 'Before checkout, sign in with the same Google or GitHub account you use in Messenger. If you use Messenger with Apple sign-in, pay from Settings\u00a0›\u00a0My\u00a0plan in the Messenger app on Mac, Windows or Android.'],
 
   // 메신저 — 자주 묻는 질문
   'msgr.faq.kicker': ['자주 묻는 질문', 'FAQ'],

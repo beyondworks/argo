@@ -1081,7 +1081,7 @@ html[lang='ko'] .fam-page :is(.m-display, .fam-title, .m-get-title) {
 .cv-plan-per { margin-left: 4px; font-size: 16px; font-weight: 560; letter-spacing: 0; color: var(--fg-2); }
 .cv-plan-ctas { display: flex; flex-wrap: wrap; gap: 10px; }
 .cv-plan-ctas .fam-btn { white-space: nowrap; }
-.cv-price-note { margin: 18px 0 0; font-size: 14.5px; line-height: 1.6; color: var(--fg-2); text-wrap: pretty; }
+.cv-price-note { margin: 18px 0 0; font-size: 14.5px; line-height: 1.6; color: var(--fg-2); }
 /* 폰 폭: 버튼 둘이 다른 폭으로 두 줄에 쌓이지 않게(영어 'GO PRO — $12/MO'+'YEARLY $120'은 한 줄에 안 들어간다) — 같은 폭 한 줄에 하나, 내려받기 절과 같은 규칙 */
 @media (max-width: 600px) {
   .cv-plan-ctas { display: grid; grid-template-columns: minmax(0, 1fr); }
