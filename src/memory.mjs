@@ -260,12 +260,16 @@ export function noteBody(raw) {
 // 덮기 전 사본 — vault/notes/.history/<slug>.<YYYYMMDD-HHMMSS>.md. 기억 데이터는 지우지 않는다(저장소 규칙): 갱신이 본문을 통째로 바꿔도
 // 옛 결론을 되찾을 수 있게 한다(2026-10-26 총괄 감사 축 B). 숨김 하위 폴더라 인덱스·색인(notes/ 한 단계만)·Grep(숨김 제외)에 섞이지 않고,
 // 동기화는 일반 파일로 다른 기기에도 올라간다(이름이 겹치지 않는 새 파일만 생겨 충돌 없음). 정리는 지우지 않는다.
+// 노트당 하루 1개만 — 그날 처음 덮기 직전(= 전날까지의 상태)을 남긴다. 백로그 야간 루프가 같은 노트를 청크마다 갱신해도
+// 사본이 청크 수만큼 쌓여 동기화 걷기·전송량을 키우지 않게 한다(분리 검수 M2). 그날 안의 중간 상태는 합치기가 본문에 보존한다.
 export const NOTE_HISTORY_DIR = '.history';
 async function keepNoteHistory(notesDir, slug, file) {
   const dir = join(notesDir, NOTE_HISTORY_DIR);
   await mkdir(dir, { recursive: true });
   const d = new Date(); const z = (n) => String(n).padStart(2, '0');
-  const ts = `${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
+  const day = `${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}`;
+  if ((await readdir(dir).catch(() => [])).some((n) => n.startsWith(`${slug}.${day}-`))) return; // 오늘 사본이 이미 있다
+  const ts = `${day}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
   for (let n = 1; ; n++) {
     try { await copyFile(file, join(dir, `${slug}.${ts}${n > 1 ? `-${n}` : ''}.md`), fsc.COPYFILE_EXCL); return; }
     catch (e) { if (e?.code !== 'EEXIST' || n > 50) throw e; }

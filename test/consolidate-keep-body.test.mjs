@@ -101,3 +101,29 @@ test('사본 폴더의 동기화·색인 취급 — 동기화는 일반 파일(�
   assert.ok(!docs.some((d) => d.rel.includes('.history')), '기억 색인에 사본 없음');
   assert.equal((await history(p)).length, 1);
 });
+
+test('파일 이름과 제목이 다른 노트(create의 -2 접미)가 발췌에 보여도, 보이지 않은 같은 제목 노트는 합치기를 거친다(분리 검수 M1)', async () => {
+  const { ws, p } = await seed({ extra: 0 });
+  // 결제-정책-2.md(제목 "결제 정책", 짧은 본문)는 발췌에 전부 보이고, 결제-정책.md는 800자를 넘어 잘린다
+  await writeFile(join(p.notes, '결제-정책.md'), note('결제 정책', `${OLD}\n${'세부 조항. '.repeat(120)}`));
+  await writeFile(join(p.notes, '결제-정책-2.md'), note('결제 정책', '다른 기기에서 만든 같은 제목 노트.'));
+  const calls = [];
+  _setOneShotForTest(fake(calls));
+  await consolidateMemory(ws);
+  assert.equal(calls.length, 2, '합치기 호출이 있어야 한다');
+  assert.ok((await body(p)).includes(OLD));
+});
+
+test('같은 날 같은 노트를 여러 번 덮어도 사본은 하루 1개(그날 처음 덮기 직전 상태)', async () => {
+  const { ws, p } = await seed();
+  _setOneShotForTest(fake([]));
+  await consolidateMemory(ws);
+  for (let i = 0; i < 3; i++) {
+    await writeFile(join(p.journal, `2026-10-2${7 + i}-pepper.md`), `## 10:00\n${`추가 결론 ${i}. `.repeat(60)}\n`);
+    _setOneShotForTest(async () => ({ runner: 'claude', text: JSON.stringify({ notes: [{ title: '결제 정책', content: `${OLD}\n${NEW}\n추가 ${i}` }] }), usage: {}, costUsd: 0 }));
+    await consolidateMemory(ws);
+  }
+  const h = await history(p);
+  assert.equal(h.length, 1, `하루 1개: ${h}`);
+  assert.ok((await readFile(join(p.notes, '.history', h[0]), 'utf8')).includes(OLD) && !(await readFile(join(p.notes, '.history', h[0]), 'utf8')).includes(NEW), '그날 처음 덮기 직전 = 원래 본문');
+});

@@ -2,7 +2,7 @@
 // 하이쿠 1턴/일/회사 — 원본 일지는 삭제하지 않는다(감사 가능). 워터마크로 새 내용만 정리.
 // + 주간 롤업: 7일 지난 일지는 주간 요약 1파일로 접히고 원본은 .archive/로 — 기억은 쌓일수록 정제된다.
 import { readFile, readdir, stat, rename, mkdir, appendFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { GUIDE_NOTE } from './provision.mjs'; // 스캐폴드 안내 노트 파일명(단일 진실)
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — 어떤 러너든 연결만 되면 기억 정리가 돈다
@@ -139,6 +139,7 @@ export function parseNotes(out) {
 // 모델은 옛 결론을 모른 채 본문을 새로 썼고 saveNote가 그대로 덮었다(2026-10-26 총괄 감사 축 B 재현: "환불은 7일 이내" 소실).
 // 그런 노트만 모아 기존 본문 전체 + 새 본문을 한 번에 다시 합쳐 쓰게 한다. 실패하면 옛 본문을 "이전 정리" 절로 붙여 잃지 않는다.
 const MERGE_BODY_MAX = 20_000; // 이보다 긴 기존 본문은 합치기 프롬프트에 싣지 않고 바로 이전 정리 절로 보존한다(프롬프트 폭주 방지)
+const MERGE_TOTAL_MAX = 60_000; // 한 번의 합치기에 싣는 기존+새 본문 총량 — 넘치는 노트는 이전 정리 절로 보존(출력 길이 한도에서 잘려 전부 실패하지 않게, 분리 검수 M3)
 const MERGE_PROMPT = (items, lang) => (lang === 'en'
   ? `Each topic below has an existing note body and a new body written from new journals. For each topic, write ONE complete body that keeps every still-valid conclusion, decision, number and rule from the existing body and adds the new content. When they conflict, prefer the new one and keep a one-line trace like "(was: …)". Do not drop anything from the existing body unless the new body replaces it.
 Output ONLY JSON (no code fences, no explanation): {"notes":[{"title":"<same title>","content":"markdown body"}]}
@@ -166,7 +167,7 @@ export async function consolidateMemory(wsId) {
   // 새로 써서 saveNote(merge)가 누적 지식을 통째로 덮어쓴다(기억 유실 실측 2026-07-19).
   let noteTitles = [];
   const noteCtx = [];
-  const shownWhole = new Set(); // 정리 프롬프트에 본문 전체가 실린 노트의 슬러그 — 이 밖의 노트를 갱신하면 합치기를 거친다
+  const shownWhole = new Set(); // 정리 프롬프트에 본문 전체가 실린 노트의 **파일 이름**(제목 슬러그가 아니다 — create의 -2 접미·제목을 고친 노트에서 엉뚱한 파일을 '보였다'로 치지 않게, 분리 검수 M1)
   try {
     const entries = [];
     // 스캐폴드 가이드(argo-사용법)는 지식 노트가 아니라 안내문 — 정제 컨텍스트에 주면 LLM이 재정제해 유사 사본을 만든다(실측)
@@ -185,7 +186,7 @@ export async function consolidateMemory(wsId) {
         const { body } = splitLinkSections(raw.replace(/^---[\s\S]*?---\n/, ''));
         const whole = body.replace(/^#[^\n]*\n/, '').trim();
         noteCtx.push({ title, body: whole.slice(0, 800) });
-        if (whole.length <= 800) shownWhole.add(noteSlug(title));
+        if (whole.length <= 800) shownWhole.add(basename(e.file, '.md'));
       }
     }
   } catch { /* 노트 폴더 없음 */ }
@@ -250,13 +251,21 @@ async function mergeUnseen(wsId, notes, { shownWhole, lang, billed }) {
     todo.push({ n, slug, title: n.title.trim(), old, fresh: n.content.trim() });
   }
   if (!todo.length) return;
-  const ask = todo.filter((m) => m.old.length <= MERGE_BODY_MAX);
+  const ask = [];
+  let total = 0;
+  for (const m of todo) {
+    const size = m.old.length + m.fresh.length;
+    if (m.old.length > MERGE_BODY_MAX || total + size > MERGE_TOTAL_MAX) continue;
+    ask.push(m); total += size;
+  }
   const merged = new Map();
   if (ask.length) {
     try {
       const r = await oneShot(wsId, MERGE_PROMPT(ask, lang), { lang, model: CONSOLIDATE_MODEL, maxTurns: 1, readOnly: true, timeoutMs: 5 * 60_000 });
       await appendUsage(wsId, { kind: 'consolidate', slug: '', runner: r.runner, usage: r.usage, costUsd: r.costUsd, ms: 0, billed });
-      for (const x of parseNotes(r.text)?.notes ?? []) if (x?.title?.trim() && x.content?.trim()) merged.set(noteSlug(x.title), x.content.trim());
+      const out = parseNotes(r.text);
+      if (!out) await appendEvent(wsId, { type: 'memory', ok: false, error: `노트 합치기 결과 파싱 실패(옛 본문 보존으로 대체): ${String(r.text ?? '').slice(0, 80)}` });
+      for (const x of out?.notes ?? []) if (x?.title?.trim() && x.content?.trim()) merged.set(noteSlug(x.title), x.content.trim());
     } catch (e) { await appendEvent(wsId, { type: 'memory', ok: false, error: `노트 합치기 실패(옛 본문 보존으로 대체): ${String(e?.message ?? e).slice(0, 120)}` }); }
   }
   for (const m of todo) m.n.content = merged.get(m.slug) ?? keepOld(m.fresh, m.old, lang);
