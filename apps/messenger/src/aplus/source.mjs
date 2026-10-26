@@ -13,7 +13,7 @@ import { spaceList, liveSpaceIds } from '../v2/spaces.mjs';
 import { loadMyInvites } from '../v2/my-invites.mjs';
 import { declineInvite } from '../v2/invite-box.mjs';
 import { planOf } from '../pro-checkout.mjs';
-import { runStateOf, effectiveState, afterCancel, errorKey } from './model.mjs';
+import { runStateOf, effectiveState, afterCancel, errorKey, msgAuthor } from './model.mjs';
 
 const ok = (r) => { if (r?.error) throw Object.assign(new Error(r.error.message || 'request failed'), { code: r.error.code, status: r.status }); return r?.data ?? null; };
 const notReady = () => Object.assign(new Error('aplus_not_ready'), { code: 'aplus_not_ready' });
@@ -25,7 +25,7 @@ export function createAPlusSource({ raw, uid, appVersion = null }) {
   const offs = [];
   const emit = (type, payload) => { for (const fn of listeners.get(type) ?? []) { try { fn(payload); } catch { /* 화면 쪽 오류 */ } } };
   const ready = async () => { if (!rt) throw notReady(); await rt.ready(); };
-  const toMsg = (m) => ({ id: m.id, author: m.author_kind === 'user' ? (m.author_user_id === uid ? 'me' : m.author_user_id) : m.author_kind === 'system' ? 'system' : m.author_agent_id, body: m.body ?? '', at: Date.parse(m.created_at ?? '') || Date.now(), kind: m.kind, round: m.meta?.round ?? null, workId: m.work_id ?? null, meta: m.kind === 'system' ? m.meta ?? null : null, legacy: !!m.meta?.legacy_author });
+  const toMsg = (m) => ({ id: m.id, author: msgAuthor(m, uid), body: m.body ?? '', at: Date.parse(m.created_at ?? '') || Date.now(), kind: m.kind, round: m.meta?.round ?? null, workId: m.work_id ?? null, meta: m.kind === 'system' ? m.meta ?? null : null, legacy: !!m.meta?.legacy_author });
   // 봇 일이 bot_unreachable·bot_limit 등으로 실패하면 그 방에 안내 줄 하나(글이 아니라 화면용 — 서버에 쓰지 않는다)
   const errNote = (w) => (w?.state === 'failed' && errorKey(w.error_code) ? { id: `werr-${w.id}`, author: 'system', kind: 'note', errKey: errorKey(w.error_code), at: Date.parse(w.updated_at ?? w.created_at ?? '') || Date.now() } : null);
   const meetingRooms = new Map(); // roomId → { workId, total } — 취소할 일, 사건으로 온 일의 진행

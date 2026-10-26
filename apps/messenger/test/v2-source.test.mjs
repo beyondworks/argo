@@ -184,3 +184,12 @@ test('등록 전 읽기(#1085 검수 2): 바꾼 조회·에이전트 조회·msg
   open(); await Promise.all([p1, p2, r]);
   assert.ok(raw.log.some((e) => e.table === 'msgr2_room_members') && raw.log.some((e) => e.table === 'msgr2_agent_seats') && raw.log.some((e) => e.name === 'msgr2_unread'), '등록 뒤에 나간다');
 });
+
+test('계정 삭제가 익명화한 사람 글(서버 20261026120000): 옛 모양은 작성자 없는 사람 글(옛 화면이 "탈퇴한 사용자"로 그린다), 시스템 글·다른 표지는 그대로', () => {
+  const anon = toLegacyRow('msgr_messages', { id: 1, author_kind: 'system', author_user_id: null, kind: 'text', body: 'hi', meta: { deleted_user: true } });
+  assert.deepEqual([anon.author_kind, anon.author_user_id, anon.body], ['user', null, 'hi']);
+  const sys = toLegacyRow('msgr_messages', { id: 2, author_kind: 'system', author_user_id: null, kind: 'system', meta: { code: 'x', deleted_user: true } });
+  assert.equal(sys.author_kind, 'system');
+  const old = toLegacyRow('msgr_messages', { id: 3, author_kind: 'system', author_user_id: null, kind: 'text', meta: { legacy_author: 'user' } });
+  assert.equal(old.author_kind, 'system', '옛 이전 표지는 이번 범위 밖');
+});

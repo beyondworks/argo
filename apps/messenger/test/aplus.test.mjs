@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, meetingPickable, deriveRun, runStateOf, effectiveState, afterCancel, errorKey, limitKey, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_ROUNDS } from '../src/aplus/model.mjs';
 import { aplusEnabled, APLUS_FLAG_KEY } from '../src/aplus/flag.mjs';
 import { createFakeSource } from '../src/aplus/fake.mjs';
-import { watchLinkState } from '../src/aplus/model.mjs';
+import { watchLinkState, msgAuthor, DELETED_USER } from '../src/aplus/model.mjs';
 import { DICT } from '../src/i18n.js';
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
@@ -213,4 +213,14 @@ test('기계 상태 → A+: signed_out(login_required)이면 로그인 안내 1�
   const s3 = createFakeSource(); const n3 = []; watchLinkState(s3, { onNotice: (k) => n3.push(k) }); s3.linkState({ state: 'signed_out', reason: 'revoked' });
   assert.deepEqual(n3, ['v2.state.signedOut']);
   for (const k of ['v2.state.loginRequired', 'v2.state.signedOut', 'v2.state.paused', 'v2.state.update', 'v2.state.unreachable', 'v2.state.retry']) assert.ok(DICT[k]?.[0] && DICT[k]?.[1], `${k} ko/en`);
+});
+
+test('글쓴이: 계정 삭제가 익명화한 사람 글(system·작성자 없음·meta.deleted_user)은 "탈퇴한 사용자" 표지, 그 밖의 시스템 글·사람·에이전트·나는 그대로', () => {
+  const me = 'u-me';
+  assert.equal(msgAuthor({ author_kind: 'system', author_user_id: null, kind: 'text', meta: { deleted_user: true } }, me), DELETED_USER);
+  assert.equal(msgAuthor({ author_kind: 'system', kind: 'system', meta: { code: 'room.created', deleted_user: true } }, me), 'system', '시스템 글은 시스템');
+  assert.equal(msgAuthor({ author_kind: 'system', kind: 'text', meta: { legacy_author: 'user' } }, me), 'system', '옛 이전 표지는 이번 범위 밖(종전대로)');
+  assert.equal(msgAuthor({ author_kind: 'user', author_user_id: me }, me), 'me');
+  assert.equal(msgAuthor({ author_kind: 'user', author_user_id: 'u-2' }, me), 'u-2');
+  assert.equal(msgAuthor({ author_kind: 'agent', author_agent_id: 'a-1' }, me), 'a-1');
 });

@@ -1,7 +1,10 @@
 // A+ 화면용 가짜 원본 — 서버 RPC·약속 v1.1이 확정되기 전 화면 골격과 상태별 캡처에 쓴다(test/aplus.fixture.html). 네트워크를 쓰지 않는다.
 // 실제 원본(source.mjs)과 같은 모양: plan·agents·dms·openDm·messages·send·meetings·createMeeting·cancelMeeting·bots·on.
 // 외부 봇은 내 에이전트 중 hosting 'bot'(약속 v1.1) — 봇 추가는 앱이 아니라 내 PC Argo 설정에서 한다.
+// 탈퇴한 사람 글(계정 삭제가 익명화 — 서버 meta.deleted_user)은 글쓴이 DELETED_USER로 그린다.
 // calls에 부른 이름을 남긴다 — 무료 계정이 plan 말고는 아무것도 부르지 않는지 시험이 본다.
+
+import { DELETED_USER } from './model.mjs';
 
 const UID = 'me-0000';
 const AG = [
@@ -94,6 +97,7 @@ export function createFakeSource({ scenario = 'pro-many', lang = 'ko', now = Dat
       userMsg(30, 'u-hyowon', '이번 주 금요일에 전체 회의 있습니다. 안건은 이 채널에 남겨 주세요.', 'All-hands this Friday. Please leave agenda items in this channel.', 60 * 24 * 40, { legacy: true, meta: legacyMeta }),
       userMsg(31, 'u-jimin', '지난 분기 정리본 공유합니다.', 'Sharing last quarter’s wrap-up.', 60 * 24 * 39, { legacy: true, meta: legacyMeta, files: [{ id: 'f-q3', name: say('3분기-정리.pdf', 'q3-wrapup.pdf'), mime: 'application/pdf', bytes: 1_284_000, storage_path: 'msgr/fake/q3.pdf' }] }),
       userMsg(32, 'me', '새 메신저로 옮겼습니다. 앞으로는 여기서 이어 가요.', 'We moved to the new messenger. Let’s continue here.', 30),
+      userMsg(33, DELETED_USER, '다음 주부터 저는 빠집니다. 자료는 공유 폴더에 다 올려 두었어요.', 'I’m off the team from next week. Everything is in the shared folder.', 25),
     ] });
     rooms.set('ch-launch', { kind: 'channel', messages: [
       userMsg(40, 'u-hyowon', '랜딩 시안 두 개 올립니다. 어느 쪽이 나은지 의견 주세요.', 'Two landing mockups. Which one works better?', 50, { files: [{ id: 'f-land', name: 'landing-v2.png', mime: 'image/png', bytes: 312_400, storage_path: 'msgr/fake/landing.png', url: IMG }, { id: 'f-check', name: say('출시-체크리스트.pdf', 'launch-checklist.pdf'), mime: 'application/pdf', bytes: 240_120, storage_path: 'msgr/fake/check.pdf' }] }),
