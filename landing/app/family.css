@@ -1076,6 +1076,17 @@ html[lang='ko'] .fam-page :is(.m-display, .fam-title, .m-get-title) {
 .cv-plan-p { font-size: clamp(34px, 3.2vw, 48px); font-weight: 760; letter-spacing: -0.03em; line-height: 1; }
 .cv-plan .cv-card-b { flex: 1; }
 .cv-plan .fam-btn { align-self: flex-start; }
+/* 2026-10-26 메신저 요금(Argo Pro에 포함): 두 칸 · 가격 옆 주기 · 버튼 둘 · 아래 안내 한 줄 */
+.cv-price.n2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cv-plan-per { margin-left: 4px; font-size: 16px; font-weight: 560; letter-spacing: 0; color: var(--fg-2); }
+.cv-plan-ctas { display: flex; flex-wrap: wrap; gap: 10px; }
+.cv-plan-ctas .fam-btn { white-space: nowrap; }
+.cv-price-note { margin: 18px 0 0; font-size: 14.5px; line-height: 1.6; color: var(--fg-2); text-wrap: pretty; }
+/* 폰 폭: 버튼 둘이 다른 폭으로 두 줄에 쌓이지 않게(영어 'GO PRO — $12/MO'+'YEARLY $120'은 한 줄에 안 들어간다) — 같은 폭 한 줄에 하나, 내려받기 절과 같은 규칙 */
+@media (max-width: 600px) {
+  .cv-plan-ctas { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .cv-plan-ctas .fam-btn { justify-content: center; width: 100%; }
+}
 
 .cv-faq { border-top: 1px solid var(--rule-soft); max-width: 980px; }
 .cv-q { border-bottom: 1px solid var(--rule-soft); }
@@ -1096,7 +1107,7 @@ html[lang='ko'] .fam-page :is(.m-display, .fam-title, .m-get-title) {
 .cv-q p { color: var(--fg-2); font-size: 16px; line-height: 1.7; padding: 0 0 26px; max-width: 72ch; }
 
 @media (max-width: 940px) {
-  .cv-grid, .cv-grid.n4, .cv-price { grid-template-columns: minmax(0, 1fr); }
+  .cv-grid, .cv-grid.n4, .cv-price, .cv-price.n2 { grid-template-columns: minmax(0, 1fr); }
   .cv-card { min-height: 0; }
 }
 @media (min-width: 941px) and (max-width: 1200px) {

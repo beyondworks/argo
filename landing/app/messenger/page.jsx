@@ -10,12 +10,16 @@ import AgentTalk from '@/components/family/AgentTalk';
 import StageTabs from '@/components/family/StageTabs';
 import TabFilm from '@/components/family/TabFilm';
 import FamilyCards, { useRise } from '@/components/family/FamilyCards';
-import { CardGrid, Faq } from '@/components/family/Convert';
+import { CardGrid, Faq, Pricing } from '@/components/family/Convert';
 import HeroFilm from '@/components/family/HeroFilm';
 import { useLang } from '@/lib/i18n';
 import { MSGR_DL, detectMacTarget } from '@/lib/downloads';
 
 // 크루 얼굴 띠 — 마우스를 올린 얼굴은 놀란다(앱의 멘션 반응과 같은 표정).
+const MSGR_PLANS = [
+  { id: 'pro', per: true, on: true, links: [{ href: '/checkout?plan=monthly', key: 'cta', primary: true }, { href: '/checkout?plan=yearly', key: 'ctaYear' }] },
+  { id: 'ent', links: [{ href: '/#contact', key: 'cta' }] },
+];
 const CROWD = [[0, 2, 0], [1, 3, 1], [2, 4, 2], [3, 7, 0], [4, 1, 2], [5, 5, 1], [2, 0, 0], [0, 8, 2], [4, 6, 1], [1, 9, 0]];
 
 function Crowd({ t }) {
@@ -93,7 +97,8 @@ export default function MessengerPage() {
 
       <CardGrid ns="msgr" part="safe" ids={['1', '2', '3', '4']} id="safe" variant="split" />
       <CardGrid ns="msgr" part="start" ids={['1', '2', '3']} id="start" numbered meta="01 — 03" variant="steps" />
-      {/* 요금 절(Free로 지금 시작)은 되살리지 않는다 — 2026-10-25 재공개판은 Pro 플랜 전용(내려받기 절의 한 줄 안내) */}
+      {/* 요금 — 메신저 전용 상품 없이 Argo Pro에 포함(2026-10-26 유건). 결제는 본체 가격 절과 같은 /checkout(로그인한 계정에 Pro 연결) */}
+      <Pricing ns="msgr" meta="PRO · ENTERPRISE" note="msgr.price.note" plans={MSGR_PLANS} />
       <Faq ns="msgr" count={5} split />
 
       <FamilyCards here="messenger" />

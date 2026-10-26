@@ -6,7 +6,7 @@ import { useLang } from '@/lib/i18n';
 // 결제 이메일이 달라도, 결제를 먼저 해도 Pro가 그 계정에 연결된다. LS 주소는 lib/checkout.js만 안다.
 const PLANS = [
   { id: 'p1', features: ['f1', 'f2', 'f3'] },
-  { id: 'p2', features: ['f0', 'f1', 'f2'], hot: true }, // 유료 = 동기화·우선지원만, 나머지는 무료 동일(유건 확정 2026-08-07)
+  { id: 'p2', features: ['f0', 'f3', 'f1', 'f2'], hot: true }, // 유료 = 동기화·Argo Messenger·우선지원, 나머지는 무료 동일(유건 2026-08-07, 메신저 포함 2026-10-26)
   { id: 'p3', features: ['f1', 'f2', 'f3'] },
 ];
 
