@@ -82,3 +82,57 @@ test('SDK 두 번 판정(PreToolUse 훅 → canUseTool, 같은 호출 id): 승�
   assert.equal((await loadApprovals(WS)).filter((x) => x.payload?.shell === cmd && x.status === 'pending').length, 0, '새 대기 결재 없음(실측 결함: 29ms 뒤 새 카드)');
   assert.equal((await gate('Bash', { command: cmd }, { toolUseID: 'toolu_3' })).behavior, 'deny', '다른 호출은 다시 결재');
 });
+
+// 2026-10-26 총괄 감사 축 A — 철자 비틀기·간접 호출·흔한 삭제 명령. 메신저 턴은 카드가 늘고(막힘), 데스크톱 턴은 종전 그대로 허용한다.
+const NEW_RISKY = ['r\\m -rf build', '"r"m -rf build', 'R=rm; $R -rf x', '$(echo rm) -rf x', 'ls *.log | xargs rm', 'rm -f *.md',
+  'git push origin --delete main', 'git branch -D feat', 'git checkout -- .', 'git stash clear', 'rsync -a --delete src/ dst/',
+  'python3 -c "import shutil; shutil.rmtree(\'b\')"', 'docker system prune -af', 'kubectl delete pod web-1', 'gh repo delete o/x --yes'];
+
+test('새로 잡는 명령: 메신저 턴은 결재 카드를 만들고 막는다, 데스크톱 턴은 종전처럼 허용하고 결재를 만들지 않는다', async () => {
+  const desk = makePermissionGate(WS, 'desk', ROOT, null, 'ko', [], {});
+  const msgr = makePermissionGate(WS, 'msgrcrew', ROOT, null, 'ko', [], { msgr: { ...MSGR, channelId: 'ch-new' } });
+  for (const cmd of NEW_RISKY) {
+    const before = (await loadApprovals(WS)).length;
+    assert.equal((await desk('Bash', { command: cmd })).behavior, 'allow', `데스크톱: ${cmd}`);
+    assert.equal((await loadApprovals(WS)).length, before, `데스크톱은 결재를 만들지 않는다: ${cmd}`);
+    const d = await msgr('Bash', { command: cmd });
+    assert.equal(d.behavior, 'deny', `메신저: ${cmd}`);
+    assert.match(d.message, /결재를 올렸다\(ap-/, cmd);
+  }
+  const cards = (await loadApprovals(WS)).filter((a) => a.slug === 'msgrcrew' && a.payload?.shell);
+  assert.equal(cards.length, NEW_RISKY.length, '명령마다 카드 하나');
+  assert.ok(cards.every((a) => approvalRisk(a) === 'high'), '모두 고위험 카드');
+});
+
+test('일상 명령은 메신저 턴에서도 결재 없이 허용(과차단 금지)', async () => {
+  const msgr = makePermissionGate(WS, 'calm', ROOT, null, 'ko', [], { msgr: MSGR });
+  const before = (await loadApprovals(WS)).length;
+  for (const cmd of ['ls -la', 'git status', 'npm test', 'echo "rm is a word"', 'git push origin feat', 'git branch -d feat', 'git checkout main', '$EDITOR notes.md', 'grep -r rmSync src']) {
+    assert.equal((await msgr('Bash', { command: cmd })).behavior, 'allow', cmd);
+  }
+  assert.equal((await loadApprovals(WS)).length, before, '결재 0');
+});
+
+test('긴 입력도 분류가 0.5초 안에 끝난다 — 4096자를 넘으면 정규식 없이 결재(oversized-command), 상한 안쪽 병적 입력도 빠르다', () => {
+  assert.equal(classifyShell('ls '.repeat(2000))?.id, 'oversized-command', '상한을 넘는 명령은 결재로(fail-closed)');
+  assert.equal(classifyShell('ls '.repeat(1300)), null, '상한 안의 무해한 긴 명령은 그대로');
+  // 값을 불려 치환 상한을 넘긴 뒤 R=rm을 숨기는 우회(재검수 낮음) — 일부를 못 풀었으면 결재로
+  const pad = `A=${'x'.repeat(600)}; echo $A $A $A; `;
+  assert.equal(classifyShell(`${pad}R=rm; $R -r build`)?.id, 'oversized-command');
+  assert.equal(classifyShell(`${pad}U=shred; $U -u key.pem`)?.id, 'oversized-command');
+  const n = 100_000;
+  const inputs = ['$('.repeat(n / 2), `git branch ${' -d'.repeat(n / 3)}`, `node -e ${' -e'.repeat(n / 3)}`, 'R=rm; '.repeat(n / 6), `rm ${' x'.repeat(n / 2)}`,
+    `xargs ${' x'.repeat(n / 2)}`, '\\'.repeat(n), '"'.repeat(n), `git push ${':'.repeat(n)}`, 'A=$A'.repeat(n / 4),
+    // 분리 검수가 찾은 병적 입력 — 4천 자에 49초(세제곱)·크기 폭증(RangeError)·제곱 규칙. 길이 상한(MAX_CLASSIFY) 안팎 둘 다
+    `$(echo ${' '.repeat(n)}`, `\x60echo ${'\n'.repeat(n)}`, `$(echo ${' '.repeat(4000)}`, `$(echo x${' '.repeat(4000)})`,
+    `A=${'x'.repeat(200)} B=${'$A'.repeat(200)} C=${'$B'.repeat(200)} ${'$C'.repeat(200)}`,
+    'rm a '.repeat(800), 'xargs a '.repeat(500), 'mv '.repeat(1300), 'git branch '.repeat(350), 'r\\m a '.repeat(650),
+    // 재검수: xargs 옵션 되풀이(160자에 25초 지수 시간)와 넓힌 명령 자리(ssh·docker exec·VAR=·sudo -u·문법 낱말) 되풀이
+    'xargs' + ' --x=1'.repeat(26) + ' z', 'xargs' + ' -a'.repeat(36) + ' z', 'xargs' + ' -I{}'.repeat(30) + ' z', `xargs${' --x=1'.repeat(600)} z`,
+    `xargs${' -n 1'.repeat(800)} z`, 'ssh h '.repeat(650), 'docker exec c '.repeat(290), 'kubectl exec p -- '.repeat(220), 'A=1 '.repeat(1000),
+    'sudo -u x '.repeat(400), 'then do { ! time '.repeat(200), 'ssh ' + 'a '.repeat(2000), `ssh h${' x'.repeat(2000)} rm -f`];
+  for (const s of inputs) {
+    const t = performance.now(); classifyShell(s); const ms = performance.now() - t;
+    assert.ok(ms < 500, `${JSON.stringify(s.slice(0, 12))} ${ms.toFixed(0)}ms`);
+  }
+});
