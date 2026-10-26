@@ -1,7 +1,7 @@
 // 회사의 뇌(vault) — 기둥 4. 3층 구조: 일지(journal, 턴 원본 append) → 주제 노트(notes, 정제된 단일 진실)
 // → 정리 데몬(consolidate)이 매일 일지를 주제 노트로 통합한다. 자동 [[링크]] + 인덱스 갱신.
 // 스파이크: TF-IDF 코사인 유사도(무의존). 프로덕션: pgvector 임베딩으로 교체(인터페이스 동일).
-import { readFile, readdir, appendFile, mkdir, stat, utimes, rename } from 'node:fs/promises';
+import { readFile, readdir, appendFile, mkdir, stat, utimes, rename, copyFile, constants as fsc } from 'node:fs/promises';
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { join, basename, relative, sep } from 'node:path';
@@ -252,6 +252,30 @@ export async function purgeDepartedJournals(wsId, access) {
   return removed;
 }
 
+/** 주제 노트의 순수 본문 — frontmatter·제목행·링크 섹션을 뺀 것(기억 정리의 비교·합치기용). */
+export function noteBody(raw) {
+  return splitLinkSections(String(raw ?? '').replace(/^---[\s\S]*?---\n/, '')).body.replace(/^#[^\n]*\n/, '').trim();
+}
+
+// 덮기 전 사본 — vault/notes/.history/<slug>.<YYYYMMDD-HHMMSS>.md. 기억 데이터는 지우지 않는다(저장소 규칙): 갱신이 본문을 통째로 바꿔도
+// 옛 결론을 되찾을 수 있게 한다(2026-10-26 총괄 감사 축 B). 숨김 하위 폴더라 인덱스·색인(notes/ 한 단계만)·Grep(숨김 제외)에 섞이지 않고,
+// 동기화는 일반 파일로 다른 기기에도 올라간다(이름이 겹치지 않는 새 파일만 생겨 충돌 없음). 정리는 지우지 않는다.
+// 노트당 하루 1개만 — 그날 처음 덮기 직전(= 전날까지의 상태)을 남긴다. 백로그 야간 루프가 같은 노트를 청크마다 갱신해도
+// 사본이 청크 수만큼 쌓여 동기화 걷기·전송량을 키우지 않게 한다(분리 검수 M2). 그날 안의 중간 상태는 합치기가 본문에 보존한다.
+export const NOTE_HISTORY_DIR = '.history';
+async function keepNoteHistory(notesDir, slug, file) {
+  const dir = join(notesDir, NOTE_HISTORY_DIR);
+  await mkdir(dir, { recursive: true });
+  const d = new Date(); const z = (n) => String(n).padStart(2, '0');
+  const day = `${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}`;
+  if ((await readdir(dir).catch(() => [])).some((n) => n.startsWith(`${slug}.${day}-`))) return; // 오늘 사본이 이미 있다
+  const ts = `${day}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
+  for (let n = 1; ; n++) {
+    try { await copyFile(file, join(dir, `${slug}.${ts}${n > 1 ? `-${n}` : ''}.md`), fsc.COPYFILE_EXCL); return; }
+    catch (e) { if (e?.code !== 'EEXIST' || n > 50) throw e; }
+  }
+}
+
 export function noteSlug(title) {
   return title.trim().toLowerCase().replace(/[^a-z0-9가-힣]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'note';
 }
@@ -269,10 +293,12 @@ export async function saveNote(wsId, title, content, { merge = false, create = f
   // merge = 기존 링크 섹션(근거·관련)을 전부 보존하고 본문만 갱신 — 과거엔 '관련이 마지막' 가정의
   // 정규식이라 근거가 뒤에 붙은 파일에서 근거만 남고 관련이 유실되거나 그 반대가 났다(파서로 교체).
   let kept = { 근거: [], 관련: [] };
-  if (merge && existsSync(file)) {
-    kept = splitLinkSections(await readFile(file, 'utf8')).links;
-  }
   const cur = splitLinkSections(content.trim()); // LLM/사용자가 섹션을 본문에 섞어 보내도 회수해 합친다
+  if (merge && existsSync(file)) {
+    const old = await readFile(file, 'utf8');
+    kept = splitLinkSections(old).links;
+    if (noteBody(old) !== cur.body.trim()) await keepNoteHistory(p.notes, slug, file); // 본문이 바뀔 때만 사본(같은 본문 재저장은 사본 없음)
+  }
   const links = { 근거: [...kept.근거, ...cur.links.근거], 관련: [...kept.관련, ...cur.links.관련] };
   await writeJsonAtomic(file, `---\nupdated: ${localDay()}\n---\n# ${title.trim()}\n\n${cur.body.trim()}\n${renderLinkSections(links)}`);
   const linked = await autoLink(wsId, file);
