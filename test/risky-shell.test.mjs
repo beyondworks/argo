@@ -113,10 +113,16 @@ test('일상 명령은 메신저 턴에서도 결재 없이 허용(과차단 금
   assert.equal((await loadApprovals(WS)).length, before, '결재 0');
 });
 
-test('긴 입력(10만 자)도 분류가 0.5초 안에 끝난다 — 정규화·새 규칙이 제곱 시간을 만들지 않는다', () => {
+test('긴 입력도 분류가 0.5초 안에 끝난다 — 4096자를 넘으면 정규식 없이 결재(oversized-command), 상한 안쪽 병적 입력도 빠르다', () => {
+  assert.equal(classifyShell('ls '.repeat(2000))?.id, 'oversized-command', '상한을 넘는 명령은 결재로(fail-closed)');
+  assert.equal(classifyShell('ls '.repeat(1300)), null, '상한 안의 무해한 긴 명령은 그대로');
   const n = 100_000;
   const inputs = ['$('.repeat(n / 2), `git branch ${' -d'.repeat(n / 3)}`, `node -e ${' -e'.repeat(n / 3)}`, 'R=rm; '.repeat(n / 6), `rm ${' x'.repeat(n / 2)}`,
-    `xargs ${' x'.repeat(n / 2)}`, '\\'.repeat(n), '"'.repeat(n), `git push ${':'.repeat(n)}`, 'A=$A'.repeat(n / 4)];
+    `xargs ${' x'.repeat(n / 2)}`, '\\'.repeat(n), '"'.repeat(n), `git push ${':'.repeat(n)}`, 'A=$A'.repeat(n / 4),
+    // 분리 검수가 찾은 병적 입력 — 4천 자에 49초(세제곱)·크기 폭증(RangeError)·제곱 규칙. 길이 상한(MAX_CLASSIFY) 안팎 둘 다
+    `$(echo ${' '.repeat(n)}`, `\x60echo ${'\n'.repeat(n)}`, `$(echo ${' '.repeat(4000)}`, `$(echo x${' '.repeat(4000)})`,
+    `A=${'x'.repeat(200)} B=${'$A'.repeat(200)} C=${'$B'.repeat(200)} ${'$C'.repeat(200)}`,
+    'rm a '.repeat(800), 'xargs a '.repeat(500), 'mv '.repeat(1300), 'git branch '.repeat(350), 'r\\m a '.repeat(650)];
   for (const s of inputs) {
     const t = performance.now(); classifyShell(s); const ms = performance.now() - t;
     assert.ok(ms < 500, `${JSON.stringify(s.slice(0, 12))} ${ms.toFixed(0)}ms`);
