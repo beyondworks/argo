@@ -13,9 +13,11 @@ const jwt = (exp) => [
 const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 // 실제 auth-js(GoTrueClient)에 가짜 fetch를 물려 /token 호출 수를 센다. /token은 늘 400(세션 종료).
-const realAuth = (t, stored) => {
+const realAuth = async (t, stored) => {
   const key = 'native-rejected-fixture';
-  const values = new Map([[key, JSON.stringify(stored)]]);
+  const now = Math.floor(Date.now() / 1000);
+  // 초기화 때 auth-js가 스스로 갱신하지 않게 넉넉한 세션으로 띄운 뒤, 시나리오 세션으로 바꾼다.
+  const values = new Map([[key, JSON.stringify({ ...stored, access_token: jwt(now + 3_600), expires_at: now + 3_600 })]]);
   const storage = { getItem: (name) => values.get(name) ?? null, setItem: (name, value) => values.set(name, value), removeItem: (name) => values.delete(name) };
   const token = [];
   const auth = new GoTrueClient({
@@ -30,7 +32,12 @@ const realAuth = (t, stored) => {
   });
   const events = [];
   const sub = auth.onAuthStateChange((event) => { events.push(event); });
+  await auth.getSession();
+  await settle(); // 구독 직후 INITIAL_SESSION이 세션을 한 번 읽는다 — 시나리오 세션으로 바꾸기 전에 끝낸다
+  events.length = 0;
+  values.set(key, JSON.stringify(stored));
   t.after(async () => { sub.data.subscription.unsubscribe(); await auth.stopAutoRefresh(); });
+  assert.equal(token.length, 0, 'fixture init must not refresh');
   return { auth, token, events, values, key };
 };
 
@@ -51,7 +58,7 @@ test('rejected native refresh with the same token: native stays stopped, JS trie
   const now = Math.floor(Date.now() / 1000);
   // 네이티브가 갱신하는 90초 창 안: 접근 토큰은 아직 유효(60초 남음), 리프레시 토큰은 서버가 끝낸 것.
   const stored = { user: { id: 'fixture-user' }, access_token: jwt(now + 60), refresh_token: 'fixture-dead', expires_at: now + 60, token_type: 'bearer' };
-  const { auth, token } = realAuth(t, stored);
+  const { auth, token } = await realAuth(t, stored);
   const calls = [];
   const coordinator = coordinatorFor(auth, nativeInvoke(calls));
   await coordinator.handleAuth('SIGNED_IN', stored);
@@ -68,7 +75,7 @@ test('rejected native refresh with the same token: native stays stopped, JS trie
 test('rejected native refresh with an expired session goes down the SIGNED_OUT path', async (t) => {
   const now = Math.floor(Date.now() / 1000);
   const stored = { user: { id: 'fixture-user' }, access_token: jwt(now - 10), refresh_token: 'fixture-dead', expires_at: now - 10, token_type: 'bearer' };
-  const { auth, token, events, values, key } = realAuth(t, stored);
+  const { auth, token, events, values, key } = await realAuth(t, stored);
   const calls = [];
   const coordinator = coordinatorFor(auth, nativeInvoke(calls));
   await coordinator.handleAuth('SIGNED_IN', stored);
@@ -87,7 +94,7 @@ test('rejected native refresh while JS holds a newer token restarts native with 
   const nativeSession = { user: { id: 'fixture-user' }, access_token: jwt(now + 60), refresh_token: 'fixture-native-old', expires_at: now + 60, token_type: 'bearer' };
   // JS가 먼저 갱신해 더 새 토큰을 저장소에 들고 있다(네이티브는 모른다).
   const jsSession = { ...nativeSession, access_token: jwt(now + 3_600), refresh_token: 'fixture-js-new', expires_at: now + 3_600 };
-  const { auth, token } = realAuth(t, jsSession);
+  const { auth, token } = await realAuth(t, jsSession);
   const calls = [];
   const coordinator = coordinatorFor(auth, nativeInvoke(calls));
   await coordinator.handleAuth('SIGNED_IN', nativeSession);
