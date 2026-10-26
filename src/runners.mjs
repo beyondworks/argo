@@ -139,8 +139,9 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     (export: 회귀 테스트용) */
 export const codexJsonMode = (cmd, env = process.env) => !!cmd?.pinned && env.ARGO_CODEX_JSON !== '0';
 
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, onSteerable = null, onEvent = null, msgrGate = null }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, onSteerable = null, onEvent = null, msgrGate = null, codexEngine = null }) {
   // msgrGate — 메신저 문맥 턴의 결재 목적지(codex app-server 판정자에만 쓴다, codex-appserver.mjs makeApprovalJudge)
+  // codexEngine — 'appserver'|'exec'면 이번 턴 codex 엔진을 고른다(메신저 문맥 codex는 결재가 걸리는 app-server). 없으면 ARGO_CODEX_ENGINE 기본값
   // onEvent — codex 이벤트(exec JSONL·app-server 알림)를 받는 쪽(chat.mjs 작업 과정). 표시용이라 실패해도 턴과 무관하다.
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는 oneshot.mjs의
@@ -151,7 +152,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
   // read-only로 분기한다. 기본값 false라 크루 채팅·기존 oneshot 경로는 완전 무변경.
   const effCaps = readOnly ? { fs: false, browser: false, shell: false, bypass: false } : caps;
   const t0 = Date.now(); // 실패의 정직 번역용 — cliTurnFailure가 경과 시간으로 시간 초과를 판정한다
-  if (runner === 'codex' && process.env.ARGO_CODEX_ENGINE === 'appserver') {
+  if (runner === 'codex' && (codexEngine ? codexEngine === 'appserver' : process.env.ARGO_CODEX_ENGINE === 'appserver')) {
     // 엔진 하네스 전환 P1(옵트인 플래그) — codex를 app-server(read-only 샌드박스 + 전량 승인)로
     // 돌리고 승인 요청마다 permission-gate 판정을 태운다(셸 1차 방어 — 한계는 codex-appserver.mjs
     // 머리 주석). 기본값은 기존 exec 경로 그대로(회귀 0) — 검증 후 기본 승격.
@@ -161,6 +162,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers, onSteerable, onEvent, msgrGate });
     } catch (e) {
       if (e.limitReached || e.aborted) throw e;
+      if (e.appserverUnavailable && codexEngine === 'appserver') throw e; // 이번 턴만 고른 엔진이 시작도 못 했다 — 호출부(chat.mjs)가 폴백한다(원 오류 그대로)
       const t = cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: e.stage ?? 'exec', kind });
       throw codexOutdatedError(t?.message, await codexPinStale()) ?? t; // 낡은 관리본의 모델 거절 → exec 경로와 같은 업데이트 대기 안내(ko/en)
     }

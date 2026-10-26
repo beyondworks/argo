@@ -33,7 +33,7 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
 } });
 after(() => { hooks.deregister(); globalThis.fetch = fetchBefore; delete globalThis.__cliMsgrExec; delete process.env.ARGO_CODEX_ENGINE; });
 const { createCompany, paths } = await import('../src/workspace.mjs');
-const { chat, cliMsgrShellLimit } = await import('../src/chat.mjs');
+const { chat, cliMsgrShellLimit, cliMsgrReadOnlyNote } = await import('../src/chat.mjs');
 const { makeApprovalJudge } = await import('../src/runners/codex-appserver.mjs');
 const { loadApprovals } = await import('../src/approvals.mjs');
 
@@ -68,7 +68,7 @@ async function setup(ws, runner) {
   await writeFile(join(paths(ws).agents, 'alpha.md'), `---\nname: Alpha\nrunner: ${runner}\n---\nFixture agent`);
 }
 
-for (const runner of ['codex', 'gemini', 'antigravity']) {
+for (const runner of ['gemini', 'antigravity']) {
   test(`chat() ${runner}: 메신저 문맥이면 셸을 끈 능력으로 실행하고 프롬프트도 같은 능력을 안내한다, 데스크톱은 종전 그대로`, async () => {
     delete process.env.ARGO_CODEX_ENGINE;
     const ws = `cli-msgr-${runner}`; await setup(ws, runner); globalThis.__cliMsgrRunner = runner;
@@ -83,7 +83,7 @@ for (const runner of ['codex', 'gemini', 'antigravity']) {
     await chat(ws, 'alpha', 'rm -rf ./old-reports 해 줘', null, { journal: { off: true }, msgrShellGate: MSGR });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].caps.shell, false, '메신저: 셸 꺼짐');
-    assert.equal(calls[0].readOnly, runner === 'codex', 'codex exec만 read-only 샌드박스');
+    assert.equal(calls[0].readOnly, false, 'gemini·antigravity는 read-only 샌드박스가 아니다(셸만 끈다)');
     assert.equal(calls[0].msgrGate, null, 'exec 엔진은 판정자가 없다');
     assert.doesNotMatch(calls[0].prompt, /오래 걸리는 명령/, '메신저 프롬프트: 셸 안내 없음(같은 능력 값으로 안내)');
   });
@@ -131,4 +131,45 @@ test('gemini 셸 끈 턴의 전용 홈: 로그인 파일만 복사하고, CLI가
   assert.equal(await rf(join(base, '.gemini', 'oauth_creds.json'), 'utf8'), '{"refresh_token":"new"}', '갱신 로그인을 회사 홈으로');
   assert.equal(await rf(join(base, '.gemini', 'settings.json'), 'utf8'), '{"tools":{"exclude":[]}}', '회사 홈 settings는 건드리지 않는다');
   await assert.rejects(stat(own.home), '임시 홈 삭제');
+});
+
+test('chat() codex(기본 엔진 exec): 메신저 문맥이면 결재가 걸리는 app-server 엔진으로 돌린다 — 셸·쓰기는 그대로, 판정자에 메신저 목적지', async () => {
+  delete process.env.ARGO_CODEX_ENGINE;
+  const ws = 'cli-msgr-codex'; await setup(ws, 'codex'); globalThis.__cliMsgrRunner = 'codex';
+  calls.length = 0;
+  await chat(ws, 'alpha', '보고서 파일 만들어 줘', null, { journal: { off: true } });
+  assert.deepEqual([calls[0].codexEngine, calls[0].readOnly, calls[0].caps.shell, calls[0].msgrGate], [undefined, false, true, null], '데스크톱: 종전(exec·전권)');
+  calls.length = 0;
+  await chat(ws, 'alpha', '보고서 파일 만들어 줘', null, { journal: { off: true }, msgrShellGate: MSGR });
+  assert.equal(calls.length, 1);
+  assert.deepEqual([calls[0].codexEngine, calls[0].readOnly, calls[0].caps.shell], ['appserver', false, true], '메신저: app-server, 쓰기·셸 그대로(고위험은 결재 카드)');
+  assert.deepEqual([calls[0].msgrGate?.wsId, calls[0].msgrGate?.slug, calls[0].msgrGate?.msgr], [ws, 'alpha', MSGR]);
+  assert.match(calls[0].prompt, /오래 걸리는 명령/, '셸 안내 그대로');
+});
+
+test('chat() codex 메신저: app-server를 쓸 수 없으면(시작 전 실패) 그 턴만 읽기 전용 exec로 폴백하고 안내를 붙인다 — 다른 실패는 폴백하지 않는다', async () => {
+  delete process.env.ARGO_CODEX_ENGINE;
+  const ws = 'cli-msgr-codex-fb'; await setup(ws, 'codex'); globalThis.__cliMsgrRunner = 'codex';
+  const before = globalThis.__cliMsgrExec;
+  try {
+    calls.length = 0;
+    globalThis.__cliMsgrExec = async (args) => { calls.push(args); if (args.codexEngine === 'appserver') throw Object.assign(new Error('spawn codex ENOENT'), { appserverUnavailable: true }); return '읽기 전용 답'; };
+    const r = await chat(ws, 'alpha', '보고서 파일 만들어 줘', null, { journal: { off: true }, msgrShellGate: MSGR });
+    assert.equal(calls.length, 2, 'app-server 시도 1 + 폴백 1');
+    assert.deepEqual([calls[1].codexEngine, calls[1].readOnly, calls[1].caps.shell, calls[1].msgrGate], ['exec', true, false, null], '폴백: 읽기 전용 exec');
+    assert.ok(calls[1].prompt.includes(cliMsgrReadOnlyNote('ko')), '모델에게도 읽기 전용을 알린다');
+    assert.ok(r.reply.startsWith(cliMsgrReadOnlyNote('ko')), `답 머리에 안내: ${r.reply}`);
+    assert.ok(r.reply.includes('읽기 전용 답'));
+    // 엔진은 떴는데 턴이 실패한 경우(표지 없음)는 폴백하지 않는다 — 실패를 그대로 알린다
+    calls.length = 0;
+    globalThis.__cliMsgrExec = async (args) => { calls.push(args); throw new Error('turn failed after start'); };
+    await chat(ws, 'alpha', '다시', null, { journal: { off: true }, msgrShellGate: MSGR }).catch(() => null);
+    assert.ok(calls.every((c) => c.codexEngine === 'appserver'), '읽기 전용 폴백 없음');
+    // 데스크톱은 app-server를 고르지 않으므로 폴백 경로도 없다
+    calls.length = 0;
+    globalThis.__cliMsgrExec = async (args) => { calls.push(args); return '데스크톱 답'; };
+    const d = await chat(ws, 'alpha', '정리', null, { journal: { off: true } });
+    assert.equal(d.reply, '데스크톱 답');
+    assert.equal(calls[0].codexEngine, undefined);
+  } finally { globalThis.__cliMsgrExec = before; }
 });

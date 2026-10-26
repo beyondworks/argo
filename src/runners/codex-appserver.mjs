@@ -102,7 +102,7 @@ export function mapTurnError(errParams) {
 /** app-server 1턴 세션(스트림 지향) — 프로세스와 분리해 가짜 스트림으로 행동 테스트가 가능한 이음매.
     input/output = 서버의 stdin(쓰기)/stdout(읽기) 스트림. judge = makeApprovalJudge 산출.
     반환: { reply }. 실패는 throw(mapTurnError·timedOut). (export: 테스트 이음매) */
-export function runAppServerSession({ input, output, prompt, model = '', unsetModel = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null, onEvent = null }) {
+export function runAppServerSession({ input, output, prompt, model = '', unsetModel = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null, onEvent = null, state = null }) {
   return new Promise((resolveP, rejectP) => {
     let nextId = 1;
     const pending = new Map();
@@ -204,6 +204,7 @@ export function runAppServerSession({ input, output, prompt, model = '', unsetMo
       if (!threadId) throw new Error('thread/start가 스레드 id를 주지 않았습니다');
       const eff = codexEffortValue(effort, model);
       const started = await send('turn/start', { threadId, input: [{ type: 'text', text: prompt }], ...(eff ? { effort: eff } : {}) });
+      if (state) state.started = true; // 여기까지 오면 엔진은 쓸 수 있다 — 이 뒤의 실패는 턴 실패(폴백 대상 아님)
       // 끼워 넣기 — 진행 중 턴에 사장 메시지를 더한다(turn/steer, 0.157.1·0.159.3 스키마: expectedTurnId 필수). 거절되거나 응답 전에 턴이 끝나면
       // false — 호출부(chat.mjs)가 받아 두었다가 이 실행 뒤 이어 실행한다. 시간 제한으로 끊지 않는다: 늦게 받아들여진 것을 false로 치면 두 번 전달된다(검수 5).
       const turnId = started?.turn?.id;
@@ -219,6 +220,7 @@ export function runAppServerSession({ input, output, prompt, model = '', unsetMo
 /** app-server 엔진 1턴 — externalExec의 codex 분기와 같은 인자 계약(홈 격리·auth 반입/회수·MCP 주입
     전부 동일 경로 재사용), 실행 방식만 exec→app-server. ARGO_CODEX_ENGINE=appserver일 때만 탄다. */
 export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko', onSteerable = null, onEvent = null, msgrGate = null }) {
+  const state = { started: false }; // turn/start 전에 실패하면 '엔진을 쓸 수 없음'(appserverUnavailable) — 메신저 문맥의 읽기 전용 폴백 판정(chat.mjs)
   const dir = await mkdtemp(join(tmpdir(), 'argo-codex-as-'));
   let auth = null, child = null, ownership = null;
   let ownershipUnverified = false;
@@ -258,7 +260,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     const { reply } = await Promise.race([
       runAppServerSession({
         input: child.stdin, output: child.stdout,
-        prompt, model, unsetModel, effort, cwd, timeoutMs, signal, onSteerable, onEvent,
+        prompt, model, unsetModel, effort, cwd, timeoutMs, signal, onSteerable, onEvent, state,
         judge: makeApprovalJudge(cwd, { workRoots, lang, msgrGate }),
       }),
       childFail,
@@ -271,6 +273,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
       catch (cleanupError) { e.cause = cleanupError; e.cancellationIncomplete = true; ownershipUnverified = !!cleanupError.ownershipUnverified; }
     }
     settled = true;
+    if (!state.started && !e.aborted && !e.timedOut && !e.limitReached) e.appserverUnavailable = true;
     // 스트림 조기 종료 등 원인 불명은 stderr 꼬리를 붙여 정직하게(키류는 상위 apiError 계열이 마스킹)
     if (!e.timedOut && !e.limitReached && e.stage === 'read' && stderrTail && !e.stderr) {
       e.message += `: ${stderrTail.replace(/\s+/g, ' ').slice(-200)}`;

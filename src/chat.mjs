@@ -147,6 +147,11 @@ export function shellGateMsgr(mirrorCtx, fallback = null) { // fallback = 문맥
     antigravity는 --sandbox(caps.shell), codex exec는 read-only 샌드박스(readOnly — 파일 쓰기도 막힌다). 게이트를 지나는 codex
     app-server는 판정자에 메신저 목적지를 넘겨 SDK와 같은 결재 카드를 띄우므로 제한하지 않는다. 데스크톱 턴(msgr 없음)은 종전 그대로.
     caps는 프롬프트 안내(commonDirectives)에도 같은 값을 써서 "할 수 없다"를 정직하게 알린다. (export: 회귀 테스트용) */
+/** 메신저 문맥 codex가 app-server 엔진을 쓸 수 없어(미설치·시작 실패) 읽기 전용 exec로 폴백한 턴의 안내 — 답 머리에 붙인다. (export: 회귀 테스트용) */
+export const cliMsgrReadOnlyNote = (lang = 'ko') => (lang === 'en'
+  ? '(From messenger instructions this agent can\'t change files or run commands right now — the approval-capable engine isn\'t available on this computer, so it answered read-only.)'
+  : '(메신저 지시에서는 지금 이 에이전트가 파일을 바꾸거나 명령을 실행할 수 없어 읽기 전용으로 답했습니다 — 이 컴퓨터에서 결재를 거치는 실행 엔진을 쓸 수 없습니다.)');
+
 export function cliMsgrShellLimit({ runner, gated = false, msgr = null, caps = null }) {
   if (!msgr || gated) return { caps, readOnly: false, limited: false };
   return { caps: { ...(caps ?? {}), shell: false, ...(runner === 'codex' ? { fs: false } : {}) }, readOnly: runner === 'codex', limited: true };
@@ -1822,9 +1827,26 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
         crewBridge = await createCrewMcpBridge(crewToolSpecs(sink)).catch((e) => { console.warn(`[argo] 에이전트 도구 다리 생략(지시 블록으로 진행): ${e?.message ?? e}`); return null; });
       }
       // 러너 자체 셸·파일 도구가 Argo 게이트를 지나는지 — codex app-server 엔진만(승인 요청마다 게이트 판정). exec 경로는 danger-full-access라 게이트 밖(분리 검수 LOW-8)
-      const cliGated = runner === 'codex' && process.env.ARGO_CODEX_ENGINE === 'appserver';
+      // 메신저 문맥 codex는 결재가 걸리는 app-server 엔진으로 돈다(총괄 결정 2026-10-26 — 통째로 읽기 전용이면 메신저로 파일 일을 시키던 사용자가 막힌다).
+      // 엔진을 쓸 수 없으면(turn/start 전 실패 = appserverUnavailable) 그 턴만 읽기 전용 exec로 폴백하고 안내를 붙인다(cliExec).
+      const cliEngine = runner === 'codex' && gateMsgr && process.env.ARGO_CODEX_ENGINE !== 'appserver' ? 'appserver' : null;
+      const cliGated = runner === 'codex' && (process.env.ARGO_CODEX_ENGINE === 'appserver' || !!cliEngine);
       const cliLimit = cliMsgrShellLimit({ runner, gated: cliGated, msgr: gateMsgr, caps: cliCaps }); // 메신저 지시 + 게이트 밖 엔진이면 셸을 끈다
       const cliMsgrGate = cliGated && gateMsgr ? { wsId, slug: agentSlug, from: from ?? notOwnerDirect, msgr: gateMsgr } : null; // app-server 판정자 → 결재 카드
+      let cliReadOnlyNoted = false;
+      const cliExec = async (args) => {
+        try { return await externalExec({ ...args, caps: cliLimit.caps, readOnly: cliLimit.readOnly, msgrGate: cliMsgrGate, ...(cliEngine ? { codexEngine: cliEngine } : {}) }); }
+        catch (e) {
+          if (!(cliEngine && e?.appserverUnavailable)) throw e;
+          console.warn(`[argo] 메신저 codex: app-server 엔진을 쓸 수 없어 이번 턴은 읽기 전용(${String(e?.message ?? e).slice(0, 120)})`);
+          const lim = cliMsgrShellLimit({ runner, gated: false, msgr: gateMsgr, caps: cliCaps });
+          const note = cliMsgrReadOnlyNote(lang);
+          const out = await externalExec({ ...args, prompt: `${args.prompt}\n\n${note}`, caps: lim.caps, readOnly: lim.readOnly, msgrGate: null, codexEngine: 'exec' });
+          if (cliReadOnlyNoted) return out;
+          cliReadOnlyNoted = true;
+          return `${note}\n\n${out}`;
+        }
+      };
       const cliTools = !!crewBridge;
       const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server, ...(crewBridge ? { crew: crewBridge.server } : {}) } : null;
       const cliMcp = cliMcpServers ? Object.keys(cliMcpServers).filter((k) => k !== 'crew') : []; // 안내 목록은 외부 MCP만(SDK connectedMcp와 같게 — crew는 도구 안내로 따로 나간다)
@@ -1874,13 +1896,13 @@ ${lang === 'en'
       const runPrompt = promptFor(withEarly);
       try {
         __turnControl.check();
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliLimit.caps, readOnly: cliLimit.readOnly, msgrGate: cliMsgrGate, effort: turnEffort, workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
+        reply = await cliExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, effort: turnEffort, workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
       } catch (e) {
         const gated = !!(effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated); // 오버레이 반영(MEDIUM-3)
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliLimit.caps, readOnly: cliLimit.readOnly, msgrGate: cliMsgrGate, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
+        reply = await cliExec({ runner, model: '', cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
@@ -1903,7 +1925,7 @@ ${lang === 'en'
         const segNotes = seg.directives.length || seg.bad.length ? await runDirectives(wsId, agentSlug, seg.directives, { lang, bad: seg.bad, hop, chain, toolHop, results: [], mirrorCtx, delegationRelaxed: lim.relaxed, delegationTree: tree, counters: turnCounters, fullAuto, origin: notOwnerDirect, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }) : [];
         doneText = [doneText, seg.directives.length || seg.bad.length ? [seg.clean, segNotes.join('\n')].filter(Boolean).join('\n\n') : reply].filter(Boolean).join('\n\n');
         try {
-          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: promptFor((ctx) => cliSteerPrompt(withEarly(ctx), doneText, texts, lang)), cred, signal: ac.signal, caps: cliLimit.caps, readOnly: cliLimit.readOnly, msgrGate: cliMsgrGate, effort: usedModel ? turnEffort : (meta.effort ?? ''), workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent }) ?? '';
+          reply = await cliExec({ runner, model: usedModel, cwd: p.root, prompt: promptFor((ctx) => cliSteerPrompt(withEarly(ctx), doneText, texts, lang)), cred, signal: ac.signal, effort: usedModel ? turnEffort : (meta.effort ?? ''), workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent }) ?? '';
         } catch (e) {
           if (abortReg.wasAborted() || e?.aborted) throw e;
           steerFailed = { texts, reason: String(e?.message || e).slice(0, 400) };

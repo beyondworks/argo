@@ -198,3 +198,18 @@ test('mapTurnError: tooManyDenials·flexUnavailable은 ko/en 안내 + 원문 보
   }
   assert.equal(mapTurnError({ error: { message: 'x', codexErrorInfo: 'badRequest' } }).message, 'x', '다른 코드는 원문 그대로');
 });
+
+test('엔진 시작 표지(state.started) — turn/start 전에 끊기면 false(쓸 수 없음 → 메신저 문맥은 읽기 전용 폴백), 턴이 시작된 뒤 실패는 true(폴백 아님)', async () => {
+  // initialize 전에 서버가 닫힌다(미설치 바이너리·하위 명령 없음과 같은 모양)
+  const dead = new PassThrough(); const deadOut = new PassThrough();
+  const s1 = { started: false };
+  const p1 = runAppServerSession({ input: dead, output: deadOut, prompt: 'p', cwd: '/w', timeoutMs: 5000, judge: async () => 'accept', state: s1 });
+  deadOut.end();
+  await assert.rejects(p1);
+  assert.equal(s1.started, false);
+  // 턴이 시작된 뒤 실패(turn/completed failed)
+  const srv = fakeServer({ onTurnStart: (emit) => setTimeout(() => emit({ method: 'turn/completed', params: { turn: { status: 'failed', error: { message: 'boom' } } } }), 10) });
+  const s2 = { started: false };
+  await assert.rejects(runAppServerSession({ input: srv.input, output: srv.output, prompt: 'p', cwd: '/w', timeoutMs: 5000, judge: async () => 'accept', state: s2 }));
+  assert.equal(s2.started, true);
+});
