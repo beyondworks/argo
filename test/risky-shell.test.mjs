@@ -82,3 +82,43 @@ test('SDK 두 번 판정(PreToolUse 훅 → canUseTool, 같은 호출 id): 승�
   assert.equal((await loadApprovals(WS)).filter((x) => x.payload?.shell === cmd && x.status === 'pending').length, 0, '새 대기 결재 없음(실측 결함: 29ms 뒤 새 카드)');
   assert.equal((await gate('Bash', { command: cmd }, { toolUseID: 'toolu_3' })).behavior, 'deny', '다른 호출은 다시 결재');
 });
+
+// 2026-10-26 총괄 감사 축 A — 철자 비틀기·간접 호출·흔한 삭제 명령. 메신저 턴은 카드가 늘고(막힘), 데스크톱 턴은 종전 그대로 허용한다.
+const NEW_RISKY = ['r\\m -rf build', '"r"m -rf build', 'R=rm; $R -rf x', '$(echo rm) -rf x', 'ls *.log | xargs rm', 'rm -f *.md',
+  'git push origin --delete main', 'git branch -D feat', 'git checkout -- .', 'git stash clear', 'rsync -a --delete src/ dst/',
+  'python3 -c "import shutil; shutil.rmtree(\'b\')"', 'docker system prune -af', 'kubectl delete pod web-1', 'gh repo delete o/x --yes'];
+
+test('새로 잡는 명령: 메신저 턴은 결재 카드를 만들고 막는다, 데스크톱 턴은 종전처럼 허용하고 결재를 만들지 않는다', async () => {
+  const desk = makePermissionGate(WS, 'desk', ROOT, null, 'ko', [], {});
+  const msgr = makePermissionGate(WS, 'msgrcrew', ROOT, null, 'ko', [], { msgr: { ...MSGR, channelId: 'ch-new' } });
+  for (const cmd of NEW_RISKY) {
+    const before = (await loadApprovals(WS)).length;
+    assert.equal((await desk('Bash', { command: cmd })).behavior, 'allow', `데스크톱: ${cmd}`);
+    assert.equal((await loadApprovals(WS)).length, before, `데스크톱은 결재를 만들지 않는다: ${cmd}`);
+    const d = await msgr('Bash', { command: cmd });
+    assert.equal(d.behavior, 'deny', `메신저: ${cmd}`);
+    assert.match(d.message, /결재를 올렸다\(ap-/, cmd);
+  }
+  const cards = (await loadApprovals(WS)).filter((a) => a.slug === 'msgrcrew' && a.payload?.shell);
+  assert.equal(cards.length, NEW_RISKY.length, '명령마다 카드 하나');
+  assert.ok(cards.every((a) => approvalRisk(a) === 'high'), '모두 고위험 카드');
+});
+
+test('일상 명령은 메신저 턴에서도 결재 없이 허용(과차단 금지)', async () => {
+  const msgr = makePermissionGate(WS, 'calm', ROOT, null, 'ko', [], { msgr: MSGR });
+  const before = (await loadApprovals(WS)).length;
+  for (const cmd of ['ls -la', 'git status', 'npm test', 'echo "rm is a word"', 'git push origin feat', 'git branch -d feat', 'git checkout main', '$EDITOR notes.md', 'grep -r rmSync src']) {
+    assert.equal((await msgr('Bash', { command: cmd })).behavior, 'allow', cmd);
+  }
+  assert.equal((await loadApprovals(WS)).length, before, '결재 0');
+});
+
+test('긴 입력(10만 자)도 분류가 0.5초 안에 끝난다 — 정규화·새 규칙이 제곱 시간을 만들지 않는다', () => {
+  const n = 100_000;
+  const inputs = ['$('.repeat(n / 2), `git branch ${' -d'.repeat(n / 3)}`, `node -e ${' -e'.repeat(n / 3)}`, 'R=rm; '.repeat(n / 6), `rm ${' x'.repeat(n / 2)}`,
+    `xargs ${' x'.repeat(n / 2)}`, '\\'.repeat(n), '"'.repeat(n), `git push ${':'.repeat(n)}`, 'A=$A'.repeat(n / 4)];
+  for (const s of inputs) {
+    const t = performance.now(); classifyShell(s); const ms = performance.now() - t;
+    assert.ok(ms < 500, `${JSON.stringify(s.slice(0, 12))} ${ms.toFixed(0)}ms`);
+  }
+});
