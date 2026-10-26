@@ -36,28 +36,28 @@ export function CardGrid({ ns, part, ids, id, meta, numbered = false, variant, a
 }
 
 // 요금 — Free는 받기 구간으로, 나머지는 메일(제목만 채운 mailto)로 이어진다
-export function Pricing({ ns, to, freeHref }) {
+// 요금 — plans: [{ id, per?, on?, links: [{ href, key, primary? }] }]. 글은 `${ns}.price.${id}.*` 사전 키로만(t·p·per·b·링크 key)
+export function Pricing({ ns, plans, meta, note }) {
   const { t } = useLang();
-  const mail = (plan) => `mailto:${to}?subject=${encodeURIComponent(t(`${ns}.price.subject.${plan}`))}`;
-  const plans = [
-    { id: 'free', href: freeHref, primary: true },
-    { id: 'pro', href: mail('pro') },
-    { id: 'ent', href: mail('ent') },
-  ];
   return (
     <section className="fam-section" id="pricing">
-      <Head kicker={t(`${ns}.price.kicker`)} meta="FREE · PRO · ENTERPRISE" />
+      <Head kicker={t(`${ns}.price.kicker`)} meta={meta} />
       <h2 className="fam-title rise cv-title">{t(`${ns}.price.title`)}</h2>
-      <div className="cv-price">
-        {plans.map(({ id, href, primary }, i) => (
-          <div key={id} className={`cv-plan rise${primary ? ' on' : ''}`} style={{ '--d': `${i * 70}ms` }}>
+      <div className={`cv-price n${plans.length}`}>
+        {plans.map(({ id, per, on, links }, i) => (
+          <div key={id} className={`cv-plan rise${on ? ' on' : ''}`} style={{ '--d': `${i * 70}ms` }}>
             <span className="mono-label">{t(`${ns}.price.${id}.t`)}</span>
-            <strong className="cv-plan-p">{t(`${ns}.price.${id}.p`)}</strong>
+            <strong className="cv-plan-p">{t(`${ns}.price.${id}.p`)}{per ? <span className="cv-plan-per">{t(`${ns}.price.${id}.per`)}</span> : null}</strong>
             <p className="cv-card-b">{t(`${ns}.price.${id}.b`)}</p>
-            <a className={`fam-btn${primary ? ' primary' : ''}`} href={href}>{t(`${ns}.price.${id}.cta`)}</a>
+            <div className="cv-plan-ctas">
+              {links.map(({ href, key, primary }) => (
+                <a key={key} className={`fam-btn${primary ? ' primary' : ''}`} href={href}>{t(`${ns}.price.${id}.${key}`)}</a>
+              ))}
+            </div>
           </div>
         ))}
       </div>
+      {note ? <p className="cv-price-note rise">{t(note)}</p> : null}
     </section>
   );
 }

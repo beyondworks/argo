@@ -239,6 +239,7 @@ const DICT = {
   'pricing.p2.per': ['/월', '/mo'],
   'pricing.p2.f0': ['멀티 디바이스 동기화 — 로그인하면 기억이 따라옵니다', 'Multi-device sync — memory follows your sign-in'],
   'pricing.p2.f1': ['우선 지원', 'Priority support'],
+  'pricing.p2.f3': ['Argo Messenger 포함 — 같은 계정으로 사용', 'Argo Messenger included — same account'],
   'pricing.p2.f2': ['+ 무료의 모든 기능', 'Everything in Free'],
   'pricing.p3.name': ['팀', 'Team'],
   'pricing.p3.price': ['문의', 'Contact'],
@@ -261,7 +262,7 @@ const DICT = {
   'checkout.planLabel': ['선택한 요금제', 'Selected plan'],
   'checkout.plan.monthly': ['월간 $12', 'Monthly $12'],
   'checkout.plan.yearly': ['연간 $120', 'Yearly $120'],
-  'checkout.lede': ['Pro는 Argo 계정에 붙습니다. 앱에서 쓰는 계정으로 로그인하면, 결제가 끝나는 즉시 그 계정이 Pro가 됩니다.', 'Pro belongs to an Argo account. Sign in with the account you use in the app and it becomes Pro the moment checkout completes.'],
+  'checkout.lede': ['Pro는 Argo 계정에 붙습니다. 앱에서 쓰는 계정으로 로그인하면, 결제가 끝나는 즉시 그 계정이 Pro가 되고 Argo Messenger도 같은 계정으로 쓸 수 있습니다.', 'Pro belongs to an Argo account. Sign in with the account you use in the app and it becomes Pro the moment checkout completes — Argo Messenger works on that same account too.'],
   'checkout.google': ['Google로 로그인', 'Continue with Google'],
   'checkout.github': ['GitHub로 로그인', 'Continue with GitHub'],
   'checkout.signupNote': ['계정이 없으면 이 단계에서 바로 만들어집니다. 앱에서도 같은 방법(Google·GitHub)으로 로그인하세요.', 'No account yet? One is created right here. Sign in to the app the same way (Google or GitHub).'],
@@ -292,7 +293,7 @@ const DICT = {
   'faq.q4': ['내 데이터는 어디에 저장되나요?', 'Where is my data stored?'],
   'faq.a4': ['로컬 우선입니다 — 회사·에이전트·기억·대화가 전부 내 컴퓨터의 폴더(마크다운·JSON)로 저장되고, 폴더째 열어 볼 수 있습니다. Pro의 기기 간 동기화를 켠 경우에만 암호화된 사본이 클라우드를 경유합니다.', 'Local-first — companies, agents, memory and chats live as folders (markdown/JSON) on your computer, and you can open them directly. Only when Pro multi-device sync is on does an encrypted copy pass through the cloud.'],
   'faq.q5': ['결제는 어떻게 되나요?', 'How does billing work?'],
-  'faq.a5': ['무료 체험 기간은 없습니다. Pro는 월 $12 또는 연 $120(2개월 무료)이고, 앱 설정이나 이 페이지에서 결제할 수 있습니다. 무료로도 로컬 기능(에이전트·기억·루틴·메신저 연결)은 계속 쓸 수 있습니다.', 'There is no free trial. Pro is $12/mo or $120/yr (2 months free), payable in the app Settings or on this page. The free tier keeps local features — agents, memory, routines, messenger links.'],
+  'faq.a5': ['무료 체험 기간은 없습니다. Pro는 월 $12 또는 연 $120(2개월 무료)이고, 앱 설정이나 이 페이지에서 결제할 수 있습니다. Pro에는 Argo Messenger가 포함되어 같은 계정으로 함께 씁니다. 무료로도 로컬 기능(에이전트·기억·루틴·텔레그램·슬랙 연결)은 계속 쓸 수 있습니다.', 'There is no free trial. Pro is $12/mo or $120/yr (2 months free), payable in the app Settings or on this page. Pro includes Argo Messenger on the same account. The free tier keeps local features — agents, memory, routines, Telegram & Slack links.'],
   'faq.q6': ['텔레그램·슬랙으로도 일을 시킬 수 있나요?', 'Can I delegate work via Telegram or Slack?'],
   'faq.a6': ['됩니다. 설정에서 봇 토큰을 연결하면 메신저에서 지시를 보내고 결과·파일을 받을 수 있습니다. 에이전트가 하는 일에 결재(승인)가 필요하면 메신저로 승인 요청이 옵니다.', 'Yes. Connect a bot token in Settings, then send instructions and receive results and files in your messenger. When something an agent does needs your approval, the request reaches you there too.'],
   'faq.q7': ['원하는 러너가 목록에 없어요 / 권한을 더 세밀하게 조정하고 싶어요.', 'My runner is not in the list / I want finer-grained permissions.'],
@@ -375,7 +376,7 @@ const DICT = {
     '동료에게 하듯 @로 에이전트를 부르고, 에이전트끼리 일을 넘기고, 밖으로 나가는 일은 사람이 결재합니다. Argo 에이전트도, Hermes·OpenClaw도 같은 채널로 데려옵니다.',
     'Mention an agent the way you mention a teammate. Agents hand work to each other, and anything that leaves the company waits for a person to approve. Bring Argo agents, Hermes and OpenClaw into the same channel.',
   ],
-  'msgr.trust': ['Pro 플랜 · macOS · Windows · iOS · Android', 'Pro plan · macOS · Windows · iOS · Android'], // 로그인 안내는 내려받기 절(msgr.get.sub) — 히어로 한 줄이 어절 중간에서 꺾이지 않게
+  'msgr.trust': ['Argo Pro에 포함 · macOS · Windows · iOS · Android', 'Included in Argo Pro · macOS · Windows · iOS · Android'], // 로그인 안내는 내려받기 절(msgr.get.sub) — 히어로 한 줄이 어절 중간에서 꺾이지 않게
 
   // 메신저 — 이런 팀에(사실만: 러너·연결 방식은 앱 문구 기준)
   'msgr.for.kicker': ['이런 팀에', 'Built for'],
@@ -409,23 +410,21 @@ const DICT = {
   'msgr.safe.4.t': ['서버 비밀번호는 넣지 않습니다', 'No server passwords'],
   'msgr.safe.4.b': ['VPS 연결은 한 번만 쓰는 명령(1시간 유효)으로 끝납니다. 서버 비밀번호나 키를 메신저에 넣지 않습니다.', 'VPS connections use a one-time command valid for an hour. You never put a server password or key into the messenger.'],
 
-  // 메신저 — 요금(Pro 가격·구성은 미정 — 지어내지 않는다)
+  // 메신저 — 요금(2026-10-26 유건: "아르고 메신저도 아르고 프로랑 가격 똑같아. 아르고 프로 결제하면 아르고 메신저까지 사용할 수 있는 거야")
+  // 메신저 전용 상품은 없다 — 본체 가격 절(pricing.p2)과 같은 Argo Pro, 결제도 같은 /checkout
   'msgr.price.kicker': ['요금', 'Pricing'],
-  'msgr.price.title': ['무료로 시작하고,\n팀이 커지면 함께', 'Start free.\nGrow with your team.'],
-  'msgr.price.free.t': ['Free', 'Free'],
-  'msgr.price.free.p': ['무료', '$0'],
-  'msgr.price.free.b': ['팀과 에이전트가 한 채널에서 일하는 메신저를 지금 바로 시작합니다.', 'Start the messenger where your team and agents work in one channel, today.'],
-  'msgr.price.free.cta': ['무료로 시작하기', 'Start free'],
-  'msgr.price.pro.t': ['Pro', 'Pro'],
-  'msgr.price.pro.p': ['준비 중', 'Coming soon'],
-  'msgr.price.pro.b': ['더 큰 팀을 위한 요금제입니다. 가격과 구성은 곧 공개합니다.', 'A plan for larger teams. Pricing and details are coming soon.'],
-  'msgr.price.pro.cta': ['출시 알림 받기', 'Get notified'],
+  'msgr.price.title': ['Argo Pro 하나로\nArgo Messenger까지', 'One Argo Pro.\nArgo Messenger included.'],
+  'msgr.price.pro.t': ['Pro — Argo Pro에 포함', 'Pro — included in Argo Pro'],
+  'msgr.price.pro.p': ['$12', '$12'],
+  'msgr.price.pro.per': ['/월', '/mo'],
+  'msgr.price.pro.b': ['Argo Pro를 결제하면 같은 계정으로 Argo와 Argo Messenger를 함께 씁니다. 연간 결제는 $120(2개월 무료)입니다.', 'Subscribe to Argo Pro and use both Argo and Argo Messenger with the same account. Yearly billing is $120 (2 months free).'],
+  'msgr.price.pro.cta': ['Pro 시작하기 — $12/월', 'Go Pro — $12/mo'],
+  'msgr.price.pro.ctaYear': ['연간 $120', 'Yearly $120'],
   'msgr.price.ent.t': ['Enterprise', 'Enterprise'],
   'msgr.price.ent.p': ['문의', 'Contact us'],
   'msgr.price.ent.b': ['보안 검토, 배포 방식, 계약이 필요한 회사를 위한 상담입니다.', 'For companies that need a security review, a deployment plan or a contract.'],
   'msgr.price.ent.cta': ['도입 문의', 'Contact sales'],
-  'msgr.price.subject.pro': ['[Argo Messenger] Pro 출시 알림', '[Argo Messenger] Pro launch'],
-  'msgr.price.subject.ent': ['[Argo Messenger] Enterprise 문의', '[Argo Messenger] Enterprise inquiry'],
+  'msgr.price.note': ['결제 전에 Argo 계정으로 로그인합니다. 결제가 끝나면 그 계정으로 Argo Messenger에 바로 로그인해 쓸 수 있습니다.', 'You sign in to your Argo account before checkout. Once paid, sign in to Argo Messenger with the same account and start right away.'],
 
   // 메신저 — 자주 묻는 질문
   'msgr.faq.kicker': ['자주 묻는 질문', 'FAQ'],
@@ -438,7 +437,7 @@ const DICT = {
   'msgr.faq.4.q': ['휴대폰에서도 쓸 수 있나요?', 'Does it work on my phone?'],
   'msgr.faq.4.a': ['iPhone은 App Store에서, Android는 앱 파일(APK)로 받습니다. 컴퓨터에서 연결한 에이전트는 휴대폰에서도 같은 채널에서 대화할 수 있습니다.', 'Get it on the App Store for iPhone, or as an app file (APK) for Android. Agents you connect on your computer are available in the same channels on your phone.'],
   'msgr.faq.5.q': ['요금은 어떻게 되나요?', 'How much does it cost?'],
-  'msgr.faq.5.a': ['Argo Messenger는 Pro 플랜에서 사용할 수 있습니다. Enterprise 상담은 문의로 받습니다.', 'Argo Messenger is available on the Pro plan. Enterprise inquiries are welcome.'], // 2026-10-25 재공개 — Pro 전용
+  'msgr.faq.5.a': ['Argo Messenger는 Argo Pro에 포함됩니다. Argo Pro($12/월, 연간 $120)를 결제하면 같은 계정으로 Argo와 Argo Messenger를 함께 쓸 수 있습니다. Enterprise 상담은 문의로 받습니다.', 'Argo Messenger is included in Argo Pro. Subscribe to Argo Pro ($12/mo or $120/yr) and use both Argo and Argo Messenger with the same account. Enterprise inquiries are welcome.'], // 2026-10-26 — 메신저 전용 가격 없음, Argo Pro에 포함
   'msgr.cta.how': ['어떻게 쓰나요', 'How it works'],
   'msgr.crowd': ['동료마다 자기 에이전트를 데려옵니다', 'Every teammate brings an agent'],
   'msgr.how.kicker': ['사용법', 'How it works'],
@@ -477,7 +476,7 @@ const DICT = {
   'msgr.get.sub': ['Apple, Google, GitHub 계정으로 로그인합니다.', 'Sign in with Apple, Google, or GitHub.'],
   'msgr.get.ios': ['App Store에서 받기', 'Download on the App Store'],
   'msgr.get.android': ['Android APK', 'Android APK'],
-  'msgr.get.pro': ['Pro 플랜에서 사용할 수 있습니다.', 'Available on the Pro plan.'],
+  'msgr.get.pro': ['Argo Pro에 포함되어 있습니다 — $12/월 · 연간 $120.', 'Included in Argo Pro — $12/mo · $120/yr.'],
   'msgr.get.note': ['설치 파일 바로 받기', 'Direct installers'],
 
   'msgr.film.label': ['Argo Messenger 소개 영상', 'Argo Messenger film'],
