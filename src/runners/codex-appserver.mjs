@@ -23,6 +23,7 @@ import { terminateOwnedProcessTree, watchOwnedProcessTree } from './process-tree
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makePermissionGate } from '../permission-gate.mjs';
@@ -38,8 +39,12 @@ export const codexEffortValue = codexModelEffort;
     자신이 한다). exec는 Bash 판정(명령 문자열 리터럴 방어), 패치는 경로별 Write 판정.
     반환: 'accept' | 'decline'. 판정 불가(경로 미상·게이트 예외)는 decline — fail-closed.
     (export: 회귀 테스트용) */
-export function makeApprovalJudge(wsRoot, { workRoots = [], lang = 'ko' } = {}) {
-  const gate = makePermissionGate(null, null, wsRoot, null, lang, workRoots);
+export function makeApprovalJudge(wsRoot, { workRoots = [], lang = 'ko', msgrGate = null } = {}) {
+  // msgrGate = { wsId, slug, from, msgr } — 메신저 문맥 턴이면 SDK 경로와 같은 게이트(D28: 고위험 셸은 결재 카드를 만들고 막는다,
+  // 승인된 같은 명령은 한 번 허용). 없으면(데스크톱 턴) 종전 그대로 회사·크루 없이 리터럴 방어만(2026-10-26 총괄 감사 축 A).
+  const gate = msgrGate?.wsId && msgrGate.msgr
+    ? makePermissionGate(msgrGate.wsId, msgrGate.slug ?? null, wsRoot, msgrGate.from ?? null, lang, workRoots, { msgr: msgrGate.msgr })
+    : makePermissionGate(null, null, wsRoot, null, lang, workRoots);
   return async function judge(kind, payload) {
     try {
       if (kind === 'exec') {
@@ -72,6 +77,13 @@ export function makeApprovalJudge(wsRoot, { workRoots = [], lang = 'ko' } = {}) 
 
 /** error 알림 → 정직한 실패(순수). 한도 소진은 limitReached 플래그 + 재개 시각을 남겨 상위(chat)가
     인증 오류(자가치유 러너 교체)와 다르게 다루게 한다. (export: 회귀 테스트용) */
+// app-server 턴의 개발자 지시(맥 one 실턴 2026-10-26: sandbox가 read-only로 보이면 모델이 "읽기 전용이라 못 한다"며 시도 자체를 포기했다).
+// sandbox는 read-only 그대로 둔다(workspace-write면 작업 폴더 안 rm -rf가 승인 판정을 건너뛴다) — 대신 모든 명령·파일 변경이 판정을 거쳐 실행된다고 알린다.
+export const APPSERVER_APPROVAL_NOTE = 'Approval mode: this session\'s sandbox is reported as read-only, but that is not a limit on the task. '
+  + 'Every command you run and every file change you make is sent to Argo\'s approval check, and runs if it is allowed. '
+  + 'Attempt the work the user asked for by actually running the commands or editing the files — do not decline or stop just because the sandbox says read-only. '
+  + 'If a step is declined, an approval request goes to the owner: say that it is waiting for approval instead of retrying it another way.';
+
 export function mapTurnError(errParams) {
   const info = errParams?.error?.codexErrorInfo ?? errParams?.codexErrorInfo;
   const message = String(errParams?.error?.message ?? errParams?.message ?? '러너 오류');
@@ -98,7 +110,7 @@ export function mapTurnError(errParams) {
 /** app-server 1턴 세션(스트림 지향) — 프로세스와 분리해 가짜 스트림으로 행동 테스트가 가능한 이음매.
     input/output = 서버의 stdin(쓰기)/stdout(읽기) 스트림. judge = makeApprovalJudge 산출.
     반환: { reply }. 실패는 throw(mapTurnError·timedOut). (export: 테스트 이음매) */
-export function runAppServerSession({ input, output, prompt, model = '', unsetModel = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null, onEvent = null }) {
+export function runAppServerSession({ input, output, prompt, model = '', unsetModel = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null, onEvent = null, state = null, developerInstructions = '' }) {
   return new Promise((resolveP, rejectP) => {
     let nextId = 1;
     const pending = new Map();
@@ -194,12 +206,14 @@ export function runAppServerSession({ input, output, prompt, model = '', unsetMo
         cwd,
         approvalPolicy: 'untrusted', // 전량 승인 — 게이트가 유일한 판정자다. acceptForSession은 쓰지 않는다(세션 우회 방향)
         sandbox: 'read-only',        // 승인 없는 쓰기 경로 자체를 벤더 수준에서 제거
+        ...(developerInstructions ? { developerInstructions } : {}), // 판정을 거쳐 실행된다는 안내(APPSERVER_APPROVAL_NOTE) — 읽기 전용 표시를 보고 포기하지 않게
         ...(threadModel ? { model: threadModel } : {}),
       });
       const threadId = th?.thread?.id;
       if (!threadId) throw new Error('thread/start가 스레드 id를 주지 않았습니다');
       const eff = codexEffortValue(effort, model);
       const started = await send('turn/start', { threadId, input: [{ type: 'text', text: prompt }], ...(eff ? { effort: eff } : {}) });
+      if (state) state.started = true; // 여기까지 오면 엔진은 쓸 수 있다 — 이 뒤의 실패는 턴 실패(폴백 대상 아님)
       // 끼워 넣기 — 진행 중 턴에 사장 메시지를 더한다(turn/steer, 0.157.1·0.159.3 스키마: expectedTurnId 필수). 거절되거나 응답 전에 턴이 끝나면
       // false — 호출부(chat.mjs)가 받아 두었다가 이 실행 뒤 이어 실행한다. 시간 제한으로 끊지 않는다: 늦게 받아들여진 것을 false로 치면 두 번 전달된다(검수 5).
       const turnId = started?.turn?.id;
@@ -212,9 +226,16 @@ export function runAppServerSession({ input, output, prompt, model = '', unsetMo
   });
 }
 
+// 자식이 끝날 때까지(최대 ms) 기다린다. 이미 끝났거나 없으면 바로.
+function waitChildExit(child, ms) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((r) => { const t = setTimeout(r, ms); child.once('exit', () => { clearTimeout(t); r(); }); });
+}
+
 /** app-server 엔진 1턴 — externalExec의 codex 분기와 같은 인자 계약(홈 격리·auth 반입/회수·MCP 주입
     전부 동일 경로 재사용), 실행 방식만 exec→app-server. ARGO_CODEX_ENGINE=appserver일 때만 탄다. */
-export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko', onSteerable = null, onEvent = null }) {
+export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko', onSteerable = null, onEvent = null, msgrGate = null }) {
+  const state = { started: false }; // turn/start 전에 실패하면 '엔진을 쓸 수 없음'(appserverUnavailable) — 메신저 문맥의 읽기 전용 폴백 판정(chat.mjs)
   const dir = await mkdtemp(join(tmpdir(), 'argo-codex-as-'));
   let auth = null, child = null, ownership = null;
   let ownershipUnverified = false;
@@ -254,8 +275,8 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     const { reply } = await Promise.race([
       runAppServerSession({
         input: child.stdin, output: child.stdout,
-        prompt, model, unsetModel, effort, cwd, timeoutMs, signal, onSteerable, onEvent,
-        judge: makeApprovalJudge(cwd, { workRoots, lang }),
+        prompt, model, unsetModel, effort, cwd, timeoutMs, signal, onSteerable, onEvent, state, developerInstructions: APPSERVER_APPROVAL_NOTE,
+        judge: makeApprovalJudge(cwd, { workRoots, lang, msgrGate }),
       }),
       childFail,
     ]);
@@ -267,6 +288,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
       catch (cleanupError) { e.cause = cleanupError; e.cancellationIncomplete = true; ownershipUnverified = !!cleanupError.ownershipUnverified; }
     }
     settled = true;
+    if (!state.started && !e.aborted && !e.timedOut && !e.limitReached) e.appserverUnavailable = true;
     // 스트림 조기 종료 등 원인 불명은 stderr 꼬리를 붙여 정직하게(키류는 상위 apiError 계열이 마스킹)
     if (!e.timedOut && !e.limitReached && e.stage === 'read' && stderrTail && !e.stderr) {
       e.message += `: ${stderrTail.replace(/\s+/g, ' ').slice(-200)}`;
@@ -276,6 +298,10 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     await ownership?.stop(); // 준비 단계 실패면 child·ownership이 아직 없다
     if (!ownershipUnverified) try { child?.kill(); } catch { /* 이미 종료 */ }
     await recoverCodexAuth(auth).catch(() => {});
+    // 임시 홈은 app-server가 끝난 뒤에 지운다 — 종료 중인 codex가 잠금 파일(thread-writer-locks·.coordination.lock)을 다시 만들어
+    // 턴마다 argo-codex-as-* 빈 폴더가 남았다(맥 one 실턴 2026-10-26, 12개). 끝나기를 잠깐 기다리고, 그 뒤에도 다시 생기면 한 번 더 지운다.
+    if (!ownershipUnverified) await waitChildExit(child, 3000);
     await rm(dir, { recursive: true, force: true }).catch(() => {});
+    if (existsSync(dir)) { await new Promise((r) => setTimeout(r, 300)); await rm(dir, { recursive: true, force: true }).catch(() => {}); }
   }
 }

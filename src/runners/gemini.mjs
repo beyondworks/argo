@@ -207,6 +207,26 @@ export async function probeGeminiHostOAuth() {
   return base;
 }
 
+/** 셸을 꺼야 하는 턴(메신저 지시 등, caps.shell=false)용 **이번 턴 전용** HOME — 회사 격리 홈은 회사당 하나라 같은 회사의 다른 턴(셸 켜짐)이
+    settings.json을 동시에 덮어쓰면 셸 제외가 풀린 채 시작했다(분리 검수 2026-10-26 M1). 로그인 파일만 복사하고 settings는 여기에 쓴다.
+    done()은 CLI가 갱신한 로그인 파일을 회사 홈으로 돌려놓고(다음 턴 이어짐) 임시 홈을 지운다. */
+export async function geminiPrivateTurnHome(baseHome) {
+  const home = await mkdtemp(join(tmpdir(), 'argo-gemini-turn-'));
+  const gdir = join(home, '.gemini'); const base = join(baseHome, '.gemini');
+  await mkdir(gdir, { recursive: true, mode: 0o700 });
+  const AUTH = ['oauth_creds.json', 'google_accounts.json'];
+  for (const f of AUTH) await copyFile(join(base, f), join(gdir, f)).catch(() => {});
+  const before = await readFile(join(gdir, 'oauth_creds.json'), 'utf8').catch(() => null);
+  return {
+    home,
+    done: async () => {
+      const after = await readFile(join(gdir, 'oauth_creds.json'), 'utf8').catch(() => null);
+      if (after && after !== before) await writeFile(join(base, 'oauth_creds.json'), after, { mode: 0o600 }).catch(() => {});
+      await rm(home, { recursive: true, force: true }).catch(() => {});
+    },
+  };
+}
+
 export { geminiManagedEntry, geminiCmd, geminiTurnHome, writeGeminiTurnSettings }; // 러너 모듈 내부 공용(facade 미노출)
 
 // ── cloudcode(Code Assist) 구독 프로브 — 연결 단계 사전 감지 (2026-08-31, 분리 검수 반영 개정) ──

@@ -67,7 +67,8 @@ test('배선: externalExec가 gemini settings·agy 인자에 workRoots를 실제
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
   // caps → effCaps(readOnly면 무력화, 기본은 caps 그대로 — readOnly 도입 2026-08-29). 배선 존재만 잠근다.
-  assert.match(src, /writeGeminiTurnSettings\(cred\.home, cred\.authType, effCaps, workRoots(, mcpServers)?\)/, 'gemini 반경 배선');
+  // 셸을 끈 메신저 턴은 이번 턴 전용 홈(turnHome = geminiPrivateTurnHome)에 쓴다(#1171) — 어느 홈이든 반경 인자는 그대로 넘겨야 한다
+  assert.match(src, /writeGeminiTurnSettings\(turnHome, cred\.authType, effCaps, workRoots(, mcpServers)?\)/, 'gemini 반경 배선');
   assert.match(src, /\.\.\.agyDirArgs\(effCaps, workRoots\)/, 'antigravity 반경 배선');
 });
 

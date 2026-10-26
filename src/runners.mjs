@@ -13,12 +13,12 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 import { recordCodexRollout } from './runner-limits.mjs'; // 구독 잔여 한도(K91)
-import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
+import { exec, exists, homeEnv, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner, isRetiredRunner } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli, codexOutdatedError, codexPinStale, codexUnsetModel, codexAuthMode } from './runners/codex.mjs';
 import { execCodexAppServer } from './runners/codex-appserver.mjs';
 import { createCodexJsonReader, humanizeCodexJsonError } from './runners/codex-json.mjs';
-import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
+import { geminiCmd, writeGeminiTurnSettings, geminiPrivateTurnHome } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
 import { loadSecrets, credType, maskCred } from './runners/creds.mjs';
@@ -139,7 +139,9 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     (export: 회귀 테스트용) */
 export const codexJsonMode = (cmd, env = process.env) => !!cmd?.pinned && env.ARGO_CODEX_JSON !== '0';
 
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, onSteerable = null, onEvent = null }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, onSteerable = null, onEvent = null, msgrGate = null, codexEngine = null }) {
+  // msgrGate — 메신저 문맥 턴의 결재 목적지(codex app-server 판정자에만 쓴다, codex-appserver.mjs makeApprovalJudge)
+  // codexEngine — 'appserver'|'exec'면 이번 턴 codex 엔진을 고른다(메신저 문맥 codex는 결재가 걸리는 app-server). 없으면 ARGO_CODEX_ENGINE 기본값
   // onEvent — codex 이벤트(exec JSONL·app-server 알림)를 받는 쪽(chat.mjs 작업 과정). 표시용이라 실패해도 턴과 무관하다.
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는 oneshot.mjs의
@@ -150,16 +152,17 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
   // read-only로 분기한다. 기본값 false라 크루 채팅·기존 oneshot 경로는 완전 무변경.
   const effCaps = readOnly ? { fs: false, browser: false, shell: false, bypass: false } : caps;
   const t0 = Date.now(); // 실패의 정직 번역용 — cliTurnFailure가 경과 시간으로 시간 초과를 판정한다
-  if (runner === 'codex' && process.env.ARGO_CODEX_ENGINE === 'appserver') {
+  if (runner === 'codex' && (codexEngine ? codexEngine === 'appserver' : process.env.ARGO_CODEX_ENGINE === 'appserver')) {
     // 엔진 하네스 전환 P1(옵트인 플래그) — codex를 app-server(read-only 샌드박스 + 전량 승인)로
     // 돌리고 승인 요청마다 permission-gate 판정을 태운다(셸 1차 방어 — 한계는 codex-appserver.mjs
     // 머리 주석). 기본값은 기존 exec 경로 그대로(회귀 0) — 검증 후 기본 승격.
     // 실패 번역은 exec 경로와 **같은 cliTurnFailure**를 태운다(분리 검수 MEDIUM-4: 안내가 러너
     // 경로별로 갈리지 않게). 한도(limitReached)·중단(aborted)은 이미 정직한 오류라 그대로 통과.
     try {
-      return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers, onSteerable, onEvent });
+      return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers, onSteerable, onEvent, msgrGate });
     } catch (e) {
       if (e.limitReached || e.aborted) throw e;
+      if (e.appserverUnavailable && codexEngine === 'appserver') throw e; // 이번 턴만 고른 엔진이 시작도 못 했다 — 호출부(chat.mjs)가 폴백한다(원 오류 그대로)
       const t = cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: e.stage ?? 'exec', kind });
       throw codexOutdatedError(t?.message, await codexPinStale()) ?? t; // 낡은 관리본의 모델 거절 → exec 경로와 같은 업데이트 대기 안내(ko/en)
     }
@@ -230,7 +233,12 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
   if (runner === 'gemini') {
     // 회사/host 자격이면 격리 HOME — 이번 턴 settings.json(인증 방식 + caps 도구 게이팅)을 매 턴 쓴다.
     // (자격 없는 경로는 명시 연결 원칙상 도달 안 하지만, 도달 시 호스트 HOME으로 폴백 — 도구 게이팅 없음)
-    if (cred?.home && cred?.authType) await writeGeminiTurnSettings(cred.home, cred.authType, effCaps, workRoots, mcpServers);
+    // 셸을 끈 턴(메신저 지시·readOnly)은 이번 턴 전용 홈에 settings를 쓴다 — 회사 홈 settings.json은 같은 회사의 동시 턴이 덮어써
+    // 셸 제외가 풀릴 수 있다(분리 검수 M1). 셸이 켜진 턴은 종전처럼 회사 홈.
+    const own = cred?.home && cred?.authType && effCaps?.shell === false ? await geminiPrivateTurnHome(cred.home) : null;
+    const turnHome = own?.home ?? cred?.home;
+    try {
+    if (cred?.home && cred?.authType) await writeGeminiTurnSettings(turnHome, cred.authType, effCaps, workRoots, mcpServers);
     const cmd = await geminiCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     // 파일 반경 — gemini-cli는 workspaceContext(cwd + include-directories) **밖의 읽기·쓰기를 벤더
     // 도구가 거부**한다. 반경을 안 넘기면 크루 책상이 회사 폴더 하나로 쪼그라들어, 같은 지시가 codex
@@ -248,11 +256,12 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       // 승인)에선 셸이 비대화에서 실행 불가라 codex 크루는 되는 지시가 gemini 크루만 막혔다(러너
       // 중립성 위반). 벤더 choices 실측: default|auto_edit|yolo — yolo가 전권과 같은 방향이다.
       '--approval-mode', 'yolo',
-    ], { cwd, killTree: true, input: prompt, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}) } })
+    ], { cwd, killTree: true, input: prompt, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}), ...(own ? homeEnv(own.home) : {}) } })
       .catch((e) => { throw cliTurnFailure(e, 'gemini', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
     return stdout
       .replace(/^(Loaded cached credentials\.|Data collection is .*|\[STARTUP\].*|\[dotenv.*)\s*$/gim, '')
       .trim();
+    } finally { await own?.done(); }
   }
   if (runner === 'antigravity') {
     // BYOA — agy CLI 래핑(권한 근사 적용, codex/gemini와 같은 정직 표기 계열).
