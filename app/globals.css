@@ -2191,6 +2191,13 @@ body.split-resizing { cursor: col-resize; user-select: none; }
   gap: 18px; align-items: start;
   height: calc(100vh / var(--z, 1) - 100px); margin-bottom: -70px;
 }
+/* 본문 맨 위 안내(이번 업데이트 카드·메신저 기록 보관 안내·오류 줄)가 있으면 그 높이만큼 대화 그리드가 줄어든다.
+   예전에는 그리드 높이를 calc(100vh − 100px)로 고정해 안내 높이만큼 입력창이 창 아래로 밀려 잘렸다
+   (유건 2026-10-27 "대화창 아래가 짤려", 1280×820 창 + 보관 안내). 안내가 없으면 기본 크기(flex-basis auto = height)가
+   종전 높이 그대로라 픽셀 동일하다(:has를 모르는 옛 웹뷰는 위 고정 height 그대로). min-height 240 = 작은 창에 큰 카드가 떠도 본문이 압살되지 않게 — 넘치면 페이지가 스크롤된다. */
+.content:has(> .chat-cols) { display: flex; flex-direction: column; height: calc(100vh / var(--z, 1) - 56px); }
+.content:has(> .chat-cols) > * { flex: none; }
+.content:has(> .chat-cols) > .chat-cols { flex: 0 1 auto; min-height: 240px; } /* 기본 크기 = 위 height(종전 고정 높이), 줄어들 수만 있다 */
 /* 레일 폭은 트랙이 정한다(기본 stretch) — 고정 width는 트랙 양보 시 아이템이 트랙을 넘어 본문 위로
    얹힌다(#365 검수 MEDIUM-3 실증).
    overflow clip: 트랙이 0으로 양보되는 구간(보조 패널 열림 × 유효 폭 900~1016 — 패널 클램프가 본문을 바닥 308에
