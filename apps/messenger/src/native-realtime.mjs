@@ -127,10 +127,12 @@ export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabas
       return null;
     }
   };
+  let authEpoch = 0; // 로그아웃·계정 전환마다 올린다 — 큐 밖에서 읽은 세션이 그 뒤에 도착하면 버린다
   const handleAuthNow = async (event, session) => {
-    if (event === 'SIGNED_OUT' || !session) { await stopActive(true); return; }
+    if (event === 'SIGNED_OUT' || !session) { authEpoch += 1; await stopActive(true); return; }
     const userId = session.user?.id;
     if (active?.userId === userId) return;
+    authEpoch += 1;
     await start(session);
   };
   const updateContextNow = async () => {
@@ -138,14 +140,34 @@ export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabas
     try { await invoke('native_realtime_update', { generation: active.generation, context: getContext() }); }
     catch { await stopActive(true); }
   };
+  // 네이티브가 /auth/v1/token 영구 거부(400·401)를 받고 스스로 멈췄다(native_realtime.rs report_rejected).
+  // 갱신 주인을 JS로 돌린다: JS 자동 갱신이 자기 토큰으로 다시 해 보고, 그것도 거부면 auth-js가 SIGNED_OUT을 내
+  // 로그아웃 경로로 간다. 거부된 토큰과 그때의 authEpoch를 돌려줘 큐 밖에서 resumeAfterRejection이 이어받게 한다.
+  const handleNativeRejectedNow = async (payload) => {
+    if (!active || payload?.generation !== active.generation) return null;
+    const rejected = { refreshToken: active.refreshToken, epoch: authEpoch };
+    await stopActive(true);
+    return rejected;
+  };
+  // JS가 이미 더 새 토큰을 들고 있으면(JS가 먼저 갱신해 네이티브 토큰이 뒤처진 경우) 그 세션으로 네이티브를 다시 띄운다.
+  // getSession은 SIGNED_OUT 구독자를 기다릴 수 있어 큐 밖에서 부른다(큐 안이면 handleAuth('SIGNED_OUT')와 서로 기다린다).
+  const resumeAfterRejection = async (rejected) => {
+    if (!rejected) return;
+    const { data } = await auth.getSession();
+    const session = data?.session;
+    if (!session?.refresh_token || session.refresh_token === rejected.refreshToken) return;
+    await enqueue(() => (rejected.epoch === authEpoch && !active ? handleAuthNow('SIGNED_IN', session) : undefined));
+  };
   const reconcileNow = async () => {
-    if (!active) return;
+    if (!active) return null;
     try {
       const snapshot = await invoke('native_realtime_snapshot');
-      if (snapshot?.generation !== active.generation || snapshot?.userId !== active.userId) return;
+      if (snapshot?.generation !== active.generation || snapshot?.userId !== active.userId) return null;
+      if (snapshot?.status === 'rejected') return await handleNativeRejectedNow({ generation: active.generation }); // 숨긴 창이 거부 이벤트를 놓친 경우
       await handleNativeSessionNow(await invoke('native_realtime_current_session'));
       await updateContextNow();
     } catch { await stopActive(true); }
+    return null;
   };
   const handleNativeSessionNow = async (payload) => {
     if (!active || payload?.generation !== active.generation) return;
@@ -172,8 +194,9 @@ export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabas
       return enqueue(() => handleAuthNow(event, session));
     },
     handleNativeSession: (payload) => enqueue(() => handleNativeSessionNow(payload)),
+    handleNativeRejected: (payload) => enqueue(() => handleNativeRejectedNow(payload)).then(resumeAfterRejection),
     updateContext: () => enqueue(updateContextNow),
-    reconcile: () => enqueue(reconcileNow),
+    reconcile: () => enqueue(reconcileNow).then(resumeAfterRejection),
     stop: () => enqueue(() => stopActive(true)),
   };
 }
@@ -207,12 +230,14 @@ export async function mountNativeRealtime({ enabled, auth, supabaseUrl, anonKey,
   mountedCoordinator = coordinator;
   const detachLifecycle = attachNativeRealtimeLifecycle(coordinator);
   const unlisten = await listen('native-realtime-session', ({ payload }) => { coordinator.handleNativeSession(payload).catch(() => {}); });
+  const unlistenRejected = await listen('native-realtime-auth-rejected', ({ payload }) => { coordinator.handleNativeRejected(payload).catch(() => {}); });
   return {
     handleAuth: coordinator.handleAuth,
     stop: async () => {
       if (mountedCoordinator === coordinator) mountedCoordinator = null;
       detachLifecycle();
       unlisten();
+      unlistenRejected();
       await coordinator.stop();
     },
   };

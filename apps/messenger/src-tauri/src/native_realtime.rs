@@ -555,20 +555,29 @@ async fn realtime_worker(
             return;
         }
     };
+    let emit_session = |event: SessionEvent| {
+        let _ = app.emit("native-realtime-session", event);
+    };
     let mut backoff = 1_u64;
     loop {
-        if !generation_gate.is_active(config.generation) {
-            return;
-        }
-        let refresh_result = {
-            let mut current = tokens.write().await;
-            refresh_if_needed(&app, &client, &config, &generation_gate, &mut current).await
-        };
-        if refresh_result.is_err() {
-            set_snapshot(&snapshot, "retrying", false, Some("session refresh failed"));
-            tokio::time::sleep(Duration::from_secs(backoff)).await;
-            backoff = (backoff * 2).min(30);
-            continue;
+        match refresh_until_ready(
+            &client,
+            &config,
+            &generation_gate,
+            &tokens,
+            &snapshot,
+            &mut backoff,
+            Duration::from_secs(1),
+            &emit_session,
+        )
+        .await
+        {
+            Ready::Fresh => {}
+            Ready::Stopped => return,
+            Ready::Rejected => {
+                report_rejected(&app, config.generation, &snapshot);
+                return;
+            }
         }
         let url = match websocket_url(&config.supabase_url, &config.anon_key) {
             Ok(url) => url,
@@ -619,6 +628,7 @@ async fn realtime_worker(
         }
         set_snapshot(&snapshot, "joining", false, None);
         let mut interval = tokio::time::interval(Duration::from_secs(25));
+        let mut rejected = false;
         loop {
             tokio::select! {
                 incoming = source.next() => {
@@ -656,11 +666,12 @@ async fn realtime_worker(
                 _ = interval.tick() => {
                     let refresh_result = {
                         let mut current = tokens.write().await;
-                        refresh_if_needed(&app, &client, &config, &generation_gate, &mut current).await
+                        refresh_if_needed(&client, &config, &generation_gate, &mut current, &emit_session).await
                     };
                     let refreshed = match refresh_result {
                         Ok(refreshed) => refreshed,
-                        Err(_) => break,
+                        Err(RefreshError::Rejected) => { rejected = true; break; }
+                        Err(RefreshError::Transient) => break,
                     };
                     let heartbeat = json!({"topic":"phoenix","event":"heartbeat","payload":{},"ref":reference.to_string()});
                     if sink.send(Message::Text(heartbeat.to_string().into())).await.is_err() { break; }
@@ -689,6 +700,10 @@ async fn realtime_worker(
                 }
             }
         }
+        if rejected {
+            report_rejected(&app, config.generation, &snapshot);
+            return;
+        }
         set_snapshot(&snapshot, "retrying", false, Some("realtime disconnected"));
         tokio::time::sleep(Duration::from_secs(backoff)).await;
         backoff = (backoff * 2).min(30);
@@ -707,13 +722,78 @@ fn broadcast_message_payload(text: &str) -> Option<Value> {
     envelope.get("payload").cloned()
 }
 
+/// 400·401은 리프레시 토큰이 무효·재사용·세션 종료라는 서버의 확정 답이다. 다시 보내도 같아서
+/// 멈추고 JS에 넘긴다(JS가 자기 토큰으로 한 번 갱신하고, 그것도 거부면 로그아웃 경로로 간다).
+/// 그 밖의 실패(5xx·429·연결 끊김·응답 깨짐)는 일시 오류로 보고 지금처럼 backoff로 재시도한다.
+/// 근거: 영구 거부를 끝없이 재시도해 숨긴 맥 창 하나가 분당 약 2회 /auth/v1/token을 보냈다(2026-10-26 조사).
+#[derive(Debug, PartialEq)]
+enum RefreshError {
+    Rejected,
+    Transient,
+}
+
+fn refresh_error_for_status(status: u16) -> RefreshError {
+    if status == 400 || status == 401 {
+        RefreshError::Rejected
+    } else {
+        RefreshError::Transient
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum Ready {
+    Fresh,
+    Stopped,
+    Rejected,
+}
+
+fn report_rejected(app: &AppHandle, generation: u64, snapshot: &Mutex<NativeRealtimeSnapshot>) {
+    set_snapshot(snapshot, "rejected", false, Some("session refresh rejected"));
+    let _ = app.emit(
+        "native-realtime-auth-rejected",
+        json!({ "generation": generation }),
+    );
+}
+
+/// 연결 전 갱신: 필요 없거나 성공하면 Fresh, 일시 오류는 1·2·4…30 단위로 기다렸다 다시, 영구 거부면 Rejected로 끝낸다.
+#[allow(clippy::too_many_arguments)]
+async fn refresh_until_ready(
+    client: &reqwest::Client,
+    config: &WorkerConfig,
+    generation_gate: &GenerationGate,
+    tokens: &RwLock<Tokens>,
+    snapshot: &Mutex<NativeRealtimeSnapshot>,
+    backoff: &mut u64,
+    unit: Duration,
+    emit: &impl Fn(SessionEvent),
+) -> Ready {
+    loop {
+        if !generation_gate.is_active(config.generation) {
+            return Ready::Stopped;
+        }
+        let refresh_result = {
+            let mut current = tokens.write().await;
+            refresh_if_needed(client, config, generation_gate, &mut current, emit).await
+        };
+        match refresh_result {
+            Ok(_) => return Ready::Fresh,
+            Err(RefreshError::Rejected) => return Ready::Rejected,
+            Err(RefreshError::Transient) => {
+                set_snapshot(snapshot, "retrying", false, Some("session refresh failed"));
+                tokio::time::sleep(unit.saturating_mul(*backoff as u32)).await;
+                *backoff = (*backoff * 2).min(30);
+            }
+        }
+    }
+}
+
 async fn refresh_if_needed(
-    app: &AppHandle,
     client: &reqwest::Client,
     config: &WorkerConfig,
     generation_gate: &GenerationGate,
     tokens: &mut Tokens,
-) -> Result<bool, String> {
+    emit: &impl Fn(SessionEvent),
+) -> Result<bool, RefreshError> {
     if tokens.expires_at - now_seconds() > REFRESH_MARGIN_SECONDS {
         return Ok(false);
     }
@@ -726,29 +806,26 @@ async fn refresh_if_needed(
         .json(&json!({"refresh_token": tokens.refresh_token}))
         .send()
         .await
-        .map_err(|_| "session refresh request failed".to_string())?;
+        .map_err(|_| RefreshError::Transient)?;
     if !response.status().is_success() {
-        return Err("session refresh rejected".to_string());
+        return Err(refresh_error_for_status(response.status().as_u16()));
     }
     let refreshed: RefreshResponse = response
         .json()
         .await
-        .map_err(|_| "session refresh response invalid".to_string())?;
+        .map_err(|_| RefreshError::Transient)?;
     if !generation_gate.is_active(config.generation) {
-        return Err("stale native realtime generation".to_string());
+        return Err(RefreshError::Transient);
     }
     tokens.access_token = refreshed.access_token;
     tokens.refresh_token = refreshed.refresh_token;
     tokens.expires_at = now_seconds().saturating_add(refreshed.expires_in);
-    let _ = app.emit(
-        "native-realtime-session",
-        SessionEvent {
-            generation: config.generation,
-            access_token: tokens.access_token.clone(),
-            refresh_token: tokens.refresh_token.clone(),
-            expires_at: tokens.expires_at,
-        },
-    );
+    emit(SessionEvent {
+        generation: config.generation,
+        access_token: tokens.access_token.clone(),
+        refresh_token: tokens.refresh_token.clone(),
+        expires_at: tokens.expires_at,
+    });
     Ok(true)
 }
 
@@ -1249,5 +1326,158 @@ mod tests {
             url.as_deref(),
             Ok("wss://example.supabase.co/realtime/v1/websocket?apikey=public-anon&vsn=1.0.0")
         );
+    }
+
+    // 가짜 /auth/v1/token 서버: 연결마다 script의 다음 응답을 돌려주고 받은 요청 수를 센다.
+    // None = 응답 없이 연결을 끊는다(네트워크 끊김 흉내). script가 끝나면 마지막 칸을 반복한다.
+    async fn fake_token_server(
+        script: Vec<Option<(u16, &'static str)>>,
+    ) -> (String, Arc<AtomicU64>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let calls = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&calls);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { return };
+                let index = counter.fetch_add(1, Ordering::SeqCst) as usize;
+                let step = script[index.min(script.len() - 1)];
+                let mut buffer = [0_u8; 4096];
+                let _ = socket.read(&mut buffer).await;
+                if let Some((status, body)) = step {
+                    let reply = format!(
+                        "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                }
+                let _ = socket.shutdown().await;
+            }
+        });
+        (base, calls)
+    }
+
+    const FRESH: &str = r#"{"access_token":"fixture-access-2","refresh_token":"fixture-refresh-2","expires_in":3600}"#;
+
+    struct Harness {
+        config: WorkerConfig,
+        gate: GenerationGate,
+        tokens: RwLock<Tokens>,
+        snapshot: Mutex<NativeRealtimeSnapshot>,
+        emitted: Mutex<Vec<String>>,
+    }
+
+    impl Harness {
+        fn new(base: String, expires_in: i64) -> Self {
+            Harness {
+                config: WorkerConfig {
+                    supabase_url: base,
+                    anon_key: "fixture-anon".to_string(),
+                    lang: "ko".to_string(),
+                    user_id: "fixture-user".to_string(),
+                    generation: 7,
+                },
+                gate: GenerationGate(AtomicU64::new(7)),
+                tokens: RwLock::new(Tokens {
+                    access_token: "fixture-access-1".to_string(),
+                    refresh_token: "fixture-refresh-1".to_string(),
+                    expires_at: now_seconds() + expires_in,
+                }),
+                snapshot: Mutex::new(NativeRealtimeSnapshot::default()),
+                emitted: Mutex::new(Vec::new()),
+            }
+        }
+
+        // 한 번 부르고, 2초 안에 끝나지 않으면 None(= 재시도를 멈추지 않았다).
+        async fn run(&self) -> Option<Ready> {
+            let client = reqwest::Client::new();
+            let mut backoff = 1_u64;
+            let emit = |event: SessionEvent| self.emitted.lock().unwrap().push(event.refresh_token);
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                refresh_until_ready(
+                    &client,
+                    &self.config,
+                    &self.gate,
+                    &self.tokens,
+                    &self.snapshot,
+                    &mut backoff,
+                    Duration::from_millis(1),
+                    &emit,
+                ),
+            )
+            .await
+            .ok()
+        }
+    }
+
+    #[test]
+    fn only_400_and_401_are_permanent_refresh_rejections() {
+        for status in [400_u16, 401] {
+            assert_eq!(refresh_error_for_status(status), RefreshError::Rejected, "{status}");
+        }
+        for status in [403_u16, 404, 408, 429, 500, 502, 503, 504] {
+            assert_eq!(refresh_error_for_status(status), RefreshError::Transient, "{status}");
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_refresh_stops_after_one_token_call() {
+        for status in [400_u16, 401] {
+            let (base, calls) = fake_token_server(vec![Some((
+                status,
+                r#"{"error_code":"refresh_token_already_used","msg":"Invalid Refresh Token: Already Used"}"#,
+            ))])
+            .await;
+            let harness = Harness::new(base, 30);
+            assert_eq!(harness.run().await, Some(Ready::Rejected), "{status}");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert_eq!(calls.load(Ordering::SeqCst), 1, "{status}: no /token call after rejection");
+            assert!(harness.emitted.lock().unwrap().is_empty());
+            assert_eq!(harness.tokens.read().await.refresh_token, "fixture-refresh-1");
+        }
+    }
+
+    #[tokio::test]
+    async fn transient_server_errors_keep_retrying_until_refresh_succeeds() {
+        let (base, calls) = fake_token_server(vec![
+            Some((503, r#"{"msg":"unavailable"}"#)),
+            Some((429, r#"{"msg":"rate limited"}"#)),
+            Some((200, FRESH)),
+        ])
+        .await;
+        let harness = Harness::new(base, 30);
+        assert_eq!(harness.run().await, Some(Ready::Fresh));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(*harness.emitted.lock().unwrap(), vec!["fixture-refresh-2".to_string()]);
+        assert_eq!(harness.tokens.read().await.access_token, "fixture-access-2");
+    }
+
+    #[tokio::test]
+    async fn dropped_connections_are_transient_like_network_loss() {
+        let (base, calls) = fake_token_server(vec![None, None, Some((200, FRESH))]).await;
+        let harness = Harness::new(base, 30);
+        assert_eq!(harness.run().await, Some(Ready::Fresh));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn unreachable_server_keeps_retrying_instead_of_rejecting() {
+        // 절전 복귀 직후처럼 네트워크가 아직 없다: 멈추지도(Rejected) 끝나지도 않고 계속 기다린다.
+        let harness = Harness::new("http://127.0.0.1:9".to_string(), 30);
+        assert_eq!(harness.run().await, None);
+        assert_eq!(harness.snapshot.lock().unwrap().status, "retrying");
+    }
+
+    #[tokio::test]
+    async fn fresh_token_or_stopped_generation_makes_no_token_call() {
+        let (base, calls) = fake_token_server(vec![Some((400, "{}"))]).await;
+        let fresh = Harness::new(base.clone(), 3_600);
+        assert_eq!(fresh.run().await, Some(Ready::Fresh));
+        let stopped = Harness::new(base, 30);
+        stopped.gate.stop(7);
+        assert_eq!(stopped.run().await, Some(Ready::Stopped));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }
