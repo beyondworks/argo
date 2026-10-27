@@ -87,6 +87,7 @@ import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
 import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey, maskedPreview, tabBodyQuery, emptyPersonalDm, personalDmWith } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
 import { canDeleteRoom } from './room-delete.mjs';
 import { canReportMessage } from './report-target.mjs';
+import { ownerDeleteBlockedCopy } from './owner-delete-copy.mjs';
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages, readMissed, createCatchUp } from './refresh-messages.mjs';
@@ -4453,7 +4454,7 @@ function AccountDeleteCard({ session, onDeleted }) {
     setBusy(false);
     if (error) {
       const m = /msgr_owner_transfer_required: (.*)$/m.exec(error.message || '');
-      if (m) { setBlocked(t('acct.delete.transferFirst', { orgs: m[1].trim() })); return; }
+      if (m) { setBlocked(ownerDeleteBlockedCopy(t, { v2: V2, phone: isPhone, orgs: m[1].trim() })); return; } // v2는 주인 넘기기가 없어 멤버 내보내기만 안내
       pushDiag('error', 'account delete failed', error.message); // 설정 › 진단 목록에 남긴다(console.error는 수집되지 않는다 — 3R M2R-4). 화면엔 내부 이름을 내보내지 않는다(2R M-3)
       setBlocked(t('acct.delete.failed', { path: t(isPhone ? 'diag.path.phone' : 'diag.path.desktop') })); return;
     }

@@ -257,6 +257,7 @@ export const DICT = {
   'acct.delete.confirm': ['영구 삭제', 'Delete permanently'],
   'acct.delete.note': ['삭제 뒤에는 {email}로 다시 가입할 수 있지만 이전 데이터는 복구되지 않습니다.', 'You can sign up again with {email} afterwards, but previous data will not be restored.'],
   'acct.delete.transferFirst': ['먼저 소유권을 넘겨야 하는 조직이 있습니다: {orgs}. 설정 › 조직에서 관리자에게 소유권을 이전하거나, 설정 › 멤버에서 남은 멤버를 내보낸 뒤 다시 시도하세요.', 'Transfer ownership first for: {orgs}. Go to Settings › Organization to transfer ownership to an admin, or remove the remaining members in Settings › Members, then try again.'],
+  'acct.delete.removeMembersFirst': ['먼저 남은 멤버를 내보내야 하는 조직이 있습니다: {orgs}. {path}에서 남은 멤버를 모두 내보낸 뒤 다시 시도하세요.', 'Remove the remaining members first in: {orgs}. Go to {path}, remove every remaining member, then try again.'],
   'acct.delete.failed': ['계정을 삭제하지 못했습니다. 잠시 뒤 다시 시도하고, 계속되면 {path}의 오류를 지원에 보내 주세요.', 'Could not delete the account. Try again shortly; if it keeps failing, send the error from {path} to support.'],
   'acct.delete.note.noEmail': ['삭제 뒤에는 같은 로그인 방법으로 다시 가입할 수 있지만 이전 데이터는 복구되지 않습니다.', 'You can sign up again with the same sign-in method afterwards, but previous data will not be restored.'],
   'auth.google': ['Google로 계속하기', 'Continue with Google'],
