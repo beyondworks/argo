@@ -172,7 +172,7 @@ test('가짜 원본: 무료 시나리오에서 plan 말고는 부르지 않는 �
 test('App 배선: A+ 플래그는 v2가 켜진 때만, 켜지면 Shell 대신 APlusRoot, 꺼지면 지금 셸 그대로', () => {
   const app = read('../src/App.jsx');
   assert.match(app, /const APLUS = V2 && aplusEnabled\(/);
-  assert.match(app, /body = APLUS \? <APlusRoot key=\{session\.user\.id\} session=\{session\} onSignOut=\{signOut\} \/> : <Shell key=\{session\.user\.id\} session=\{session\} \/>;/);
+  assert.match(app, /body = APLUS \? <APlusRoot key=\{session\.user\.id\} session=\{session\} onSignOut=\{signOut\} \/> : <Shell key=\{session\.user\.id\} session=\{session\} onUpdateRequired=\{onUpdateRequired\} \/>;/); // onUpdateRequired: 서버 최소 버전에 걸리면 루트가 셸 대신 업데이트 안내만(test/update-gate.test.mjs)
   assert.match(app, /function APlusRoot\(/);
   assert.match(app, /bindV2Push\(\{ machine: source\.machine\(\), getToken: getPushToken, observeResume: observeMobileResume \}\)/, 'A+에서도 휴대폰 토큰을 싣는다(R3)');
 });

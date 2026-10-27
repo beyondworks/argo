@@ -139,6 +139,8 @@ import { registerPush, activatePush, deactivatePush, detachPush, mountPush, getP
 import { bindV2Push } from './v2/push-bind.mjs';
 import { aplusEnabled } from './aplus/flag.mjs';
 import APlusApp, { FreeGate } from './aplus/APlusApp.jsx';
+import { UpdateGate } from './UpdateGate.jsx'; // 서버 최소 버전에 걸린 앱 — 셸 대신 업데이트 안내만(update-gate.mjs)
+import { updateGateActive, markUpdateGate } from './update-gate.mjs';
 import { createAPlusSource } from './aplus/source.mjs';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 setIosCopy(isIos); // iOS 빌드는 무료 한도 오류에서 결제 권유를 뺀다(App Store 3.1.1 — error-toast.mjs)
@@ -410,6 +412,8 @@ export default function App() {
   const [sessionRecoveryError, setSessionRecoveryError] = useState('');
   const [logoutNotice, setLogoutNotice] = useState('');
   const [signingOut, setSigningOut] = useState(false);
+  const [updateGate, setUpdateGate] = useState(() => V2 && updateGateActive(globalThis.localStorage, APP_VERSION)); // 이 앱 버전이 서버 최소 버전에 걸렸다 — 셸을 올리지 않는다(요청 0)
+  const onUpdateRequired = useCallback(() => { markUpdateGate(globalThis.localStorage, APP_VERSION); setUpdateGate(true); }, []);
   const [cleanupEpoch, setCleanupEpoch] = useState(0);
   const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false); const recoveryRef = useRef(null);
   const screenNoticeKey = useRef(null); // signOutNotice로 띄운 로그인 화면 이유 안내 — 다시 로그인하면 지운다(session-notice.mjs noticeAfterSignIn, F8)
@@ -510,10 +514,11 @@ export default function App() {
   else if (sessionWaiting) body = <ConnectionWaiting t={t} onRetry={() => recoveryRef.current?.retryNow()} onSignIn={restartSignIn} error={sessionRecoveryError} busy={signingOut} />;
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
-  else body = APLUS ? <APlusRoot key={session.user.id} session={session} onSignOut={signOut} /> : <Shell key={session.user.id} session={session} />;
+  else if (updateGate) body = <UpdateGate t={t} client={rawSupabase} appVersion={APP_VERSION} storage={globalThis.localStorage} onClear={() => setUpdateGate(false)} />;
+  else body = APLUS ? <APlusRoot key={session.user.id} session={session} onSignOut={signOut} /> : <Shell key={session.user.id} session={session} onUpdateRequired={onUpdateRequired} />;
   const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await recoveryRef.current?.restartSignIn(); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
   const signOutNotice = async (key) => { await signOut(); screenNoticeKey.current = key; setLogoutNotice(key); }; // 메신저 v2: 기기 폐기·다시 로그인 필요·모든 기기 로그아웃 뒤 로그인 화면에 이유를 남긴다(U6c-2a)
-  return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted, signOutNotice }}><Sprite /><UpdateBar t={t} /><MobileUpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
+  return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted, signOutNotice }}><Sprite />{!(session && updateGate) && <><UpdateBar t={t} /><MobileUpdateBar t={t} /></>}{/* 업데이트 필요 화면이 같은 안내를 맡는다(같은 알림 두 번 금지) */}{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
 // 축소판 A+ 진입(2026-10-19) — 플랜 확인 → 무료는 안내만(기계·등록 0), Pro는 A+ 셸. 휴대폰이면 기계가 선 뒤 푸시 토큰을 싣는다(R3).
@@ -839,7 +844,7 @@ function CtxMenu({ at, items, onClose }) {
 }
 // 당겨서 새로고침이 실제로 발동할 수 있는 화면만(그 외 화면엔 당김 손잡이 자체가 없다) — 복원 스냅샷의 page 값을 이 범위로만 신뢰한다.
 const PULL_RESTORE_PAGES = new Set([...PHONE_TABS, 'chat']);
-function Shell({ session }) {
+function Shell({ session, onUpdateRequired }) {
   const { signOut, signingOut, signOutNotice } = useContext(SignOutContext);
   const { t, lang } = useT();
   const isPhone = useIsPhone(); // 폰 셸(홈 전체화면 + 하단 탭) — 데스크톱은 false라 기존 트리 그대로
@@ -1877,6 +1882,7 @@ function Shell({ session }) {
   };
   // ④ 기기 폐기·다시 로그인 필요(signed_out) → 로그인 화면으로, 이유를 남긴다. 중단·업데이트 필요는 화면 위 안내 줄(v2StateBar)
   const [v2state, setV2state] = useState(null); const [v2stuck, setV2stuck] = useState(null); // 등록 대기 실패(시간 상한·다시 붙기 그만둠 — v2/runtime.mjs)
+  useEffect(() => { if (V2 && v2state?.state === 'update_required') onUpdateRequired?.(); }, [v2state?.state]); // eslint-disable-line react-hooks/exhaustive-deps -- 서버 최소 버전에 걸림: 루트가 이 셸을 내리고 업데이트 안내만 그린다
   useEffect(() => { if (!v2rt) return undefined; setV2stuck(v2rt.stuck()); return v2rt.onStuck(setV2stuck); }, [v2rt]);
   useEffect(() => { const key = v2SignOutNotice(v2state); if (key) void signOutNotice(key); }, [v2state?.state, v2state?.reason]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { rt.current = subsRef.current.get(orgId) ?? null; }, [orgId]);

@@ -99,7 +99,7 @@ function query(table) {
 }
 
 const rpcs = {
-  argo_min_app_version: () => null, msgr2_service_pause: () => null,
+  argo_min_app_version: () => state.min ?? null, msgr2_service_pause: () => null, // ?min=9.9.9 — 서버 최소 버전(업데이트 필요 전체 화면, test/update-gate.browser.mjs)
   msgr2_device_register: () => { if (state.free) throw Object.assign(new Error('msgr2_pro_required'), { code: '42501' }); /* ?free=1 — 무료 계정(새 기기 등록은 Pro만, #1133 검수) */ if (state.loginReq) { state.loginReq -= 1; throw Object.assign(new Error('device_login_required'), { code: '42501' }); } /* ?loginreq=N — 처음 N번 '다시 로그인 필요'(10분 규칙, F8 재로그인 안내 화면) */ if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
   msgr2_catch_up: () => ({ rooms: [], next_since: 202 }),
   msgr2_my_personal_space: () => P,
@@ -258,6 +258,7 @@ state.failRegister = Number(new URLSearchParams(globalThis.location?.search ?? '
 state.loginReq = Number(new URLSearchParams(globalThis.location?.search ?? '').get('loginreq') || 0);
 state.signInAgain = () => { state.signedIn = true; const sess = { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' }; for (const cb of state.authCbs) cb('SIGNED_IN', sess); }; // 화면 시험: 다시 로그인한 것처럼
 state.free = new URLSearchParams(globalThis.location?.search ?? '').get('free') === '1';
+state.min = new URLSearchParams(globalThis.location?.search ?? '').get('min') || null;
 // 한 목록 시험 자료(메신저 단순화 2단계): 두 번째 조직(Lumen 연구)의 채널, 개인 여러 명 방(주말 모임), 친구가 연 1:1(친구 개인 공간)
 { const T2 = '7e000000-0000-4000-8000-0000000000ee', LAB = '7f000000-0000-4000-8000-000000000005', GROUP = '7f000000-0000-4000-8000-000000000006', FDM = '7f000000-0000-4000-8000-000000000007';
   const T_ = state.tables;
