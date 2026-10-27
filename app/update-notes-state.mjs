@@ -54,6 +54,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.116': Object.freeze(['updates.note.orgMemorySplit']),
   // 0.1.117 — syncLighter: 이 PC만 바뀐 동기화 주기에 회사 목록을 다시 받지 않음(#1148) · teamRoomPrivacy: 팀 방 지시·결재 원문을 활동 기록에 남기지 않음(#1150·#1153)
   '0.1.117': Object.freeze(['updates.note.syncLighter', 'updates.note.teamRoomPrivacy']),
+  // 0.1.118 — memoryKeep: 기억 정리가 주제 노트를 덮을 때 옛 결론을 합쳐 남기고 덮기 전 사본을 둠(#1170) · msgrShellApproval: 메신저 지시의 위험한 명령은 주인 결재, 구글 계정으로 연결한 Gemini·Antigravity(CLI)는 메신저 지시에서 명령 실행 끔(#1171·#1172) · agentOnline: 메신저에 에이전트 켜짐 표시를 본체 켜짐 신호로(#1164)
+  '0.1.118': Object.freeze(['updates.note.memoryKeep', 'updates.note.msgrShellApproval', 'updates.note.agentOnline']),
 });
 
 export function stableVersion(value) {
