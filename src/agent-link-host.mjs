@@ -17,6 +17,7 @@ import { createLink } from '../packages/agent-link/link.mjs';
 import { tierPolicy } from '../packages/agent-link/tiers.mjs';
 import { SUPPORTED, LIMITS, OFFER_KINDS, TOPICS } from '../packages/agent-link/contract/v1.mjs';
 import { msgrMeetingEnabled as msgrMeetingEnabledFlag } from './agent-link-flags.mjs';
+import { setLinkStatus } from './agent-link-status.mjs';
 import { workErrorCodeFor as botWorkErrorCode } from './ext-bots-codes.mjs';
 import { mkdir, writeFile, rm, readdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
@@ -296,12 +297,43 @@ export function supabaseTransport(source, { now = () => Date.now() } = {}) {
   };
 }
 
+const runnerIdsOf = (m) => Object.entries(m ?? {}).filter(([, v]) => v?.installed && v?.authed).map(([k]) => k).sort();
+
 /** 이 기기에서 쓸 수 있는 러너 id(설치·로그인 둘 다) — 정렬해서(순서만 바뀌어도 서버 쓰기가 생기지 않게). 감지 실패·초과는 빈 목록. */
 export async function detectRunnerIds(detect, { timeoutMs = 3000 } = {}) {
+  return (await detectRunnerState(detect, { timeoutMs })).runners;
+}
+
+/** 러너 감지 + "다 봤나". complete = 감지가 상한 안에 끝났다(그때의 빈 목록만 진짜 0개). 상한을 넘기거나 실패하면 complete=false이고,
+ *  상한을 넘긴 경우 late = 감지가 늦게 끝났을 때의 목록(실패면 null)을 주는 약속이다(2026-10-28 제보: 윈도우는 감지가 느려 3초 상한에 걸리면
+ *  빈 목록으로 등록한 채 그 실행 동안 다시 등록하지 않았다 — 서버 msgr2_link_pending은 러너가 있는 기기에만 일을 넘긴다). */
+export async function detectRunnerState(detect, { timeoutMs = 3000 } = {}) {
+  let p;
+  try { p = Promise.resolve(detect()); } catch { return { runners: [], complete: false, late: null }; }
+  const TIMEOUT = Symbol('timeout');
+  let timer = null;
   try {
-    const m = await Promise.race([detect(), new Promise((r) => setTimeout(r, timeoutMs, null))]);
-    return Object.entries(m ?? {}).filter(([, v]) => v?.installed && v?.authed).map(([k]) => k).sort();
-  } catch { return []; }
+    const m = await Promise.race([p, new Promise((r) => { timer = setTimeout(r, timeoutMs, TIMEOUT); })]);
+    if (m === TIMEOUT) return { runners: [], complete: false, late: p.then(runnerIdsOf, () => null) };
+    return { runners: runnerIdsOf(m), complete: true, late: null };
+  } catch { return { runners: [], complete: false, late: null }; } finally { clearTimeout(timer); }
+}
+
+/** 러너 다시 보기 간격 — CLI 로그인·설치가 바뀌면 그다음 확인에서 한 번 다시 등록한다(바뀌지 않으면 요청 0). 감지 자체는 runners/exec.mjs 10분 캐시. */
+export const RUNNER_RECHECK_MS = 10 * 60_000;
+
+/** 기기 등록 실패 답 → 상태. 서버(20261020200100·20261020201700)는 42501 예외 문구로 거부 사유를 싣고 PostgREST는 403으로 준다.
+ *  reauth = 이 세션으로는 다시 해도 같다(기기 폐기·만료·세션 없음·종류 잠김·401/403) — 다시 로그인해야 한다. */
+export function registerFailure(reg) {
+  const e = reg?.error, code = reg?.data?.code ?? e?.code ?? null, msg = String(e?.message ?? '');
+  if (code === 'pro_required' || /\bmsgr2_pro_required\b/.test(msg)) return { state: 'pro_required', code: 'pro_required' };
+  const named = /\b(device_revoked|device_expired|device_unknown|device_login_required|msgr2_session_required|msgr2_device_kind_locked)\b/.exec(msg)?.[1]
+    ?? (['device_revoked', 'device_expired', 'device_unknown'].includes(code) ? code : null);
+  if (named) return { state: 'reauth', code: named };
+  if (e?.status === 401 || e?.status === 403) return { state: 'reauth', code: `http_${e.status}` };
+  const upd = /\b(link_version_unsupported|app_version_unsupported)\b/.exec(msg)?.[1] ?? (code === 'link_version_unsupported' ? code : null);
+  if (upd) return { state: 'update_required', code: upd };
+  return { state: 'error', code: code ?? (e ? 'error' : 'no_device_id') };
 }
 
 /** msgr2_device_register 인자(U3 …_msgr2_device.sql) — PostgREST가 이름으로 잇는다(p_ 접두). 본체는 kind 'runner' + app 'desktop'만 받는다
@@ -406,7 +438,8 @@ const safeName = (n) => basename(String(n || 'file')).replace(/[^\p{L}\p{N}._-]+
  * 연결부. deps는 시험이 가짜로 바꾼다.
  * deps = { getSession() → { client, uid } | null, listOwnedAgents(uid) → [{ ws, slug, name, role }], chat, interruptTurn,
  *          onNotify(fn) → off, resolveWithFollowUp(ws, id, approve, opts), resolveApproval(ws, id, approve, opts),
- *          planReplyFiles, readReplyFile, vaultDir(ws), appVersion, clock, log, transportFor(client) }
+ *          planReplyFiles, readReplyFile, vaultDir(ws), appVersion, clock, log, transportFor(client),
+ *          detectRunners(uid), sessionKey() → 로컬 세션 표지(다시 로그인 감지, 요청 0) | null, onStatus(상태) — agent-link-status.mjs }
  */
 export function createAgentLinkHost(deps) {
   const { clock = { now: () => Date.now(), setTimeout, clearTimeout }, log = (...a) => console.error('[argo] agent-link', ...a) } = deps;
@@ -419,10 +452,41 @@ export function createAgentLinkHost(deps) {
   let currentDevice = null; // 접속 표시 key(기기마다 — 같은 주인의 기기 여럿이 서로 덮지 않게)
   /** 접속 표시(v2:pr:<주인>) — 이 기기가 맡은 에이전트 id(정렬). 비면 내린다. 바뀌었을 때만 보낸다(transport.presence가 같은 상태를 거른다). */
   const publishPresence = (ids = [...agentIds]) => { if (current?.presence && currentUid && currentDevice) current.presence(TOPICS.presence(currentUid), currentDevice, ids.length ? { v: 1, agents: [...ids].sort() } : null); };
+  // 실제 연결 상태(2026-10-28 제보: 기기가 폐기돼도 설정·argo_status는 "연결됨"이었다). 바뀔 때만 onStatus로 알린다(agent-link-status.mjs — 요청 0)
+  const status = { state: 'starting', code: null, runners: [], agents: 0, at: null };
+  let statusKey = '';
+  function setStatus(patch) {
+    Object.assign(status, patch);
+    const key = JSON.stringify([status.state, status.code, status.runners, status.agents]);
+    if (key === statusKey) return;
+    statusKey = key; status.at = clock.now();
+    try { deps.onStatus?.({ ...status, runners: [...status.runners] }); } catch { /* 표시 실패는 일을 막지 않는다 */ }
+  }
+  // 등록한 러너(서버 msgr2_devices.runners와 같은 값) · 감지 중(상한을 넘겨 늦게 끝나기를 기다림) · 다음 러너 재확인 시각
+  let regRunners = null, detecting = false, nextRunnerCheck = Infinity, runnerChecking = false;
+  // 다시 로그인이 필요해진 때의 로컬 세션 표지 — 표지가 바뀌면(새 로그인) 재시도 간격을 기다리지 않고 바로 다시 붙는다
+  let reauthKey;
+  /** 링크가 열린 동안의 상태: 중단 → paused, 러너 있음 → ok, 감지 중 → starting, 다 봤는데 0개 → no_runners */
+  function liveStatus() {
+    if (!link || proBlocked) return;
+    const runners = regRunners ?? [];
+    setStatus({ state: link.paused ? 'paused' : runners.length ? 'ok' : detecting ? 'starting' : 'no_runners', code: null, runners, agents: agents.size });
+  }
+  /** 기기 폐기·만료·세션 거부 — 링크를 내리고(남기면 boot가 다시 열지 못한다) 다시 로그인을 기다린다. 재시도는 1→2→5→10분 + 새 로그인 즉시 */
+  function needLogin(code) {
+    if (link) { const l = link; link = null; l.stop(); }
+    agents.clear(); agentIds.clear();
+    publishPresence([]);
+    reauthKey = deps.sessionKey ? safeKey() : undefined;
+    setStatus({ state: 'reauth', code, runners: [], agents: 0 });
+    retryLater();
+  }
+  const safeKey = () => { try { return deps.sessionKey() ?? null; } catch { return null; } };
   // pro_required(무료 계정) 쉼 — 다음 플랜 확인(nextPlanAt) 전에는 기기 등록·agent.sync·따라잡기·구독 갱신 요청이 0이다
   let proBlocked = false, nextPlanAt = 0;
   function proBlock() {
     proBlocked = true; nextPlanAt = clock.now() + PLAN_CACHE_MS;
+    setStatus({ state: 'pro_required', code: 'pro_required', runners: [], agents: 0 });
     if (link) { link.stop(); link = null; }
     if (timer) { clock.clearTimeout(timer); timer = null; }
     const known = new Map(agents);
@@ -519,7 +583,7 @@ export function createAgentLinkHost(deps) {
   }
 
   const host = {
-    canAccept: (offer) => agents.has(offer.agent),
+    canAccept: (offer) => agents.has(offer.agent), // 받지 않으면 link.mjs가 offer_skipped(cannot_accept)로 알린다
     async runTurn(offer, ctx) {
       // 약속 v1.1 offer.kind — 없으면 chat. 회의·봇은 설정(ARGO_MSGR_MEETING)이 켜졌을 때만(그때만 features로 알린다). 모르는 kind·꺼진 기능은 unsupported
       const kind = offer.data.kind ?? 'chat';
@@ -635,9 +699,14 @@ export function createAgentLinkHost(deps) {
       }
     },
     onEvent(name, detail) {
-      if (['update_required', 'device_invalid', 'paused', 'resumed', 'lease_lost', 'report_failed', 'accept_failed', 'pro_required'].includes(name)) log(name, JSON.stringify(detail));
+      // offer_skipped·work_failed·envelope_rejected·unknown_type = 일을 받지 않거나 오류로 끝낸 이유(일 id·에이전트 id·코드만 — 글 내용·토큰 없음, link.mjs가 싣는 값)
+      if (['update_required', 'device_invalid', 'paused', 'resumed', 'lease_lost', 'report_failed', 'accept_failed', 'pro_required', 'envelope_rejected', 'unknown_type', 'work_failed'].includes(name)) log(name === 'work_failed' ? 'work failed' : name, JSON.stringify(detail));
+      if (name === 'offer_skipped') log('offer skipped', JSON.stringify(detail));
       if (name === 'pro_required') proBlock(); // 무료 계정 — 링크는 이미 멈췄다(link.mjs fatal). 다음 플랜 확인 전까지 다시 열지 않는다
       if (['update_required', 'device_invalid', 'paused'].includes(name)) publishPresence([]); // 일을 받지 못하는 동안은 켜짐으로 보이지 않게(접속 표시)
+      if (name === 'device_invalid') needLogin(detail?.code ?? 'device_revoked'); // 메신저 "모든 기기 로그아웃" 등 — 다시 로그인해야 한다(링크를 내린다)
+      if (name === 'update_required') { if (link) { const l = link; link = null; l.stop(); } setStatus({ state: 'update_required', code: detail?.code ?? null, runners: [], agents: 0 }); }
+      if (name === 'paused' || name === 'resumed') liveStatus();
       if (name === 'resumed') publishPresence();
       if (name === 'connected') scheduleRecall(RECALL_CONNECT_MS); // (재)접속마다 한 번 — 꺼져 있던 동안 빠진 방(손님 기한 지남 포함)을 반영한다
       if (name === 'scope_changed') scheduleRecall(RECALL_SCOPE_MS); // 빠짐 알림 — 30초로 묶는다(조직 탈퇴 한 번에 여러 행이 닫혀도 1번)
@@ -645,7 +714,7 @@ export function createAgentLinkHost(deps) {
   };
 
   function retryLater() {
-    if (stopped || proBlocked) return;
+    if (stopped || proBlocked || timer) return; // 이미 잡힌 재시도가 있으면 겹쳐 잡지 않는다
     const ms = SESSION_RETRY_MS[Math.min(tries++, SESSION_RETRY_MS.length - 1)];
     timer = clock.setTimeout(() => { timer = null; boot().catch((e) => log('boot failed', e.message)); }, ms);
   }
@@ -653,25 +722,73 @@ export function createAgentLinkHost(deps) {
   async function boot() {
     if (stopped || link || proBlocked) return;
     const s = await deps.getSession();
-    if (!s) return retryLater();
+    if (!s) { if (status.state !== 'reauth') setStatus({ state: 'signed_out', code: null, runners: [], agents: 0 }); return retryLater(); }
+    if (status.state !== 'reauth') setStatus({ state: 'starting', code: null });
     const transport = deps.transportFor(s.client);
     current = transport;
     // 기기 등록(U3 msgr2_device_register): runner 기기 + 지원 약속 범위. 답의 device_id가 봉투의 device다.
-    // 러너 목록이 비면 서버가 이 기기에 일을 주지 않는다(경우 17) — CLI 감지 + 회사 설정의 러너(API 키 등)를 함께 본다
-    const runners = deps.detectRunners ? await detectRunnerIds(() => deps.detectRunners(s.uid)) : [];
+    // 러너 목록이 비면 서버가 이 기기에 일을 주지 않는다(경우 17) — CLI 감지 + 회사 설정의 러너(API 키 등)를 함께 본다.
+    // 감지가 상한(3초)을 넘기면 기기는 일단 등록하고(링크를 열어야 한다), 감지가 늦게 끝나면 그 목록으로 다시 등록한다(2026-10-28 제보 — 윈도우)
+    const det = deps.detectRunners ? await detectRunnerState(() => deps.detectRunners(s.uid), { timeoutMs: deps.detectTimeoutMs ?? 3000 }) : { runners: [], complete: true, late: null };
+    const runners = det.runners;
+    detecting = !det.complete && !!det.late;
     const reg = await transport.rpc('msgr2_device_register', runnerRegisterArgs({ appVersion: deps.appVersion ?? null, runners }));
     const device = reg?.data?.device_id;
-    // 기기 등록에서 온 무료 거부도 같은 쉼(다시 등록하지 않는다). 서버는 새 행을 'msgr2_pro_required'(42501) 예외로 거부한다(20261020201700) — 코드가 아니라 문구에 실린다
-    if ((reg?.data?.code ?? reg?.error?.code) === 'pro_required' || /\bmsgr2_pro_required\b/.test(String(reg?.error?.message ?? ''))) { log('pro_required', 'device_register'); proBlock(); return; }
-    if (reg.error || !device) { log('device register failed', reg.error?.code ?? reg.data?.code ?? 'no device_id'); return retryLater(); }
-    tries = 0;
+    if (reg?.error || !device) {
+      detecting = false;
+      const f = registerFailure(reg);
+      // 기기 등록에서 온 무료 거부도 같은 쉼(다시 등록하지 않는다). 서버는 새 행을 'msgr2_pro_required'(42501) 예외로 거부한다(20261020201700) — 코드가 아니라 문구에 실린다
+      if (f.state === 'pro_required') { log('pro_required', 'device_register'); proBlock(); return; }
+      log('device register failed', f.code);
+      if (f.state === 'reauth') return needLogin(f.code); // 기기 폐기·세션 거부(403) — 다시 로그인 전에는 같은 답이다
+      setStatus({ state: f.state, code: f.code, runners: [], agents: 0 });
+      return retryLater();
+    }
+    tries = 0; reauthKey = undefined;
+    regRunners = runners;
+    nextRunnerCheck = clock.now() + RUNNER_RECHECK_MS;
+    if (detecting) det.late.then((ids) => { detecting = false; if (ids) applyRunners(ids, 'late'); else liveStatus(); });
     lastResync = clock.now();
     currentUid = s.uid; currentDevice = device;
     link = createLink({ transport, host, uid: s.uid, device, agentIds, clock: deps.linkClock });
     // 목록을 못 보내도(중단 스위치·일시 오류 6번) 링크는 연다. 예전에는 여기서 던져 link만 남고 start()가 안 불려, retryLater의 boot가 `link`에서 빠져
     // 해제 뒤에도 구독 0이었다(#1091 검수). 목록은 host.resync가 1분마다 다시 보낸다(대응표가 비어 있는 동안 offer는 받지 않는다)
     await resync().catch((e) => { catchUpAfterSync = true; syncFails++; log('agent sync failed', e.code ?? e.message); });
-    link.start();
+    link?.start();
+    liveStatus();
+  }
+
+  /** 러너 목록이 등록한 값과 다르면 다시 등록한다(같으면 요청 0). 같은 세션이라 서버는 같은 기기 행의 runners만 바꾼다(20261020200100). */
+  async function applyRunners(ids, why) {
+    if (!link || stopped || proBlocked || !current) return;
+    const same = regRunners && ids.length === regRunners.length && ids.every((x, i) => x === regRunners[i]);
+    if (same) return liveStatus();
+    const l = link;
+    const reg = await Promise.resolve(current.rpc('msgr2_device_register', runnerRegisterArgs({ appVersion: deps.appVersion ?? null, runners: ids }))).catch(() => ({ error: { code: 'network' } }));
+    if (link !== l) return; // 그사이 링크가 내려갔다(폐기·로그아웃)
+    const device = reg?.data?.device_id;
+    if (!reg?.error && device) {
+      if (device !== currentDevice) { link = null; l.stop(); return boot().catch((e) => { log('boot failed', e.message); retryLater(); }); } // 다른 세션의 기기(다시 로그인) — 새로 연다
+      regRunners = ids;
+      log('runners updated', JSON.stringify({ runners: ids.length, why }));
+      return liveStatus();
+    }
+    const f = registerFailure(reg);
+    log('device register failed', f.code, why);
+    if (f.state === 'pro_required') return proBlock();
+    if (f.state === 'reauth') return needLogin(f.code);
+    liveStatus(); // 일시 오류 — 다음 재확인(10분)에서 다시
+  }
+
+  /** 러너 재확인(10분마다) — 감지 결과가 바뀌었을 때만 다시 등록한다. 감지는 runners/exec.mjs 캐시를 거친다(DB·네트워크 0) */
+  async function recheckRunners() {
+    if (!link || detecting || runnerChecking || !deps.detectRunners || clock.now() < nextRunnerCheck) return;
+    nextRunnerCheck = clock.now() + RUNNER_RECHECK_MS;
+    runnerChecking = true;
+    try {
+      const det = await detectRunnerState(() => deps.detectRunners(currentUid), { timeoutMs: deps.detectTimeoutMs ?? 3000 });
+      if (det.complete) await applyRunners(det.runners, 'recheck');
+    } finally { runnerChecking = false; }
   }
 
   /** 로컬 에이전트 목록을 보낸다(바뀌었을 때만 요청). 답의 대응표로 이 본체가 맡을 에이전트를 정한다. */
@@ -697,14 +814,25 @@ export function createAgentLinkHost(deps) {
       else if (bt) { agents.set(m.id, { ws: m.ws, slug: m.slug, kind: 'bot', botId: bt.id, name: bt.name }); agentIds.add(m.id); }
     }
     publishPresence();
+    liveStatus();
     if (catchUpAfterSync) { catchUpAfterSync = false; link.catchUp(); }
     if (recallPending && agents.size) scheduleRecall(0); // 접속 때 대응표가 비어 미뤄 둔 회수
   }
 
   return {
     start() { stopped = false; boot().catch((e) => { log('boot failed', e.message); retryLater(); }); return this; },
-    stop() { stopped = true; if (timer) clock.clearTimeout(timer); timer = null; if (recallTimer) clock.clearTimeout(recallTimer); recallTimer = null; publishPresence([]); link?.stop(); link = null; },
+    stop() { stopped = true; if (timer) clock.clearTimeout(timer); timer = null; if (recallTimer) clock.clearTimeout(recallTimer); recallTimer = null; publishPresence([]); link?.stop(); link = null; setStatus({ state: 'off', code: null, runners: [], agents: 0 }); },
     async resync() {
+      // 다시 로그인 대기: 로컬 세션 표지(세션 파일 — 요청 0)가 바뀌면 재시도 간격을 기다리지 않고 지금 다시 붙는다
+      if (status.state === 'reauth' && !link && !stopped && deps.sessionKey && reauthKey !== undefined) {
+        const k = safeKey();
+        if (k && k !== reauthKey) {
+          reauthKey = undefined; tries = 0;
+          if (timer) { clock.clearTimeout(timer); timer = null; }
+          return boot().catch((e) => { log('boot failed', e.message); retryLater(); });
+        }
+        return;
+      }
       const gate = await planGate();
       if (gate === 'blocked') return; // 무료 계정 쉼 — 요청 0(플랜 확인만 10분·실패 1분마다)
       if (gate === 'resumed') { if (stopped) return; tries = 0; return boot().catch((e) => { log('boot failed', e.message); retryLater(); }); } // 쉼이 풀렸다 — 다시 연다
@@ -713,11 +841,12 @@ export function createAgentLinkHost(deps) {
       const gap = syncFails ? SYNC_RETRY_MS[Math.min(syncFails - 1, SYNC_RETRY_MS.length - 1)] : RESYNC_MIN_MS;
       if (clock.now() - lastResync < gap) return fresh;
       lastResync = clock.now();
-      return fresh.then(() => resync()).catch((e) => { syncFails++; log('agent sync failed', e.code ?? e.message); });
+      return fresh.then(() => resync()).then(() => recheckRunners()).catch((e) => { syncFails++; log('agent sync failed', e.code ?? e.message); });
     },
     get link() { return link; },
     get agents() { return agents; },
     get proBlocked() { return proBlocked; },
+    get status() { return { ...status, runners: [...status.runners] }; },
   };
 }
 
@@ -728,6 +857,8 @@ export async function startAgentLinkHost() {
     import('./hub.mjs'), import('./workspace.mjs'), import('./app-version.mjs'), import('./runners.mjs'),
     import('./notify.mjs'), import('./approval-actions.mjs'), import('./approvals.mjs'),
   ]);
+  let lastForeign = 0;
+  const { loadDeviceSession } = await import('./devicesession.mjs');
   const host = createAgentLinkHost({
     meetingEnabled: () => msgrMeetingEnabledFlag(),
     // 요금제 확인 — 회의·봇 일이 왔을 때와 pro_required 쉼의 재확인 때만 부른다(쉬는 동안 요청 0). 10분 캐시, 실패는 캐시하지 않음
@@ -753,12 +884,18 @@ export async function startAgentLinkHost() {
       return out;
     },
     getSession: async () => { const c = await sessionClient(); return c ? { client: c.client, uid: c.uid } : null; },
+    // 다시 로그인 감지 — 세션 파일의 계정·갱신 토큰 끝자리(메모리에서 비교만, 어디에도 쓰지 않는다). 파일 읽기는 수정 시각 캐시(요청 0)
+    sessionKey: () => { const d = loadDeviceSession(); return d?.user?.id && d.refresh_token ? `${d.user.id}:${String(d.refresh_token).slice(-16)}` : null; },
+    onStatus: setLinkStatus, // 설정 › 연결 메신저 칸·argo_status가 읽는다(agent-link-status.mjs)
     async listOwnedAgents(uid) {
       const out = [];
+      let foreign = 0;
       for (const c of await listCompanies()) {
-        if (c.ownerId !== uid) continue; // 주인 계정의 회사만(옛 브리지의 소유자 관문과 같은 기준, msgr.mjs 713)
+        if (c.ownerId !== uid) { foreign++; continue; } // 주인 계정의 회사만(옛 브리지의 소유자 관문과 같은 기준, msgr.mjs 713)
         for (const a of await listAgents(c.id).catch(() => [])) out.push({ ws: c.id, slug: a.slug, name: a.name, role: a.role });
       }
+      // 주인 계정이 아닌 회사의 에이전트는 메신저 일을 받지 않는다 — 수가 바뀔 때만 한 줄(1분마다 되풀이하지 않게, 회사 id·계정 없음)
+      if (foreign !== lastForeign) { lastForeign = foreign; if (foreign) console.error('[argo] agent-link', 'companies skipped', JSON.stringify({ reason: 'owner_mismatch', count: foreign })); }
       return out;
     },
     chat, interruptTurn, onNotify, resolveWithFollowUp, resolveApproval, planReplyFiles: rf.planReplyFiles, readReplyFile: rf.readReplyFile,
