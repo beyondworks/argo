@@ -51,9 +51,11 @@ async function fake(rows, { ents = [], fail = null } = {}) {
         const m = or.match(/^\(created_at\.gt\."([^"]+)",and\(created_at\.eq\."([^"]+)",id\.gt\.([0-9a-f-]+)\)\)$/);
         assert.ok(m, `커서 필터 모양: ${or}`);
         list = list.filter((r) => r.created_at > m[1] || (r.created_at === m[2] && r.id > m[3]));
-      } else {
-        const since = q.get('created_at').replace(/^gt\./, '');
-        list = list.filter((r) => new Date(r.created_at) > new Date(since));
+      }
+      // created_at 조건은 여러 번 올 수 있다(PostgREST는 AND) — gt.·lte.만 쓴다
+      for (const c of q.getAll('created_at')) {
+        const [, op, v] = c.match(/^(gt|lte)\.(.+)$/) ?? assert.fail(`created_at 조건 모양: ${c}`);
+        list = list.filter((r) => (op === 'gt' ? new Date(r.created_at) > new Date(v) : new Date(r.created_at) <= new Date(v)));
       }
       list = list.slice(0, Number(q.get('limit')));
       // PostgREST처럼 select한 칸만 돌려준다 — 이메일을 고르면 이메일이 실려 온다
@@ -123,7 +125,7 @@ test('메시지 속 토큰·키·접속 문자열은 가린다(500자 자르기 
   const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2lnbmF0dXJlLXBhcnQ';
   const msg = [
     `토큰 ${jwt}`, 'anthropic sk-ant-api03-ABCDEFGHIJKLMNOP', 'openai sk-proj-1234567890abcdef',
-    'Authorization: Bearer abc.def.ghi', 'resend re_AbCdEf123456', 'gh ghp_AAAABBBBCCCCDDDD',
+    'Authorization: Bearer abc.def.ghi', 'resend re_AbCdEf123456', 'split sk-\u0007SPLITSPLIT9999','gh ghp_AAAABBBBCCCCDDDD',
     '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----','db postgresql://postgres:pw@db.example.supabase.co:5432/postgres',
     'x'.repeat(520) + ' eyJtYWlsYm94IjoxfQ.tail',
   ].join('\n');
@@ -131,7 +133,7 @@ test('메시지 속 토큰·키·접속 문자열은 가린다(500자 자르기 
   const c = capture();
   await runDigest({ url: sb.url, key: KEY, statePath: join(tmp(), 's.json'), now: NOW, write: c.write, warn: c.warn });
   await sb.close();
-  for (const leak of [jwt, 'sk-ant-api03', 'sk-proj-1234', 'abc.def.ghi', 'postgresql://', 'postgres:pw', 'eyJ', 're_AbCdEf', 'ghp_AAAA', 'MIIEvQIBADANBgkq'])assert.ok(!c.out.includes(leak), `새어 나감: ${leak}`);
+  for (const leak of [jwt, 'sk-ant-api03', 'sk-proj-1234', 'abc.def.ghi', 'postgresql://', 'postgres:pw', 'eyJ', 're_AbCdEf', 'ghp_AAAA', 'MIIEvQIBADANBgkq', 'SPLITSPLIT']) assert.ok(!c.out.includes(leak), `새어 나감: ${leak}`);
   assert.match(c.out, /\[가림:JWT\]/); assert.match(c.out, /Bearer \[가림\]/); assert.match(c.out, /\[가림:접속문자열\]/);
   assert.match(c.out, /자 중 500자\)/);
   assert.ok(!c.out.includes(KEY) && !c.err.includes(KEY), '서비스 키는 어디에도 출력하지 않는다');
@@ -156,6 +158,36 @@ test('커서 파일 손상 → 지우지 않고 옆으로 옮긴 뒤 되돌아�
   await runDigest({ url: sb.url, key: KEY, statePath, now: NOW, write: c2.write, warn: c2.warn });
   assert.match(c2.err, /커서 파일 손상/);
   await sb.close();
+});
+
+test('미래로 위조한 created_at(2999년) 행이 커서를 미래로 끌고 가지 않는다 — 이후 쪽지도 계속 나온다', async () => {
+  const soon = new Date(NOW + 2 * 60_000).toISOString(); // 시계 차이 범위(지금~+5분)
+  const rows = [row(1), row(5, { created_at: '2999-01-01T00:00:00+00:00', id: '00000000-0000-4000-8000-0000000000ff' }), row(6, { created_at: soon })];
+  const { sb, seen } = await fake(rows);
+  const d = tmp(); const statePath = join(d, 'state.json');
+  const c = capture();
+  const r = await runDigest({ url: sb.url, key: KEY, statePath, now: NOW, write: c.write, warn: c.warn });
+  assert.equal(r.status, 0);
+  assert.match(seen[0].created_at, /^lte\./, '조회에 created_at 상한(지금+5분)이 붙는다');
+  assert.doesNotMatch(c.out, /abcd0005/, '2999년 행은 상한에 걸려 고르지 않는다');
+  assert.match(c.out, /ref abcd0001/);
+  assert.match(c.out, /⚠ 지금보다 뒤 시각[^\n]*ref abcd0006/, '시계 차이 범위의 행은 내되 경고를 붙인다');
+  const st = JSON.parse(readFileSync(statePath, 'utf8'));
+  assert.equal(st.id, row(1).id, '커서는 지금 이하 시각의 마지막 행까지만');
+  assert.ok(Date.parse(st.created_at) <= NOW);
+
+  // 그 뒤 들어온 정상 쪽지는 다음 실행에 나온다
+  rows.push(row(7, { created_at: new Date(NOW + 10 * 60_000).toISOString() }));
+  const c2 = capture();
+  await runDigest({ url: sb.url, key: KEY, statePath, now: NOW + 15 * 60_000, write: c2.write, warn: c2.warn });
+  assert.match(c2.out, /ref abcd0007/); assert.doesNotMatch(c2.out, /abcd0005/);
+  assert.ok(Date.parse(JSON.parse(readFileSync(statePath, 'utf8')).created_at) <= NOW + 15 * 60_000);
+
+  // 고치기 전 판이 미래 시각을 커서로 저장해 둔 경우 — 손상으로 보고 되돌아보기 창부터 다시
+  writeFileSync(statePath, JSON.stringify({ created_at: '2999-01-01T00:00:00+00:00', id: rows[1].id }));
+  const c3 = capture();
+  const r3 = await runDigest({ url: sb.url, key: KEY, statePath, now: NOW + 15 * 60_000, write: c3.write, warn: c3.warn });
+  assert.equal(r3.status, 0); assert.match(c3.err, /커서 파일 손상/); assert.match(c3.out, /ref abcd0007/);
 });
 
 test('조회 실패 → 종료 1, 커서·출력 그대로(다음 주기에 다시 본다)', async () => {

@@ -21,6 +21,9 @@ import { fileURLToPath } from 'node:url';
 
 export const DEFAULT_STATE = join(homedir(), '.argo-ops', 'feedback-digest.json');
 const LOOKBACK_MS = 7 * 24 * 60 * 60_000;
+// created_at은 사용자 insert가 직접 넣을 수 있다(feedback_insert 정책은 user_id만 묶는다). 2999년 행 하나가 커서가 되면
+// 그 뒤 쪽지를 영영 못 보므로, 조회는 지금+5분까지만 하고 지금보다 뒤 시각의 행으로는 커서를 옮기지 않는다(PR #1185 검수).
+const FUTURE_SLACK_MS = 5 * 60_000;
 const MSG_MAX = 500;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -65,8 +68,9 @@ export function summarize(row, ent, now = Date.now()) {
   const ref = typeof row.meta?.ref === 'string' && /^[0-9a-f]{1,16}$/i.test(row.meta.ref) ? row.meta.ref : '없음';
   const uid = typeof row.user_id === 'string' ? row.user_id.replace(/[^0-9a-f-]/gi, '').slice(0, 8) || '없음' : '없음';
   const plan = planLabel(ent, now);
-  const head = [`[Argo 피드백] ${kst(row.created_at)}`, `ref ${ref}`, `사용자 ${uid}`, ...(plan ? [`요금제 ${plan}`] : [])].join(' · ');
-  const body = stripControl(redactSecrets(row.message)).trim();
+  const future = new Date(row.created_at).getTime() > now;
+  const head = [`[Argo 피드백] ${kst(row.created_at)}${future ? ' ⚠ 지금보다 뒤 시각(created_at 확인)' : ''}`,`ref ${ref}`, `사용자 ${uid}`, ...(plan ? [`요금제 ${plan}`] : [])].join(' · ');
+  const body = redactSecrets(stripControl(String(row.message ?? ''))).trim(); // 제어 문자를 먼저 빼야 토큰 사이에 끼운 문자로 가림을 피하지 못한다
   const cut = body.length > MSG_MAX ? `${body.slice(0, MSG_MAX)}… (${body.length}자 중 ${MSG_MAX}자)` : body;
   const id = UUID.test(String(row.id)) ? row.id : '?';
   return `${head}\n위치: feedback 표 id=${id}\n내용: ${cut.replace(/\n/g, '\n      ')}\n`;
@@ -93,15 +97,16 @@ function writeStateAtomic(path, cursor) {
   renameSync(tmp, path);
 }
 
-function feedbackQuery(cursor, sinceIso, limit) {
+function feedbackQuery(cursor, sinceIso, limit, capIso) {
   const q = new URLSearchParams();
   q.set('select', 'id,user_id,message,meta,created_at'); // email은 고르지 않는다
   if (cursor) {
     // (created_at, id) 키셋 — 같은 시각 행이 여럿이어도 빠지거나 겹치지 않는다
     q.set('or', `(created_at.gt."${cursor.created_at}",and(created_at.eq."${cursor.created_at}",id.gt.${cursor.id}))`);
   } else {
-    q.set('created_at', `gt.${sinceIso}`);
+    q.append('created_at', `gt.${sinceIso}`);
   }
+  q.append('created_at', `lte.${capIso}`); // 상한 — 미래로 위조한 created_at 행은 고르지 않는다(같은 칸 조건 반복은 PostgREST에서 AND)
   q.set('order', 'created_at.asc,id.asc');
   q.set('limit', String(limit));
   return q.toString();
@@ -135,6 +140,8 @@ export async function runDigest({
   const lim = Math.min(200, Math.max(1, Number.parseInt(limit, 10) || 50));
   const st = readState(statePath);
   let cursor = st.cursor ?? null;
+  // 고치기 전 판이 이미 미래 시각을 커서로 저장했을 수 있다 — 그런 커서는 손상으로 보고 같은 복구 경로를 탄다
+  if (cursor && new Date(cursor.created_at).getTime() > now + FUTURE_SLACK_MS) { st.corrupt = true; cursor = null; }
   if (st.corrupt) {
     // 손상된 커서는 지우지 않고 옆으로 옮긴다(원인 확인용). 되돌아보기 창부터 다시 본다 — 놓치는 것보다 겹치는 쪽이 안전하다.
     const aside = `${statePath}.corrupt-${new Date(now).toISOString().replace(/[:.]/g, '-')}`;
@@ -155,7 +162,7 @@ export async function runDigest({
   const base = url.replace(/\/+$/, '');
   let rows;
   try {
-    rows = await getJson(fetchImpl, `${base}/rest/v1/feedback?${feedbackQuery(cursor, sinceIso, lim)}`, key);
+    rows = await getJson(fetchImpl, `${base}/rest/v1/feedback?${feedbackQuery(cursor, sinceIso, lim, new Date(now + FUTURE_SLACK_MS).toISOString())}`, key);
   } catch (e) {
     warn(`feedback 조회 실패: ${e.message} — 커서 그대로, 다음 주기에 다시 봅니다\n`);
     return { status: 1, count: 0 };
@@ -184,8 +191,12 @@ export async function runDigest({
     warn(`요약 출력 실패(${e.code ?? e.message}) — 커서 그대로, 다음 주기에 다시 냅니다\n`);
     return { status: 1, count: 0 };
   }
-  const last = rows[rows.length - 1];
-  if (typeof last?.created_at === 'string' && UUID.test(String(last.id))) {
+  // 커서는 지금 이하 시각의 마지막 행까지만 — 지금~지금+5분(시계 차이) 행은 낸 뒤 다음 실행에 한 번 더 나올 수 있다(놓치지 않는 쪽)
+  const settled = rows.filter((r) => new Date(r.created_at).getTime() <= now);
+  const last = settled[settled.length - 1];
+  if (!last) {
+    warn('이번 행이 모두 지금보다 뒤 시각이라 커서를 옮기지 않았습니다\n');
+  } else if (typeof last?.created_at === 'string' && UUID.test(String(last.id))) {
     try { writeStateAtomic(statePath, { created_at: last.created_at, id: last.id }); } catch (e) {
       warn(`커서 저장 실패(${e.code ?? e.message}): ${statePath} — 다음 실행에서 같은 요약이 다시 나옵니다. 폴더 권한·디스크를 확인하세요\n`);
       return { status: 1, count: rows.length, more, lines };
