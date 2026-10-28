@@ -2259,6 +2259,26 @@ function UpdateCard() {
           {installError.raw && <span className="mono" style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', overflowWrap: 'anywhere' }}>{installError.raw}</span>}
         </p>
       ) : phase === 'error' ? <p style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.update.error')}</p> : null}
+      <DiagnosticLogsRow />
+    </div>
+  );
+}
+
+/** 진단 로그 폴더 열기 — 데스크톱 앱 카드 안에서만 그린다(웹 :3001에는 로그 파일이 없다). 경로는 Rust가 정한다(diag_log.rs) */
+function DiagnosticLogsRow() {
+  const { t } = useLang();
+  const [err, setErr] = useState('');
+  const open = () => {
+    setErr('');
+    Promise.resolve().then(() => window.__TAURI_INTERNALS__.invoke('open_diagnostic_logs'))
+      .catch(() => setErr(t('settings.diag.openErr')));
+  };
+  return (
+    <div data-diag-logs style={{ borderTop: '1px solid var(--border-soft)', marginTop: 4, paddingTop: 12, display: 'grid', gap: 8 }}>
+      <span className="microlabel">{t('settings.diag.label')}</span>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.diag.desc')}</p>
+      <button type="button" className="btn sm" onClick={open} style={{ justifySelf: 'start' }}>{t('settings.diag.open')}</button>
+      {err && <p role="alert" style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
     </div>
   );
 }
