@@ -14,7 +14,7 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
-import { msgrGetLink, msgrPausedView, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup, pauseSoon, tabReturnDue } from './msgr-card.mjs';
+import { msgrGetLink, msgrPausedView, linkStatusView, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup, pauseSoon, tabReturnDue } from './msgr-card.mjs';
 import { keepChoices, togglePick, pickReady, hereSlugs, sameAsActive, FREE_AGENT_LIMIT } from './keep-choices.mjs'; // 무료 계정이 유지할 에이전트를 고른다(2026-10-12 제보)
 import MsgrArchiveSection from './msgr-archive-section';
 import { waitlistArchiveLine } from './msgr-archive-view.mjs'; // 출시 알림 카드의 '옮겨진 메신저 기록' 한 줄 // 메신저 기록 옮기기 진행·완료·다시 받기(0.1.113)
@@ -208,7 +208,7 @@ function Settings({ params }) {
       {tab === 'connections' && (
       <div className="cardcols" data-tab-pane="connections">
       <div className="cardrow"><NotifyChannelsCard ws={ws} showMsgr={pv.showMsgrNotify} /></div>
-      <div className="cardrow">{pv.msgrCard === 'pending' ? null : pv.msgrCard === 'v2' ? <MsgrV2Card archive={msgrArchive} /> : pv.msgrCard === 'waitlist' ? <MsgrWaitlistCard archive={msgrArchive} /> : <MsgrCard ws={ws} agents={data?.agents ?? []} />}</div>
+      <div className="cardrow">{pv.msgrCard === 'pending' ? null : pv.msgrCard === 'v2' ? <MsgrV2Card ws={ws} archive={msgrArchive} /> : pv.msgrCard === 'waitlist' ? <MsgrWaitlistCard archive={msgrArchive} /> : <MsgrCard ws={ws} agents={data?.agents ?? []} />}</div>
       <div className="cardrow">
       <ConnectionCard ws={ws} kind="telegram" title={t('activity.telegram')}
         help={t('settings.conn.tgHelp')}
@@ -933,14 +933,33 @@ function MsgrWaitlistCard({ archive = null }) {
 
 /** 새 메신저 연결(agent-link, 옛 브리지 꺼짐 — 0.1.115부터 기본)일 때 'Argo 메신저 연결' 카드 자리 — 옛 브리지의 조직 등록·응답 상태 대신
     새 메신저에서 이 컴퓨터로 바로 연결된다는 안내와 '메신저 받기' 하나(2026-10-28 제보, msgrPausedView 'v2'). */
-function MsgrV2Card({ archive = null }) {
+function MsgrV2Card({ ws, archive = null }) {
   const { t } = useLang();
   const link = msgrGetLink(false);
   const line = waitlistArchiveLine(archive); // 옮겨진 메신저 기록 한 줄 — 출시 알림 카드와 같은 자리(보관 폴더를 다시 찾을 곳)
   const openFolder = () => import('@tauri-apps/plugin-opener').then((m) => m.revealItemInDir(`${line.dir}/README.md`)).catch(() => {});
+  // 연결부의 실제 상태(기기 폐기·러너 0개·무료 쉼 — 2026-10-28 운영 제보). 정상은 제목 줄 표지만, 문제일 때만 안내 한 줄 + 단추 하나(MsgrCard 응답 상태 칸과 같은 모양)
+  const lv = linkStatusView(archive?.link);
+  const dot = lv?.tone === 'ok' ? 'var(--ok)' : lv?.tone === 'warn' ? 'var(--warn)' : 'var(--border)';
+  const actionBtn = lv?.action === 'login' ? <Link className="btn sm" href="/login">{t('home.signIn')}</Link>
+    : lv?.action === 'runners' ? <Link className="btn sm" href={`/c/${ws}/settings?tab=ai`}>{t('settings.msgr.link.toRunners')}</Link>
+      : lv?.action === 'update' ? <Link className="btn sm" href={`/c/${ws}/settings?tab=devices#settings-update`}>{t('settings.update.check')}</Link>
+        : null;
   return (
     <div className="card msgr-v2" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <span className="card-title">{t('settings.msgr.title')}</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <span className="card-title" style={{ minWidth: 0 }}>{t('settings.msgr.title')}</span>
+        {lv && <span className="chip msgr-link-chip" data-state={archive.link.state}><span className="dot" style={{ background: dot }} />{t(lv.chip)}</span>}
+      </div>
+      {lv?.line && (
+        <section className="msgr-runtime msgr-link-state" aria-live="polite">
+          <div>
+            <span className="microlabel">{t('settings.msgr.link.title')}</span>
+            <p>{t(lv.line)}</p>
+          </div>
+          {actionBtn}
+        </section>
+      )}
       <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.v2Line')}</p>
       <div><a className="btn sm" href={link.href} target="_blank" rel="noopener noreferrer">{t(link.labelKey)}</a></div>
       {line && <div className="msgr-archive-line" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--fg-2)' }}>

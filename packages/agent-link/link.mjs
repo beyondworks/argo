@@ -14,6 +14,7 @@
 //   canAccept(offer) → boolean                             // 이 기기에 러너가 있어 받을 수 있나(받을 수 없으면 accept하지 않는다)
 //   runTurn(offer, ctx) → Promise<{ text, files?, handoffs?, usage? }>
 //   onEvent?(name, detail)                                 // 로그·화면용(update_required·device_invalid·paused·resumed·lease_lost 등) + connected((재)접속)·scope_changed(agent.scope 빠짐 알림)
+//                                                          // + offer_skipped({ work, agent, reason })·work_failed({ work, agent, code }) — 일을 받지 않거나 오류로 끝낸 이유(글 내용 없음)
 // }
 // ctx(runTurn에 넘기는 것) = { signal, tier, progress(stage, note), requestApproval(req), effect(key, kind, fn), upload(name, bytes, mime) }
 //
@@ -137,10 +138,10 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
       ev('envelope_rejected', { code: chk.code, type: env.type });
       return;
     }
-    if (env.device && env.device !== device) return; // 다른 기기에 간 봉투
+    if (env.device && env.device !== device) { if (env.type === 'work.offer') ev('offer_skipped', { work: env.work, agent: env.agent, reason: 'other_device' }); return; } // 다른 기기에 간 봉투
     if (env.type === 'agent.scope') { ev('scope_changed', {}); return; } // 빠짐 알림(일 없는 봉투) — 본체가 msgr2_agent_rooms로 다시 확인한다(20261022180000)
     // 이 본체에 없는 에이전트 — 받은 봉투 목록에서 뺀다: 대응표를 아직 못 받은 본체(중단 중 부팅)가 나중에 따라잡기로 다시 받을 수 있게
-    if (agentIds && !agentIds.has(env.agent)) { if (env.id) seen.delete(env.id); return; }
+    if (agentIds && !agentIds.has(env.agent)) { if (env.id) seen.delete(env.id); if (env.type === 'work.offer') ev('offer_skipped', { work: env.work, agent: env.agent, reason: 'agent_not_mapped' }); return; }
     const w = works.get(env.work);
     if (env.type === 'work.offer') {
       if (w) return;
@@ -167,11 +168,13 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
   }
 
   async function startWork(offer) {
-    if (paused) return;
-    if (Date.parse(offer.data.expires_at) <= clock.now()) return;
+    const skip = (reason) => ev('offer_skipped', { work: offer.work, agent: offer.agent, reason });
+    if (paused) return skip('paused');
+    if (Date.parse(offer.data.expires_at) <= clock.now()) return skip('expired');
     let can = false;
     try { can = await host.canAccept(offer); } catch { can = false; }
-    if (!can || works.has(offer.work)) return; // 받을 수 없으면 accept하지 않는다 — 다른 기기가 받을 수 있다
+    if (works.has(offer.work)) return; // 이미 맡은 일(방송·따라잡기 중복)
+    if (!can) return skip('cannot_accept'); // 받을 수 없으면 accept하지 않는다 — 다른 기기가 받을 수 있다
     const w = { offer, seq: 0, leaseGen: null, abort: new AbortController(), approvals: new Map(), renewTimer: null, done: false };
     works.set(offer.work, w);
     let acc;
@@ -275,6 +278,7 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
       if (w.cancelled || w.abort.signal.aborted || stopped) return;
       if (err || !out) {
         const code = err?.code && typeof err.code === 'string' && /^[a-z][a-z0-9_]*$/.test(err.code) ? err.code : 'internal';
+        ev('work_failed', { work: w.offer.work, agent: w.offer.agent, code }); // 원인 코드만(오류 문구에는 사용자 글이 섞일 수 있다)
         await send(envelope(w, 'work.error', { code, runner: err?.runner ?? null, ...(err?.retry_at ? { retry_at: err.retry_at } : {}) }));
         return;
       }

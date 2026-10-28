@@ -37,12 +37,12 @@ test('배선 — 부모가 연결 탭에서 스위치를 한 번 읽고, 알림 
   const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
   assert.match(page, /if \(tab !== 'connections' \|\| msgrPaused !== null\) return;[\s\S]{0,200}api\(`\/api\/companies\/\$\{ws\}\/msgr-archive`\)/, '연결 탭에서 모를 때만 한 번');
   assert.match(page, /<NotifyChannelsCard ws=\{ws\} showMsgr=\{pv\.showMsgrNotify\} \/>/);
-  assert.match(page, /\{pv\.msgrCard === 'pending' \? null : pv\.msgrCard === 'v2' \? <MsgrV2Card archive=\{msgrArchive\} \/> : pv\.msgrCard === 'waitlist' \? <MsgrWaitlistCard archive=\{msgrArchive\} \/> : <MsgrCard ws=\{ws\} agents=\{data\?\.agents \?\? \[\]\} \/>\}/);
+  assert.match(page, /\{pv\.msgrCard === 'pending' \? null : pv\.msgrCard === 'v2' \? <MsgrV2Card ws=\{ws\} archive=\{msgrArchive\} \/> : pv\.msgrCard === 'waitlist' \? <MsgrWaitlistCard archive=\{msgrArchive\} \/> : <MsgrCard ws=\{ws\} agents=\{data\?\.agents \?\? \[\]\} \/>\}/);
   assert.match(page, /useState\(null\); \/\/ null = 아직 모름/, '처음은 모름(null)');
   assert.match(page, /msgrPausedView\(msgrPaused, \{ known: msgrPaused !== null, v2: msgrArchive\?\.v2 === true \}\)/, '새 메신저 연결이면 v2 카드(2026-10-28 제보)');
   assert.match(page, /\.catch\(\(\) => \{ if \(live\) setMsgrPaused\(false\); \}\)/, '조회 실패면 main 카드');
   assert.match(page, /\.\.\.\(showMsgr \? \[\{ kind: 'msgr'/);
-  const card = page.slice(page.indexOf('function MsgrWaitlistCard('), page.indexOf('function MsgrCard('));
+  const card = page.slice(page.indexOf('function MsgrWaitlistCard('), page.indexOf('function MsgrV2Card(')); // 출시 알림 카드 본문만(바로 뒤 v2 카드는 연결 상태 표지를 가진다 — 2026-10-28)
   assert.match(card, /msgrGetLink\(true\)/);
   assert.doesNotMatch(card, /MsgrArchiveSection|runtime|chip|downloadHelp/, '출시 알림 카드에는 설명·칩·응답 상태·이관 영역이 없다');
   const notice = await readFile(new URL('../app/c/[ws]/msgr-archive-notice.jsx', import.meta.url), 'utf8');
@@ -57,7 +57,7 @@ test('출시 알림 카드의 \'옮겨진 메신저 기록 · 폴더 열기\' �
   assert.equal(waitlistArchiveLine({ signedIn: true, status: 'done', dir: null }), null);
   assert.equal(waitlistArchiveLine(null), null);
   const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
-  const card = page.slice(page.indexOf('function MsgrWaitlistCard('), page.indexOf('function MsgrCard('));
+  const card = page.slice(page.indexOf('function MsgrWaitlistCard('), page.indexOf('function MsgrV2Card(')); // 출시 알림 카드 본문만(바로 뒤 v2 카드는 연결 상태 표지를 가진다 — 2026-10-28)
   assert.match(card, /waitlistArchiveLine\(archive\)/, '배선(보조)');
   assert.match(card, /settings\.msgrArchive\.open/);
   assert.doesNotMatch(card, /settings\.msgrArchive\.(retry|start|running)|MsgrArchiveSection/, '진행률·지금 옮기기·다시 받기 없음');
