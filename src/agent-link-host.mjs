@@ -464,6 +464,7 @@ export function createAgentLinkHost(deps) {
   }
   // 등록한 러너(서버 msgr2_devices.runners와 같은 값) · 감지 중(상한을 넘겨 늦게 끝나기를 기다림) · 다음 러너 재확인 시각
   let regRunners = null, detecting = false, nextRunnerCheck = Infinity, runnerChecking = false;
+  let emptyOnce = false; // 재확인에서 러너가 0개로 한 번 읽혔다 — 다음 재확인에서도 0이면 그때 빈 목록으로 줄인다(설정 파일을 쓰는 도중 읽힘 등 일시 0개, 검수 Nit 3)
   // 다시 로그인이 필요해진 때의 로컬 세션 표지 — 표지가 바뀌면(새 로그인) 재시도 간격을 기다리지 않고 바로 다시 붙는다
   let reauthKey;
   /** 링크가 열린 동안의 상태: 중단 → paused, 러너 있음 → ok, 감지 중 → starting, 다 봤는데 0개 → no_runners */
@@ -779,7 +780,11 @@ export function createAgentLinkHost(deps) {
     if (link !== l) return; // 그사이 링크가 내려갔다(폐기·로그아웃)
     const device = reg?.data?.device_id;
     if (!reg?.error && device) {
-      if (device !== currentDevice) { link = null; l.stop(); return boot().catch((e) => { log('boot failed', e.message); retryLater(); }); } // 다른 세션의 기기(다시 로그인) — 새로 연다
+      if (device !== currentDevice) { // 다른 세션의 기기(다시 로그인) — 새로 연다
+        link = null; l.stop();
+        if (booting) return retryLater(); // 시작 중(목록 보내기 대기)에 끝난 늦은 감지 — 그 boot는 내려간 링크를 다시 열지 않는다. 재시도로 연다(검수 Nit 1)
+        return boot().catch((e) => { log('boot failed', e.message); retryLater(); });
+      }
       regRunners = ids;
       log('runners updated', JSON.stringify({ runners: ids.length, why }));
       return liveStatus();
@@ -798,7 +803,10 @@ export function createAgentLinkHost(deps) {
     runnerChecking = true;
     try {
       const det = await detectRunnerState(() => deps.detectRunners(currentUid), { timeoutMs: deps.detectTimeoutMs ?? 3000 });
-      if (det.complete) await applyRunners(det.runners, 'recheck');
+      if (!det.complete) return;
+      if (!det.runners.length && regRunners?.length && !emptyOnce) { emptyOnce = true; return; } // 있던 러너가 처음 0개로 읽힘 — 한 번 더 본다
+      emptyOnce = false;
+      await applyRunners(det.runners, 'recheck');
     } finally { runnerChecking = false; }
   }
 
@@ -920,7 +928,7 @@ export async function startAgentLinkHost() {
       const m = { ...(await detectRunners().catch(() => ({}))) };
       for (const c of await listCompanies().catch(() => [])) {
         if (c.ownerId !== uid) continue;
-        const r = await resolveRunner(c.id, null).catch(() => null);
+        const r = await resolveRunner(c.id, null, { forPick: true }).catch(() => null); // forPick — 표시용 월 사용량(usage.jsonl 전체 읽기)을 건너뛴다(검수 Nit 2)
         if (r?.available && r.runner) m[r.runner] = { installed: true, authed: true };
       }
       return m;

@@ -16,7 +16,7 @@ const DEVICE = 'c4d5e6f7-8091-4a2b-9c3d-4e5f6a7b8c03';
 const SECRETISH = /eyJ|sk-|re_|postgresql:\/\/|refresh|access_token|@/;
 
 /** register(args, n) → 서버 답. detect() → 러너 맵(시험이 늦게 풀 수 있다). sessionKey() → 로컬 세션 표지 */
-async function setup({ register, detect, sessionKey, agents = [{ ws: 'co-1', slug: 'pm', name: 'PM', role: '기획' }], getSession, chat } = {}) {
+async function setup({ register, detect, sessionKey, agents = [{ ws: 'co-1', slug: 'pm', name: 'PM', role: '기획' }], getSession, chat, listOwnedAgents } = {}) {
   let t = Date.parse('2026-10-28T06:00:00Z');
   const timers = new Set();
   const clock = { now: () => t, setTimeout: (fn, ms) => { const h = { fn, at: t + ms }; timers.add(h); return h; }, clearTimeout: (h) => timers.delete(h), sleep: async (ms) => { t += ms; },
@@ -45,7 +45,7 @@ async function setup({ register, detect, sessionKey, agents = [{ ws: 'co-1', slu
   const host = createAgentLinkHost({
     getSession: getSession ?? (async () => ({ client: {}, uid: 'u1' })),
     sessionKey,
-    listOwnedAgents: async () => agents,
+    listOwnedAgents: listOwnedAgents ?? (async () => agents),
     detectRunners: detect,
     chat: chat ?? (async () => ({ reply: '네' })),
     onNotify: () => () => {},
@@ -253,5 +253,49 @@ test('다시 로그인 대기 중 재시도 boot가 진행 중일 때 세션 표
   gate(); await until(() => last()?.state === 'ok'); await flush();
   assert.equal(server.subs.get('v2:w:u1')?.size, 1, 'w:<uid> 구독 하나');
   assert.equal(regs.length, 2, '등록은 실패 1 + 성공 1');
+  host.stop();
+});
+
+test('재확인에서 있던 러너가 한 번 0개로 읽혀도 바로 빈 목록으로 줄이지 않고, 다음 재확인에서도 0개일 때만 줄인다(검수 Nit 3)', async () => {
+  let m = { claude: { installed: true, authed: true } };
+  const { host, regs, last, clock } = await setup({ detect: async () => m });
+  host.start();
+  await until(() => last()?.state === 'ok');
+  assert.equal(regs.length, 1);
+  m = {}; // 설정 파일을 쓰는 도중 등 — 일시 0개
+  for (let i = 0; i < RUNNER_RECHECK_MS / 10_000; i++) { await clock.advance(10_000); await host.resync(); }
+  await flush();
+  assert.equal(regs.length, 1, '첫 0개 읽힘은 등록하지 않는다');
+  assert.equal(last().state, 'ok');
+  m = { claude: { installed: true, authed: true } }; // 다음 재확인에서 돌아옴 — 등록 0
+  for (let i = 0; i < RUNNER_RECHECK_MS / 10_000; i++) { await clock.advance(10_000); await host.resync(); }
+  await flush();
+  assert.equal(regs.length, 1, '일시 0개였다 돌아오면 요청 0');
+  m = {}; // 이번엔 두 번 연달아 0개 — 그때 줄인다
+  for (let i = 0; i < 2 * RUNNER_RECHECK_MS / 10_000; i++) { await clock.advance(10_000); await host.resync(); }
+  await until(() => regs.length >= 2);
+  assert.deepEqual(regs[1].p_runners, []);
+  await until(() => last()?.state === 'no_runners');
+  host.stop();
+});
+
+test('시작 중(목록 보내기 대기)에 늦은 감지가 끝나고 그사이 다시 로그인해 기기 id가 바뀌어도, 재시도로 다시 연다(검수 Nit 1)', async () => {
+  let release, gate = null, lists = 0;
+  const DEVICE_B = 'd4d5e6f7-8091-4a2b-9c3d-4e5f6a7b8c04';
+  const { host, regs, last, clock } = await setup({
+    detect: () => new Promise((r) => { release = r; }),
+    register: (args, n) => ({ data: { device_id: n === 1 ? DEVICE : DEVICE_B }, error: null }),
+    // 첫 목록 읽기(시작 중 resync)는 풀어 줄 때까지 기다린다
+    listOwnedAgents: async () => { lists++; if (lists === 1) await new Promise((r) => { gate = r; }); return [{ ws: 'co-1', slug: 'pm', name: 'PM', role: '기획' }]; },
+  });
+  host.start();
+  await until(() => !!gate && !!release);
+  release({ claude: { installed: true, authed: true } }); // 늦은 감지 → 다시 등록 → 다른 기기 id(다시 로그인)
+  await until(() => regs.length >= 2); await flush();
+  gate(); await flush();
+  assert.equal(host.link, null, '그 시작은 내려간 링크를 다시 열지 않는다');
+  await clock.advance(60_000); await flush();
+  await until(() => !!host.link && last()?.state === 'ok');
+  assert.ok(host.link, '재시도가 다시 연다');
   host.stop();
 });
