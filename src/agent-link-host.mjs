@@ -719,8 +719,15 @@ export function createAgentLinkHost(deps) {
     timer = clock.setTimeout(() => { timer = null; boot().catch((e) => log('boot failed', e.message)); }, ms);
   }
 
+  // 시작은 한 번에 하나만(검수 I-1): 재시도 타이머의 boot가 세션·등록을 기다리는 사이 resync(다시 로그인 감지)가 boot를 또 부르면
+  // 링크가 둘 생기고 앞의 것은 닫히지 않았다(구독 2개·같은 일 경쟁). 돌고 있으면 그 boot에 맡긴다
+  let booting = false;
   async function boot() {
-    if (stopped || link || proBlocked) return;
+    if (stopped || link || proBlocked || booting) return;
+    booting = true;
+    try { return await bootOnce(); } finally { booting = false; }
+  }
+  async function bootOnce() {
     const s = await deps.getSession();
     if (!s) { if (status.state !== 'reauth') setStatus({ state: 'signed_out', code: null, runners: [], agents: 0 }); return retryLater(); }
     if (status.state !== 'reauth') setStatus({ state: 'starting', code: null });
@@ -750,7 +757,11 @@ export function createAgentLinkHost(deps) {
     if (detecting) det.late.then((ids) => { detecting = false; if (ids) applyRunners(ids, 'late'); else liveStatus(); });
     lastResync = clock.now();
     currentUid = s.uid; currentDevice = device;
-    link = createLink({ transport, host, uid: s.uid, device, agentIds, clock: deps.linkClock });
+    if (stopped || link || proBlocked) return; // 기다리는 사이 멈췄거나 다른 경로가 이미 열었다
+    // 이 링크가 지금 링크가 아니게 된 뒤(내려간 옛 링크)에 늦게 온 링크 상태 이벤트는 새 링크를 끄지 않게 버린다(검수 N-2)
+    let mine = null;
+    const linkHost = { ...host, onEvent: (name, detail) => { if (mine && link !== mine && ['device_invalid', 'update_required', 'pro_required', 'paused', 'resumed'].includes(name)) return; host.onEvent(name, detail); } };
+    link = mine = createLink({ transport, host: linkHost, uid: s.uid, device, agentIds, clock: deps.linkClock });
     // 목록을 못 보내도(중단 스위치·일시 오류 6번) 링크는 연다. 예전에는 여기서 던져 link만 남고 start()가 안 불려, retryLater의 boot가 `link`에서 빠져
     // 해제 뒤에도 구독 0이었다(#1091 검수). 목록은 host.resync가 1분마다 다시 보낸다(대응표가 비어 있는 동안 offer는 받지 않는다)
     await resync().catch((e) => { catchUpAfterSync = true; syncFails++; log('agent sync failed', e.code ?? e.message); });

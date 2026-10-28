@@ -234,3 +234,24 @@ test('설정 메신저 칸(linkStatusView): 정상은 표지만, 폐기·로그�
   const route = await readFile(new URL('../app/api/companies/[ws]/msgr-archive/route.js', import.meta.url), 'utf8');
   assert.match(route, /const link = v2 \? linkStatus\(\) : null;/);
 });
+
+test('다시 로그인 대기 중 재시도 boot가 진행 중일 때 세션 표지가 바뀌어도 링크·구독은 하나(검수 I-1)', async () => {
+  let key = 'old', gate = null, sessions = 0;
+  const { host, server, last, clock, regs } = await setup({
+    sessionKey: () => key,
+    detect: async () => ({ claude: { installed: true, authed: true } }),
+    // 두 번째 getSession(재시도 timer boot)은 풀어 줄 때까지 기다린다
+    getSession: async () => { sessions++; if (sessions === 2) await new Promise((r) => { gate = r; }); return { client: {}, uid: 'u1' }; },
+    register: (args, n) => (n === 1 ? { data: null, error: { code: '42501', status: 403, message: 'device_revoked' } } : { data: { device_id: DEVICE }, error: null }),
+  });
+  host.start();
+  await until(() => last()?.state === 'reauth');
+  clock.advance(60_000); // 재시도 타이머 → boot가 getSession에서 기다린다(끝을 기다리지 않는다)
+  await until(() => !!gate);
+  key = 'new';
+  await host.resync(); await flush(); // 다시 로그인 감지 → boot를 또 부르지만 진행 중인 boot에 맡긴다
+  gate(); await until(() => last()?.state === 'ok'); await flush();
+  assert.equal(server.subs.get('v2:w:u1')?.size, 1, 'w:<uid> 구독 하나');
+  assert.equal(regs.length, 2, '등록은 실패 1 + 성공 1');
+  host.stop();
+});
