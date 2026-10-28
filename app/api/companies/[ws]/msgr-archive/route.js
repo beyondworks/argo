@@ -7,17 +7,20 @@ import { loadCompany } from '../../../../../src/workspace.mjs';
 import { pauseState, cachedPause } from '../../../../../src/msgr-archive.mjs';
 import { archiveStatus, startArchive } from '../../../../../src/msgr-archive-run.mjs';
 import { msgrV2Mode } from '../../../../../src/agent-link-flags.mjs';
+import { linkStatus } from '../../../../../src/agent-link-status.mjs';
 
 export async function GET(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
   const v2 = msgrV2Mode(); // 새 메신저 연결만 쓰는 앱 — 설정 카드가 옛 중단 스위치 대신 새 메신저 안내를 보인다(msgrPausedView, 2026-10-28 제보). 요청 0
+  // link = 새 메신저 연결부의 실제 상태(기기 폐기·러너 0개·무료 쉼 등 — 프로세스 메모리, 요청 0). 설정 카드가 '연결됨' 대신 그대로 보인다(2026-10-28 운영 제보)
+  const link = v2 ? linkStatus() : null;
   const c = await sessionClient().catch(() => null);
-  if (!c) return Response.json({ signedIn: false, paused: cachedPause()?.paused === true, status: 'none', v2 });
+  if (!c) return Response.json({ signedIn: false, paused: cachedPause()?.paused === true, status: 'none', v2, link });
   // ?local=1 — 회사 화면 머리의 완료 안내가 쓴다. 스위치는 읽은 값만(RPC 0회) — 앱 시작 확인·설정 화면이 이미 읽는다
   const local = new URL(req.url).searchParams.get('local') === '1';
   const pause = local ? (cachedPause() ?? { paused: false, since: null }) : await pauseState(c.client);
-  return Response.json({ signedIn: true, paused: pause.paused, since: pause.since, v2, ...(await archiveStatus(c.uid, ws)) });
+  return Response.json({ signedIn: true, paused: pause.paused, since: pause.since, v2, link, ...(await archiveStatus(c.uid, ws)) });
 }
 
 export async function POST(req, { params }) {

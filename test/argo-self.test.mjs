@@ -357,7 +357,19 @@ test('상태 구획 — 러너는 키 값을 싣지 않고, 메신저·동기화
   assert.match(runners, /러너 연결/);
   assert.doesNotMatch(runners, /sk-|\*\*\*/, '가려진 키 조각도 싣지 않는다');
   // 기본(0.1.115+) = 새 메신저 연결만 — 옛 브리지 응답 상태('응답을 확인하지 못함')로 읽지 않는다(2026-10-28 제보)
-  assert.match(await call('argo_status', { section: 'messenger' }), /Argo 메신저 응답 상태: 새 Argo 메신저로 연결/);
+  // 연결부의 실제 상태로 답한다(2026-10-28 운영 제보: 메신저 "모든 기기 로그아웃"으로 기기가 폐기돼도 "연결됨"·"에이전트 연결: 예"였다)
+  const { setLinkStatus, resetLinkStatus } = await import('../src/agent-link-status.mjs');
+  try {
+    assert.match(await call('argo_status', { section: 'messenger' }), /Argo 메신저 응답 상태: 새 Argo 메신저 연결이 시작되지 않음.*에이전트 연결: 아니오/, '연결부가 돌지 않으면 연결됨이 아니다');
+    setLinkStatus({ state: 'ok', runners: ['claude'], agents: 3 });
+    assert.match(await call('argo_status', { section: 'messenger' }), /Argo 메신저 응답 상태: 새 Argo 메신저로 연결됨.*에이전트 연결: 예\(3명\)/);
+    setLinkStatus({ state: 'reauth', code: 'device_revoked' });
+    const re = await call('argo_status', { section: 'messenger' });
+    assert.match(re, /메신저 연결이 해제됨.*다시 로그인.*에이전트 연결: 아니오/);
+    assert.doesNotMatch(re, /새 Argo 메신저로 연결됨/);
+    setLinkStatus({ state: 'no_runners', agents: 2 });
+    assert.match(await call('argo_status', { section: 'messenger' }), /AI 실행 도구\(러너\)가 없어.*에이전트 연결: 아니오/);
+  } finally { resetLinkStatus(); }
   const legacyBefore = process.env.ARGO_MSGR_LEGACY;
   process.env.ARGO_MSGR_LEGACY = 'on'; // 옛 브리지를 켠 기기는 종전 판정 그대로
   try { assert.match(await call('argo_status', { section: 'messenger' }), /Argo 메신저 응답 상태: 아직 첫 응답을 기다리는 중/); }

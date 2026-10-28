@@ -133,3 +133,26 @@ export function msgrRuntimeBesideSetup({ st, setupWhy } = {}) {
   const state = st?.runtime?.state;
   return !!st?.setup?.bridge && !!state && state !== 'waiting';
 }
+
+/** 새 메신저 연결(v2) 카드의 연결 상태 한 덩어리 — link = msgr-archive GET의 link(연결부 agent-link-host.mjs의 실제 상태, src/agent-link-status.mjs).
+    2026-10-28 운영 제보: 메신저 앱 "모든 기기 로그아웃"으로 본체 기기가 폐기돼도 화면은 늘 연결된 것처럼 보였다.
+    반환 null = 표지를 그리지 않는다(값 없음·연결부가 돌지 않음 — 종전 카드 그대로). tone = 'ok'|'wait'|'warn'(점 색),
+    chip = 제목 줄 표지 사전 키, line = 문제일 때만 보이는 안내 사전 키(정상이면 null — 연결 상태는 표지만, 규칙집 7-10),
+    action = 'login'(다시 로그인) | 'runners'(AI 연결 탭) | 'update'(앱 업데이트 카드) | null — 단추 하나. */
+export function linkStatusView(link) {
+  const s = link?.state;
+  if (!s || s === 'off') return null;
+  const V = {
+    ok: ['ok', null, null],
+    starting: ['wait', null, null],
+    reauth: ['warn', 'reauth', 'login'],
+    signed_out: ['warn', 'signedOut', 'login'],
+    no_runners: ['warn', 'noRunners', 'runners'],
+    pro_required: ['warn', 'pro', null],
+    update_required: ['warn', 'update', 'update'],
+    paused: ['wait', 'paused', null],
+    error: ['warn', 'error', null],
+  }[s] ?? ['warn', 'error', null];
+  const chipOf = { ok: 'ok', starting: 'starting', reauth: 'reauth', signed_out: 'signedOut', no_runners: 'noRunners', pro_required: 'pro', update_required: 'update', paused: 'paused' }[s] ?? 'error';
+  return { tone: V[0], chip: `settings.msgr.link.chip.${chipOf}`, line: V[1] ? `settings.msgr.link.line.${V[1]}` : null, action: V[2] };
+}

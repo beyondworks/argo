@@ -812,16 +812,28 @@ const RUNTIME_TEXT = {
   login: ['이 기기의 Argo 로그인이 필요', 'this device needs an Argo login'],
   owner: ['이 회사를 만든 계정으로 로그인해야 응답', 'sign in with the account that created this company'],
   company: ['회사 설정을 읽지 못해 시작하지 못함', "couldn't read company settings"],
-  // 새 메신저 연결(agent-link, 옛 브리지 꺼짐 — 0.1.115부터 기본): 옛 브리지 심박은 오지 않으므로 'offline'로 읽지 않는다(2026-10-28 제보)
-  link: ['새 Argo 메신저로 연결 — 이 컴퓨터에서 Argo가 켜져 있으면 메신저에서 에이전트에게 일을 맡길 수 있음', 'connected through the new Argo Messenger — while Argo is running on this computer, agents take work from Messenger'],
+  // 새 메신저 연결(agent-link, 옛 브리지 꺼짐 — 0.1.115부터 기본): 옛 브리지 심박은 오지 않으므로 'offline'로 읽지 않는다(2026-10-28 제보).
+  // 연결부가 겪은 실제 상태(agent-link-status.mjs)로 고른다 — 기기가 폐기돼도 "연결"로 보이던 결함(2026-10-28 운영 제보)
+  link: ['새 Argo 메신저로 연결됨 — 메신저에서 보낸 일을 이 컴퓨터가 받는 중', 'connected through the new Argo Messenger — this computer is taking work from Messenger'],
+  link_off: ['새 Argo 메신저 연결이 시작되지 않음(이 기기에서 메신저 연결을 쓰지 않거나 아직 시작 전)', 'the new Argo Messenger connection is not running on this device (not used here, or not started yet)'],
+  link_starting: ['새 Argo 메신저에 연결하는 중', 'connecting to the new Argo Messenger'],
+  link_reauth: ['이 컴퓨터의 메신저 연결이 해제됨(다른 기기에서 "모든 기기 로그아웃" 등) — 다시 로그인해야 메신저 일을 받음. 설정 → 연결에서 로그인하라고 안내', 'this computer was signed out of Messenger (e.g. "sign out of all devices") — the user must sign in again to take Messenger work; point them to Settings → Connections'],
+  link_signed_out: ['이 기기의 Argo 로그인이 없어 메신저 일을 받지 못함', 'no Argo login on this device, so it cannot take Messenger work'],
+  link_no_runners: ['이 컴퓨터에 쓸 수 있는 AI 실행 도구(러너)가 없어 메신저 일을 받지 못함 — 설정 → AI 연결에서 연결하라고 안내', 'no usable AI runner on this computer, so it cannot take Messenger work — point the user to Settings → AI'],
+  link_pro_required: ['메신저 일 받기는 Pro 요금제 전용이라 쉬는 중', 'paused — taking Messenger work needs the Pro plan'],
+  link_update_required: ['메신저와 연결하려면 Argo 앱 업데이트가 필요함', 'an Argo app update is needed to connect to Messenger'],
+  link_paused: ['메신저 서버가 잠시 일을 멈춤 — 풀리면 자동으로 다시 받음', 'the Messenger server has paused work — it resumes automatically'],
+  link_error: ['메신저 연결에 실패해 자동으로 다시 시도하는 중', 'the Messenger connection failed and is retrying automatically'],
 };
 
 async function messengerSection(wsId, { lang, now }) {
   const [{ msgrGatewayStatus, msgrRuntimeState, gatewayStatus, loadConnections }, { notifyChannelState }, { loadDeviceSession, deviceSessionDead }, company] = await Promise.all([
     import('./connections.mjs'), import('./msgr-notify.mjs'), import('./devicesession.mjs'), loadCompany(wsId).catch(() => ({}))]);
   const L = ko(lang) ? 0 : 1;
-  const { msgrV2Mode } = await import('./agent-link-flags.mjs');
-  const rt = msgrV2Mode() ? { state: 'link' } : msgrRuntimeState(await msgrGatewayStatus(wsId)); // 새 메신저면 옛 브리지 응답 상태를 보지 않는다
+  const [{ msgrV2Mode }, { linkStatus }] = await Promise.all([import('./agent-link-flags.mjs'), import('./agent-link-status.mjs')]);
+  const v2 = msgrV2Mode();
+  const ls = v2 ? linkStatus() : null; // 새 메신저 연결부의 실제 상태(프로세스 메모리 — 요청 0)
+  const rt = v2 ? { state: ls.state === 'ok' ? 'link' : `link_${ls.state}` } : msgrRuntimeState(await msgrGatewayStatus(wsId)); // 새 메신저면 옛 브리지 응답 상태를 보지 않는다
   const gw = await gatewayStatus(wsId).catch(() => null);
   const conns = await loadConnections(wsId).catch(() => ({}));
   const signedIn = !!loadDeviceSession()?.user?.id && !deviceSessionDead(); // 기기 세션 파일만 본다(토큰 갱신·네트워크 0)
@@ -830,7 +842,7 @@ async function messengerSection(wsId, { lang, now }) {
   const alive = (g) => (g?.alive ? pick(lang, '가동 중', 'running') : g?.holder === 'other' ? pick(lang, `다른 기기${g.holderDevice ? `(${g.holderDevice})` : ''}에서 수신 중`, `receiving on another device${g.holderDevice ? ` (${g.holderDevice})` : ''}`) : pick(lang, '수신 안 함', 'not receiving'));
   return [
     pick(lang, '메신저·알림 연결(설정 → 연결과 같은 판정 — 토큰·방 id는 싣지 않는다)', 'Messenger and notification connections (same as Settings → Connections — no tokens or room ids)'),
-    `- ${pick(lang, 'Argo 메신저 응답 상태', 'Argo Messenger response status')}: ${RUNTIME_TEXT[rt.state]?.[L] ?? rt.state}${rt.lastTs ? ` · ${ago(rt.lastTs, now, lang)} ${pick(lang, '확인', 'checked')}` : ''} · ${pick(lang, '에이전트 연결', 'agents connected')}: ${company.msgr?.enabled ? pick(lang, '예', 'yes') : pick(lang, '아니오', 'no')}`,
+    `- ${pick(lang, 'Argo 메신저 응답 상태', 'Argo Messenger response status')}: ${RUNTIME_TEXT[rt.state]?.[L] ?? rt.state}${rt.lastTs ? ` · ${ago(rt.lastTs, now, lang)} ${pick(lang, '확인', 'checked')}` : ''} · ${pick(lang, '에이전트 연결', 'agents connected')}: ${v2 ? (ls.state === 'ok' && ls.agents > 0 ? pick(lang, `예(${ls.agents}명)`, `yes (${ls.agents})`) : pick(lang, '아니오', 'no')) : company.msgr?.enabled ? pick(lang, '예', 'yes') : pick(lang, '아니오', 'no')}`, // v2 = 연결부가 맡은 에이전트 수(옛 브리지 등록 표지 company.msgr는 새 메신저와 무관)
     `- ${pick(lang, '텔레그램', 'Telegram')}: ${conns.telegram?.enabled && conns.telegram?.token ? pick(lang, '연결됨', 'connected') : pick(lang, '연결 안 됨', 'not connected')}${conns.telegram?.enabled ? ` · ${alive(gw?.telegram)}` : ''}`,
     `- ${pick(lang, '슬랙', 'Slack')}: ${conns.slack?.enabled && conns.slack?.token ? pick(lang, '연결됨', 'connected') : pick(lang, '연결 안 됨', 'not connected')}${conns.slack?.enabled ? ` · ${alive(gw?.slack)}` : ''}`,
     `- ${pick(lang, '알림 받을 메신저', 'Where notifications go')}: ${pick(lang, '아르고 메신저', 'Argo Messenger')} ${onOff(ch.msgr)} · ${pick(lang, '텔레그램', 'Telegram')} ${onOff(ch.telegram)} · ${pick(lang, '슬랙', 'Slack')} ${onOff(ch.slack)}`,
