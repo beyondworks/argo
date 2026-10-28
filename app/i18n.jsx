@@ -771,6 +771,11 @@ const DICT = {
   'settings.update.fail.signature': ['받은 파일의 서명을 확인하지 못했어요. 최신 설치 파일을 직접 받아 설치해 주세요.', 'The downloaded update failed its signature check. Download the latest installer and install it directly.'],
   'settings.update.fail.network': ['인터넷 연결을 확인한 뒤 다시 시도해 주세요.', 'Check your internet connection and try again.'],
   'settings.update.error': ['업데이트를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.', 'Could not check for updates. Please try again shortly.'],
+  // 진단 로그(앱 업데이트 카드 아래, 데스크톱 전용 — src-tauri/src/diag_log.rs). 토큰·키·이메일은 가린 채 저장된다
+  'settings.diag.label': ['문제가 생겼을 때', 'If something goes wrong'],
+  'settings.diag.desc': ['앱 기록 파일을 지원팀에 보내 주시면 원인을 찾는 데 도움이 돼요. 토큰, 키, 이메일은 가린 채 저장돼요.', 'Sending the app log file to support helps us find the cause. Tokens, keys and emails are masked.'],
+  'settings.diag.open': ['진단 로그 폴더 열기', 'Open diagnostic logs folder'],
+  'settings.diag.openErr': ['폴더를 열지 못했어요. 앱을 다시 연 뒤 시도해 주세요.', 'Couldn\'t open the folder. Reopen Argo and try again.'],
   // 터미널 명령 argo(앱 설치와 함께 등록) — 기기 탭 카드
   'settings.cli.title': ['터미널에서 argo 쓰기', 'Use argo in the terminal'],
   'settings.cli.desc': ['터미널에서 argo를 입력하면 이 앱과 같은 회사·에이전트·대화를 이어서 쓸 수 있어요. 앱에서 만든 대화가 그대로 보입니다.', 'Type argo in a terminal to keep using the same companies, agents and chats as this app. Chats you start there show up here.'],

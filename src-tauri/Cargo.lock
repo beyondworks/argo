@@ -81,6 +81,7 @@ version = "0.1.119"
 dependencies = [
  "libc",
  "log",
+ "regex",
  "serde",
  "serde_json",
  "tauri",

@@ -15,10 +15,12 @@ use boot_port::{can_bind, is_same_version_argo, probe_port, tcp_open, Boot, Boot
 mod no_dock;
 mod update_notes;
 mod update_location;
+mod diag_log;
 
 // 부트 화면(public/index.html)에 실시간 상태를 알린다 — 실패도 화면에 보이게(무한 대기 방지).
 // port: 프론트가 이동할 서버 포트(선택 확정 후) — boot.js가 후보 목록 맨 앞에 넣는다.
 fn boot_status(app: &tauri::AppHandle, phase: &str, detail: &str, port: Option<u16>) {
+    diag_log::write("boot", &format!("{phase} · {detail}{}", port.map(|p| format!(" (port {p})")).unwrap_or_default()));
     // version — boot.js가 프로브 시 "같은 버전의 Argo인가"를 대조한다(boot_port::is_same_version_argo와 한 쌍).
     let _ = app.emit("boot", serde_json::json!({ "phase": phase, "detail": detail, "port": port, "version": env!("CARGO_PKG_VERSION") }));
 }
@@ -43,6 +45,7 @@ fn reserved_hint() -> &'static str {
 // 종결 에러 — terminal:true로 boot.js가 "재시도 중" 문구를 붙이지 않게 한다(검수 1R: 폴백
 // 소진 후에도 '재시도 중'이 떠 있으면 신고가 지적한 UX 거짓이 종료 단계로 이동할 뿐).
 fn boot_error_final(app: &tauri::AppHandle, detail: &str, port: Option<u16>) {
+    diag_log::write("boot", &format!("error(final) · {detail}{}", port.map(|p| format!(" (port {p})")).unwrap_or_default()));
     let _ = app.emit("boot", serde_json::json!({ "phase": "error", "detail": detail, "port": port, "terminal": true, "version": env!("CARGO_PKG_VERSION") }));
 }
 
@@ -114,10 +117,17 @@ async fn acknowledge_update_notes_version(app: tauri::AppHandle, version: String
     tauri::async_runtime::spawn_blocking(move || update_notes::acknowledge(&dir, &version, &installed)).await.map_err(|e| e.to_string())?
 }
 
+// 설정 → 기기 → 앱 업데이트 카드의 "진단 로그 폴더 열기". 경로는 Rust가 정한다(화면은 경로를 모르고 넘기지도 않는다).
+#[tauri::command]
+async fn open_diagnostic_logs(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || diag_log::reveal(&dir)).await.map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![save_download, read_update_notes_version, acknowledge_update_notes_version, update_location::update_location])
+        .invoke_handler(tauri::generate_handler![save_download, read_update_notes_version, acknowledge_update_notes_version, update_location::update_location, open_diagnostic_logs])
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("file-nav-guard")
                 .on_navigation(|_webview, url| !is_file_route_nav(url))
@@ -142,6 +152,11 @@ pub fn run() {
         })
         .setup(|app| {
             app.manage(Sidecar(std::sync::Mutex::new(None)));
+            // 진단 로그 — 출시 빌드에서도 사이드카 출력·부트 상태를 app_log_dir에 남긴다(diag_log.rs, 5MB × 3개, 비밀 가림)
+            if let Ok(dir) = app.path().app_log_dir() {
+                diag_log::init(dir);
+                diag_log::write("app", &format!("Argo {} start · {} {}", app.package_info().version, std::env::consts::OS, std::env::consts::ARCH));
+            }
             // 인앱 업데이트(설정 → 앱 업데이트 버튼) — 데스크톱 전용. 서명 검증은 tauri.conf.json pubkey.
             #[cfg(desktop)]
             {
@@ -306,11 +321,13 @@ fn spawn_sidecar(handle: tauri::AppHandle, plan: SpawnPlan, port: u16) {
                                     err_cause = s.chars().take(180).collect();
                                 }
                                 log::info!("[server] {s}");
+                                diag_log::write("server:err", &s);
                                 let _ = handle.emit("boot-log", &s);
                             }
                             CommandEvent::Stdout(line) => {
                                 let s = String::from_utf8_lossy(&line).trim_end().to_string();
                                 log::info!("[server] {s}");
+                                diag_log::write("server", &s);
                                 // 부트 화면 로그 테일 — 느릴 때 무엇을 하는지 보여준다
                                 let _ = handle.emit("boot-log", &s);
                             }
@@ -319,6 +336,7 @@ fn spawn_sidecar(handle: tauri::AppHandle, plan: SpawnPlan, port: u16) {
                             }
                             CommandEvent::Terminated(t) => {
                                 let code = t.code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".into());
+                                diag_log::write("app", &format!("server process exited (code {code}, signal {:?}, after {}s)", t.signal, started.elapsed().as_secs()));
                                 // 즉사(<5s + 비정상 코드)만 폴백 대상 — 정상 서비스 중 사망은 기존대로 알린다
                                 if t.code.map_or(false, |c| c != 0) && started.elapsed() < Duration::from_secs(5) {
                                     early_exit = Some(code);
