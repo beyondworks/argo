@@ -56,6 +56,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.117': Object.freeze(['updates.note.syncLighter', 'updates.note.teamRoomPrivacy']),
   // 0.1.118 — memoryKeep: 기억 정리가 주제 노트를 덮을 때 옛 결론을 합쳐 남기고 덮기 전 사본을 둠(#1170) · msgrShellApproval: 메신저 지시의 위험한 명령은 주인 결재, 구글 계정으로 연결한 Gemini·Antigravity(CLI)는 메신저 지시에서 명령 실행 끔(#1171·#1172) · agentOnline: 메신저에 에이전트 켜짐 표시를 본체 켜짐 신호로(#1164)
   '0.1.118': Object.freeze(['updates.note.memoryKeep', 'updates.note.msgrShellApproval', 'updates.note.agentOnline']),
+  // 0.1.119 — connectorOpen: 커넥터 '연결'이 앱에서 시스템 브라우저로 열림(#1180) · msgrV2Settings: 설정 › 연결·에이전트 상태가 새 메신저 기준(#1180)
+  '0.1.119': Object.freeze(['updates.note.connectorOpen', 'updates.note.msgrV2Settings']),
 });
 
 export function stableVersion(value) {
