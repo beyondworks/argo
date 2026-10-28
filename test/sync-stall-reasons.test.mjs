@@ -154,7 +154,7 @@ test('③ 순수 판정 — 루프 정지(사이클이 오래 안 돎)·잠금 �
   const now = 10_000_000;
   const base = { companies: {}, scanAt: now - 1000, cycleEndAt: now - 1000, cycling: false };
   assert.deepEqual(syncHeldView(base, { now, on: true, loopStarted: true, lockElsewhere: false, cycleMs: 8000 }),
-    { noOwner: 0, foreignOwner: 0, freePlan: 0, lockWait: false, stalled: 0, notStarted: false });
+    { noOwner: 0, foreignOwner: 0, freePlan: 0, lockWait: false, stalled: 0, notStarted: false, phase: 'starting', lastCycleAt: now - 1000, errorCode: '', lockPid: null, lockVer: null });
   // 사이클 끝이 10분 전이고 지금 사이클 중이 아님 = 루프가 서 있다(분 단위로)
   assert.equal(syncHeldView({ ...base, cycleEndAt: now - 10 * 60_000 }, { now, on: true, loopStarted: true, cycleMs: 8000 }).stalled, 10);
   // 긴 사이클(큰 파일 올리기) 중에는 정지로 보지 않는다
@@ -162,9 +162,80 @@ test('③ 순수 판정 — 루프 정지(사이클이 오래 안 돎)·잠금 �
   // 동기화가 꺼져 있으면 아무것도 싣지 않는다
   assert.equal(syncHeldView({ ...base, cycleEndAt: now - 10 * 60_000 }, { now, on: false, loopStarted: false, cycleMs: 8000 }).stalled, 0);
   assert.equal(syncHeldView(base, { now, on: true, loopStarted: false, cycleMs: 8000 }).notStarted, true);
-  assert.equal(syncHeldView(base, { now, on: true, loopStarted: true, lockElsewhere: true, cycleMs: 8000 }).lockWait, true);
+  const lw = syncHeldView({ ...base, phase: 'lock-wait', errorCode: 'other-process' }, { now, on: true, loopStarted: true, lockElsewhere: true, lockHolder: { pid: 4242, ver: '0.1.116' }, cycleMs: 8000 });
+  assert.equal(lw.lockWait, true); assert.equal(lw.lockPid, 4242); assert.equal(lw.lockVer, '0.1.116'); assert.equal(lw.phase, 'lock-wait'); assert.equal(lw.errorCode, 'other-process');
+  assert.equal(syncHeldView(base, { now, on: true, loopStarted: false, cycleMs: 8000 }).phase, 'not-started');
+  assert.equal(syncHeldView(base, { now, on: false, loopStarted: false, cycleMs: 8000 }).phase, 'off');
   // 지난 수집(scanAt) 이전에 남은 건너뜀은 세지 않는다 — 귀속·삭제된 회사의 옛 표지가 남지 않게
   const companies = { a: { ts: now - 500, skipped: 'free-plan' }, b: { ts: now - 5000, skipped: 'no-owner' }, c: { ts: now - 500, skipped: 'no-owner' } };
   const v = syncHeldView({ ...base, companies }, { now, on: true, loopStarted: true, cycleMs: 8000 });
   assert.equal(v.freePlan, 1); assert.equal(v.noOwner, 1);
+});
+
+test('④ 진단 — 다른 살아 있는 프로세스가 잠금을 쥐면 단계·잠금 주인(pid·버전)을 상태와 [argo] sync 로그 한 줄로 남긴다(업로드 0)', async () => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
+  const root = await mkdtemp(join(tmpdir(), 'argo-lockdiag-'));
+  seedRoot(root, { url: fake.url, wsId: 'co-lock' });
+  // 살아 있는 pid = 이 시험 프로세스. 앱 업데이트 뒤 남은 옛 프로세스(0.1.116)가 잠금을 쥔 모양
+  writeFileSync(join(root, '.sync-process.lock'), JSON.stringify({ pid: process.pid, ts: Date.now(), ver: '0.1.116', since: Date.now() - 86_400_000 }));
+  const { status, out } = await runChild({ root, env: { ARGO_SYNC_CYCLE_MS: '500' }, waitMs: 3000, script: 'sync.ensureSync();' });
+  assert.equal(status.held.phase, 'lock-wait', JSON.stringify(status.held));
+  assert.equal(status.held.lockPid, process.pid);
+  assert.equal(status.held.lockVer, '0.1.116');
+  assert.equal(status.held.errorCode, 'other-process');
+  assert.ok(status.held.lastCycleAt > 0);
+  assert.equal(uploads(fake), 0, '잠금 대기 중에는 올리지 않는다(이중 동기화 금지 — 종전과 같음)');
+  const lines = out.split('\n').filter((l) => l.startsWith('[argo] sync phase='));
+  assert.equal(lines.length, 1, `바뀔 때만 한 줄(주기마다 반복하지 않는다): ${lines.join(' | ')}`);
+  assert.match(lines[0], new RegExp(`phase=lock-wait err=other-process plan=- lock=pid:${process.pid}/v0\.1\.116 noOwner=0 foreign=0 free=0`));
+  assert.equal(/u1|co-lock|h\.p\.s|rt-0/.test(lines[0]), false, '계정 id·회사 id·토큰을 싣지 않는다');
+});
+
+test('⑤ 진단 — 정상 동기화는 단계 idle·오류 없음, 로그에 plan=pro', async () => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
+  const root = await mkdtemp(join(tmpdir(), 'argo-idlediag-'));
+  seedRoot(root, { url: fake.url, wsId: 'co-ok' });
+  const { status, out } = await runChild({ root, env: { ARGO_SYNC_CYCLE_MS: '500' }, waitMs: 3000, script: 'sync.ensureSync();' });
+  assert.ok(['idle', 'syncing', 'plan-check'].includes(status.held.phase), status.held.phase);
+  assert.equal(status.held.errorCode, '');
+  assert.ok(out.split('\n').some((l) => /^\[argo\] sync phase=idle err=- plan=pro lock=- /.test(l)), out.slice(-1500));
+});
+
+test('① /auth/confirm(공개 GET·PKCE 없음)은 게스트 회사를 귀속하지 않는다 — 교차 사이트 링크로 공격자 계정에 넘어가지 않게(PR #1183 검수)', async () => {
+  const fake = await startFakeSupabase({ plan: 'pro', userId: 'u-attacker' }); fakes.push(fake);
+  fake.fault = (req, path) => (path === '/auth/v1/verify' ? { status: 200, body: {
+    access_token: 'h.p.s', refresh_token: 'rt-9', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600,
+    user: { id: 'u-attacker', email: 'a@example.test', aud: 'authenticated', role: 'authenticated' },
+  } } : null);
+  const root = await mkdtemp(join(tmpdir(), 'argo-confirm-noclaim-'));
+  mkdirSync(join(root, 'guest-co'), { recursive: true });
+  writeFileSync(join(root, 'guest-co', 'company.json'), JSON.stringify({ id: 'guest-co', name: '게스트 회사', owner: 'captain' }));
+  writeFileSync(join(root, '.guest-mode.json'), JSON.stringify({ enabled: true }));
+  writeFileSync(join(root, '.device-id'), 'fixture-mac-0001');
+  const body = `
+const { register } = await import('node:module');
+register(${JSON.stringify(new URL('./helpers/next-esm-resolve.mjs', import.meta.url).href)});
+const route = await import(${JSON.stringify(new URL('../app/auth/confirm/route.js', import.meta.url).href)});
+const { NextRequest } = await import('next/server');
+const res = await route.GET(new NextRequest('http://127.0.0.1:3299/auth/confirm?token_hash=th-attacker&type=email', { headers: { host: '127.0.0.1:3299', 'sec-fetch-site': 'cross-site' } }));
+process.stdout.write('\\n@@' + JSON.stringify({ status: res.status }) + '\\n');
+process.exit(0);`;
+  const r = await new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, ['--input-type=module', '-e', body], {
+      env: childEnv(root, { NEXT_PUBLIC_SUPABASE_URL: fake.url, NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fixture', ARGO_SYNC: '0', ARGO_AGENT_LINK: '0' }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = ''; let err = '';
+    p.stdout.on('data', (c) => { out += c; }); p.stderr.on('data', (c) => { err += c; });
+    p.on('exit', () => {
+      const line = out.split('\n').find((l) => l.startsWith('@@'));
+      if (!line) return reject(new Error(`no result\n${out.slice(-1500)}\n${err.slice(-1500)}`));
+      resolve(JSON.parse(line.slice(2)));
+    });
+  });
+  assert.ok(fake.count('POST /auth/v1/verify') >= 1, '시험이 실제로 확인 경로를 탔다(가짜 서버가 세션을 줬다)');
+  assert.ok(r.status >= 300 && r.status < 400, `리다이렉트(${r.status})`);
+  const meta = JSON.parse(readFileSync(join(root, 'guest-co', 'company.json'), 'utf8'));
+  assert.equal(meta.ownerId, undefined, '게스트 회사 주인 불변(이 경로에 자동 귀속이 다시 들어오면 실패)');
+  assert.equal(existsSync(join(root, '.guest-mode.json')), true, '게스트 표지도 그대로');
 });

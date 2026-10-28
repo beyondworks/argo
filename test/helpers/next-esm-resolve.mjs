@@ -5,6 +5,6 @@
 // 사용법: 테스트 파일에서 register(new URL('./helpers/next-esm-resolve.mjs', import.meta.url))
 // 후 라우트를 동적 임포트한다. node --test는 파일별 자식 프로세스라 다른 테스트로 새지 않는다.
 export async function resolve(specifier, context, nextResolve) {
-  if (specifier === 'next/headers') return nextResolve('next/headers.js', context);
+  if (specifier === 'next/headers' || specifier === 'next/server') return nextResolve(`${specifier}.js`, context); // next/server — /auth/confirm 라우트(NextResponse) 시험용
   return nextResolve(specifier, context);
 }

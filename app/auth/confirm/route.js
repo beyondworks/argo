@@ -6,8 +6,6 @@ import { createServerClient } from '@supabase/ssr';
 import { publicUrl } from '../../http-origin.mjs';
 import { saveDeviceSession } from '../../../src/devicesession.mjs';
 import { ensureSync } from '../../../src/sync.mjs';
-import { guestModeOn } from '../../../src/gueststate.mjs';
-import { claimLocalToAccount } from '../../../src/accountclaim.mjs';
 import { isLoopbackHost } from '../../auth.mjs';
 
 export async function GET(req) {
@@ -43,11 +41,10 @@ export async function GET(req) {
       anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       session: data.session,
     });
-    // 게스트 → 로그인 자동 귀속(/auth/callback과 같은 계약 — 이 라우트가 미러링에서 빠뜨렸다, 2026-10-28). 실패해도 로그인은 성공.
-    if (guestModeOn()) await claimLocalToAccount(data.session.user.id).catch(() => {});
+    // 게스트 회사 자동 귀속은 여기서 하지 않는다 — 공개 GET이고 token_hash에는 PKCE가 없어, 다른 사이트가 공격자 계정 링크로 이 주소를 열게 하면
+    // 게스트 회사가 그 계정으로 넘어간다(PR #1183 검수 재현). 남은 회사는 CSRF 검사·확인을 거치는 [이 계정에 연결](/api/account/claim)로만 귀속한다.
     ensureSync(); // 자격이 방금 생겼다 — 재시작 없이 동기화 기동
     res.cookies.set('argo-device', '1', { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 24 * 365 });
-    res.cookies.set('argo-guest', '', { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 0 });
   }
   return res;
 }

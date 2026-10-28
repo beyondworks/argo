@@ -1935,33 +1935,57 @@ function SyncCard({ ws }) {
     · 무료 판정 회사: 계정 요금제가 무료가 아닐 때만(무료면 머리의 '이 기기에만 저장' 알약이 이미 말한다) — Pro 전환 직후 판정 갱신 대기.
     잠금 대기는 lastError(settings.sync.err.otherProcess)가 이미 보여 여기서 다시 쓰지 않는다. */
 function SyncHeldRows({ held, plan, onClaimed }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [ask, setAsk] = useState(null); // GET /api/account/claim — 귀속할 회사 이름·계정 이메일(홈 배너와 같은 확인 창)
   if (!held) return null;
   const line = { fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.6 };
-  async function claim() {
+  async function openAsk() {
     if (busy) return;
     setBusy(true); setFailed(false);
+    try { const d = await api('/api/account/claim'); if (d.count > 0) setAsk(d); else onClaimed?.(); } catch { setFailed(true); } finally { setBusy(false); }
+  }
+  async function claim() {
+    setAsk(null); setBusy(true); setFailed(false);
     try { await api('/api/account/claim', {}); onClaimed?.(); } catch { setFailed(true); } finally { setBusy(false); }
   }
+  // 진단 한 줄 — 지금 루프 단계·마지막 사이클·오류 종류·잠금 주인(pid·버전). 고객 문의 때 이 줄 캡처로 원인을 가른다(2026-10-28)
+  const phaseLabel = t(`settings.sync.phase.${held.phase}`) || held.phase;
+  const diag = [
+    `${t('settings.sync.diag.phase')}: ${phaseLabel}`,
+    held.lastCycleAt ? `${t('settings.sync.diag.lastCycle')}: ${new Date(held.lastCycleAt).toLocaleTimeString(lang === 'ko' ? 'ko-KR' : 'en-US')}` : null,
+    held.errorCode ? `${t('settings.sync.diag.error')}: ${held.errorCode}` : null,
+    held.lockWait ? `${t('settings.sync.diag.lock')}: pid ${held.lockPid ?? '?'}${held.lockVer ? ` · v${held.lockVer}` : ''}` : null,
+  ].filter(Boolean).join(' · ');
   return (
     <>
       {held.noOwner > 0 && (
         <div style={{ display: 'grid', gap: 6, marginTop: 2 }}>
           <span style={line}>{t('settings.sync.held.noOwner', { n: held.noOwner })}</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button type="button" className="btn sm" style={{ width: 'fit-content', whiteSpace: 'nowrap' }} disabled={busy} onClick={claim}>
+            <button type="button" className="btn sm" style={{ width: 'fit-content', whiteSpace: 'nowrap' }} disabled={busy} onClick={openAsk}>
               {busy ? <Spinner size={12} /> : t('settings.sync.held.claim')}
             </button>
             {failed && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.sync.held.claimFailed')}</span>}
           </div>
         </div>
       )}
+      {ask && (
+        <ConfirmModal
+          title={t('home.claimConfirmTitle')}
+          description={t('home.claimConfirm', { names: ask.names.join(', '), email: ask.userEmail })}
+          confirmLabel={t('home.claimBtn')}
+          onConfirm={claim}
+          onClose={() => setAsk(null)}
+        />
+      )}
       {held.foreignOwner > 0 && <span style={line}>{t('settings.sync.held.foreignOwner', { n: held.foreignOwner })}</span>}
       {held.freePlan > 0 && plan && plan !== 'free' && <span style={line}>{t('settings.sync.held.freePlan', { n: held.freePlan })}</span>}
-      {held.stalled > 0 && <span role="alert" style={{ ...line, color: 'var(--danger)' }}>{t('settings.sync.held.stalled', { m: held.stalled })}</span>}
+      {/* 잠자기에서 깬 직후에도 잠깐 걸릴 수 있어 경고색·단정 대신 안내(검수 Nit) */}
+      {held.stalled > 0 && <span style={line}>{t('settings.sync.held.stalled', { m: held.stalled })}</span>}
       {held.notStarted && <span role="alert" style={{ ...line, color: 'var(--danger)' }}>{t('settings.sync.held.notStarted')}</span>}
+      <span style={{ fontSize: 11.5, color: 'var(--fg-3)', lineHeight: 1.6 }}>{diag}</span>
     </>
   );
 }
