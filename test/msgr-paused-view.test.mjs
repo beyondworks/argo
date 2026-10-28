@@ -37,9 +37,9 @@ test('배선 — 부모가 연결 탭에서 스위치를 한 번 읽고, 알림 
   const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
   assert.match(page, /if \(tab !== 'connections' \|\| msgrPaused !== null\) return;[\s\S]{0,200}api\(`\/api\/companies\/\$\{ws\}\/msgr-archive`\)/, '연결 탭에서 모를 때만 한 번');
   assert.match(page, /<NotifyChannelsCard ws=\{ws\} showMsgr=\{pv\.showMsgrNotify\} \/>/);
-  assert.match(page, /\{pv\.msgrCard === 'pending' \? null : pv\.msgrCard === 'waitlist' \? <MsgrWaitlistCard archive=\{msgrArchive\} \/> : <MsgrCard ws=\{ws\} agents=\{data\?\.agents \?\? \[\]\} \/>\}/);
+  assert.match(page, /\{pv\.msgrCard === 'pending' \? null : pv\.msgrCard === 'v2' \? <MsgrV2Card archive=\{msgrArchive\} \/> : pv\.msgrCard === 'waitlist' \? <MsgrWaitlistCard archive=\{msgrArchive\} \/> : <MsgrCard ws=\{ws\} agents=\{data\?\.agents \?\? \[\]\} \/>\}/);
   assert.match(page, /useState\(null\); \/\/ null = 아직 모름/, '처음은 모름(null)');
-  assert.match(page, /msgrPausedView\(msgrPaused, \{ known: msgrPaused !== null \}\)/);
+  assert.match(page, /msgrPausedView\(msgrPaused, \{ known: msgrPaused !== null, v2: msgrArchive\?\.v2 === true \}\)/, '새 메신저 연결이면 v2 카드(2026-10-28 제보)');
   assert.match(page, /\.catch\(\(\) => \{ if \(live\) setMsgrPaused\(false\); \}\)/, '조회 실패면 main 카드');
   assert.match(page, /\.\.\.\(showMsgr \? \[\{ kind: 'msgr'/);
   const card = page.slice(page.indexOf('function MsgrWaitlistCard('), page.indexOf('function MsgrCard('));

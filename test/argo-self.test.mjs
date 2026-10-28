@@ -356,7 +356,12 @@ test('상태 구획 — 러너는 키 값을 싣지 않고, 메신저·동기화
   const runners = await call('argo_status', { section: 'runners' });
   assert.match(runners, /러너 연결/);
   assert.doesNotMatch(runners, /sk-|\*\*\*/, '가려진 키 조각도 싣지 않는다');
-  assert.match(await call('argo_status', { section: 'messenger' }), /Argo 메신저 응답 상태: 아직 첫 응답을 기다리는 중/);
+  // 기본(0.1.115+) = 새 메신저 연결만 — 옛 브리지 응답 상태('응답을 확인하지 못함')로 읽지 않는다(2026-10-28 제보)
+  assert.match(await call('argo_status', { section: 'messenger' }), /Argo 메신저 응답 상태: 새 Argo 메신저로 연결/);
+  const legacyBefore = process.env.ARGO_MSGR_LEGACY;
+  process.env.ARGO_MSGR_LEGACY = 'on'; // 옛 브리지를 켠 기기는 종전 판정 그대로
+  try { assert.match(await call('argo_status', { section: 'messenger' }), /Argo 메신저 응답 상태: 아직 첫 응답을 기다리는 중/); }
+  finally { if (legacyBefore === undefined) delete process.env.ARGO_MSGR_LEGACY; else process.env.ARGO_MSGR_LEGACY = legacyBefore; }
   assert.match(await call('argo_status', { section: 'sync' }), /기기 간 동기화/);
   assert.match(await call('argo_status', { section: 'plan' }), /요금제·사용량/);
   assert.match(await call('argo_status', { section: 'approvals' }), /결재 대기 0건/);
