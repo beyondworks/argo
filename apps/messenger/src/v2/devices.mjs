@@ -34,3 +34,16 @@ export async function revokeAllDevices(view, revoke) {
   if (me && !(await revoke(me.id).then(() => true, () => false))) return 'self_failed'; // 이미 폐기됐으면 서버가 오류 없이 false를 준다
   return 'done';
 }
+
+/** 기기 로그아웃 확인 창·완료 안내 문구 키(문구만 — 서버 동작은 그대로). 실행기·상주 서버(데스크톱 Argo 본체) 기기가 함께 로그아웃되면
+    메신저로 보낸 일이 그 컴퓨터에 전달되지 않으므로 그 사실과 다시 로그인할 곳을 알린다(모든 기기 로그아웃 뒤 이유를 몰랐던 일, 2026-10-28).
+    ask: { kind: 'one', row } | { kind: 'all' }, view: deviceRows 결과. 반환 { title, desc, confirm, done }(모두 사전 키). */
+export function revokeCopy(ask, view = []) {
+  const desktop = (d) => !!d && (d.kind === 'runner' || d.kind === 'resident' || d.app === 'desktop');
+  if (ask?.kind === 'all') {
+    const hit = view.some((d) => d.active && !d.current && desktop(d));
+    return { title: 'v2.dev.all.title', desc: hit ? 'v2.dev.all.descDesktop' : 'v2.dev.all.desc', confirm: 'v2.dev.all', done: hit ? 'v2.dev.all.doneDesktop' : 'v2.dev.all.done' };
+  }
+  const hit = desktop(ask?.row);
+  return { title: 'v2.dev.revoke.title', desc: hit ? 'v2.dev.revoke.descDesktop' : 'v2.dev.revoke.desc', confirm: 'v2.dev.revoke', done: hit ? 'v2.dev.revokedDesktop' : 'v2.dev.revoked' };
+}
