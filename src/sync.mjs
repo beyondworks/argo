@@ -2288,7 +2288,31 @@ export function syncStatus() {
   // 별도 번들에서 사본이 갈라져 항상 null이 되는 함정(위 lease 주석과 동일 클래스).
   // 주인 없는 회사(no-owner)는 화면에 싣지 않는다 — 동기화한 적도 클라우드 사본도 없다(설정 화면은 companies[ws] 존재를 '동기화한 적 있음'으로 읽는다).
   const companies = Object.fromEntries(Object.entries(status.companies).filter(([, c]) => c?.skipped !== 'no-owner'));
-  return { ...status, on: syncOn(), leader: isCloudLeader(), companies, quota: quotaStatus() };
+  const on = syncOn();
+  const held = syncHeldView(status, { on, loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, cycleMs: CYCLE_MS });
+  return { ...status, on, leader: isCloudLeader(), companies, quota: quotaStatus(), held };
+}
+/** 동기화가 회사를 건너뛴 이유 요약(순수, 설정 '기기 간 동기화' 카드용) — 회사 수와 상태만 싣는다(회사 id·이름 없음: 같은 기기의 다른 계정 화면에도 실린다).
+    2026-10-28 고객 C: 메인 PC의 회사가 노트북에 안 내려왔는데 카드에는 아무 이유도 없었다.
+    · noOwner     = 주인 없는 회사(게스트 시절 생성·귀속 안 함) — 클라우드에 자리가 없어 올리지 않는다. 카드가 [이 계정에 연결]을 준다.
+    · foreignOwner= 다른 계정이 주인인 회사 — 이 계정으로는 올리지 않는다.
+    · freePlan    = 이 기기의 동기화가 무료로 판정해 건너뛴 회사(계정 요금제가 Pro면 판정 갱신 대기 — 결제 화면 조회가 캐시를 지운다).
+    · lockWait    = 같은 데이터 폴더를 다른 Argo 프로세스가 동기화 중이라 기다림.
+    · stalled     = 사이클이 끝난 지 오래(분) — 사이클 중이 아닌데 정한 시간 넘게 다음 사이클이 없다. 긴 사이클(큰 파일)은 정지로 보지 않는다.
+    · notStarted  = 동기화 자격은 있는데 이 프로세스에 루프가 없다.
+    건너뜀은 마지막 로컬 수집(scanAt) 이후에 기록된 것만 센다 — 귀속·삭제된 회사의 옛 표지가 남지 않게. */
+export const STALL_AFTER_MS = (cycleMs) => Math.max(20 * cycleMs, 3 * 60_000);
+export function syncHeldView(st, { now = Date.now(), on, loopStarted, lockElsewhere = false, cycleMs = CYCLE_MS } = {}) {
+  const count = (kind) => (on ? Object.values(st?.companies ?? {}).filter((c) => c?.skipped === kind && Number(c.ts) >= (Number(st?.scanAt) || 0)).length : 0);
+  const idle = on && loopStarted && !st?.cycling && Number(st?.cycleEndAt) > 0 ? now - Number(st.cycleEndAt) : 0;
+  return {
+    noOwner: count('no-owner'),
+    foreignOwner: count('foreign-owner'),
+    freePlan: count('free-plan'),
+    lockWait: !!(on && lockElsewhere),
+    stalled: idle > STALL_AFTER_MS(cycleMs) ? Math.floor(idle / 60_000) : 0,
+    notStarted: !!(on && !loopStarted),
+  };
 }
 /** 새 기기의 첫 동기화가 아직 끝나지 않았는가(홈 화면용, 순수 판독) — 동기화가 켜져 있고 ① 원격에서 처음 발견한 회사를 내려받는 중이거나
     ② 사이클이 한 번도 끝나지 않았고 기기 전체 오류(자격 없음·다른 프로세스가 동기화 중·요금제 차단)도 없다. 오류가 있으면 거짓 — 끝나지 않는 "내려받는 중"을 막는다.
@@ -2339,6 +2363,7 @@ const currentSessionUid = () => ((loadSyncCreds() && serviceCredsAllowed()) ? nu
     에러를 무한 반복하던 실사고(2026-07-25, lean-ax-zl5j). 격리 정책이 맞고, 남의 회사를 밀지 않는
     것이 동기화의 몫이다. 서비스 모드(셀프호스트·워커)는 다중 오너가 정당하므로 게이트 없음. */
 async function collectLocalTargets(sessionUid) {
+  status.scanAt = Date.now(); // 이번 수집의 시작 — 이보다 오래된 건너뜀 표지는 화면 요약(syncHeldView)에서 세지 않는다
   const targets = new Map(); // wsId → owner
   const noSecretsWs = new Set(); // credSync:false 회사 — 자격 3종 불가시 + 클라우드 사본 회수(syncCompany opts)
   let entries = [];
@@ -2526,6 +2551,7 @@ async function cycle() {
   let reached = false;
   try { reached = await cycleOnce(); } finally {
     status.cycling = false;
+    status.cycleEndAt = Date.now(); // 루프 정지 판정(syncHeldView.stalled)의 기준
     // 매니페스트 보류로 첫 복원이 남아 있으면(restorePending) 사이클 사이에도 restoring을 유지한다 — 홈이 빈 목록 대신 "내려받는 중"을 보인다.
     // 사이클이 회사 루프를 마쳤을 때만(자격 없음·다른 프로세스·요금제 차단·예외로 일찍 끝나면 종전처럼 끈다 — 끝나지 않는 "내려받는 중" 방지)
     status.restoring = reached === true && restorePending.size > 0;
@@ -2726,6 +2752,24 @@ async function cycleOnce() {
   return true; // 회사 루프까지 마쳤다(cycle()의 restoring 유지 판정)
 }
 
+/** 자격이 아직 없을 때(게스트·로그아웃 상태로 기동) — 기기 세션·페어링 자격 파일이 생기면 루프를 붙인다. 로그인 라우트(device/login·link·
+    auth/callback·confirm·pair/accept)는 저장 직후 ensureSync()를 직접 부르지만, 그 밖의 경로(같은 데이터 폴더에 다른 프로세스 — 터미널 argo 등 — 가
+    로그인을 저장, 라우트 번들 밖 저장)는 재시작 전까지 동기화가 아예 없었다(2026-10-28 고객 C 조사 — 메인 PC 세션에 storage·색인 요청 0).
+    네트워크 요청은 없다: CYCLE_MS마다 파일 두 개의 존재만 본다(loadDeviceSession은 mtime 도장 캐시). ARGO_SYNC=0이면 보지 않는다.
+    타이머는 unref — 프로세스 종료를 붙잡지 않는다. Next 번들이 갈려도 globalThis 표지 하나만 돈다. */
+function watchForCreds() {
+  if (process.env.ARGO_SYNC === '0' || globalThis.__argoSync || globalThis.__argoSyncCredWatch) return;
+  const iv = setInterval(() => {
+    if (globalThis.__argoSync) { clearInterval(iv); globalThis.__argoSyncCredWatch = null; return; }
+    if (!syncOn()) return;
+    clearInterval(iv); globalThis.__argoSyncCredWatch = null;
+    console.log('[argo] 동기화 자격 확인 — 루프 시작');
+    ensureSync();
+  }, CYCLE_MS);
+  iv.unref?.();
+  globalThis.__argoSyncCredWatch = iv;
+}
+
 /** 즉시 동기화 요청 — 로컬 변경(메시지 전송 등) 직후 호출하면 다음 대기를 건너뛰고 바로 push/pull.
     Next는 라우트·instrumentation 번들이 갈려 모듈 변수가 공유 안 되므로 globalThis로 신호한다(status와 동일 패턴). */
 export function nudgeSync() {
@@ -2735,7 +2779,7 @@ export function nudgeSync() {
 }
 
 export function ensureSync() {
-  if (!syncOn()) return;
+  if (!syncOn()) { watchForCreds(); return; }
   if (globalThis.__argoSync) return;
   globalThis.__argoSync = true;
   (async () => {

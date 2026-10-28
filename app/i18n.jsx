@@ -882,6 +882,14 @@ const DICT = {
   'settings.sync.quotaWarn': ['클라우드 용량 {used} / {limit} 사용({pct}%) — 가득 차면 새 파일과 수정은 이 기기에만 저장됩니다', 'Cloud storage {used} of {limit} used ({pct}%) — when it is full, new files and edits stay on this device only'],
   'settings.sync.quotaFull': ['클라우드 용량이 가득 찼습니다({used} / {limit}) — 새 파일과 수정은 이 기기에만 저장되고, 기존 클라우드 사본과 받기는 그대로입니다. 파일을 정리하면 다시 올라갑니다.', 'Cloud storage is full ({used} of {limit}) — new files and edits stay on this device; existing cloud copies and downloads continue. Free up space and they upload again.'],
   'settings.sync.oversize': ['동기화 제외(크기 초과) {n}개 · {names} — {mb}MB를 넘는 파일은 기기 간에 주고받지 않습니다', 'Not synced (too large): {n} · {names} — files over {mb} MB aren\'t synced between devices'],
+  // 동기화가 회사를 건너뛴 이유(src/sync.mjs syncHeldView — 회사 수만, 2026-10-28 고객 C: 회사가 다른 기기로 안 내려오는데 이유가 안 보였다)
+  'settings.sync.held.noOwner': ['이 컴퓨터에 계정에 연결되지 않은 회사가 {n}개 있어 다른 기기로 동기화되지 않습니다.', '{n} companies on this computer are not linked to your account, so they don\'t sync to other devices.'],
+  'settings.sync.held.claim': ['이 계정에 연결', 'Link to this account'],
+  'settings.sync.held.claimFailed': ['연결하지 못했습니다 — 잠시 뒤 다시 눌러 주세요.', 'Couldn\'t link them — try again in a moment.'],
+  'settings.sync.held.foreignOwner': ['다른 계정이 만든 회사 {n}개는 이 계정으로 동기화하지 않습니다. 그 계정으로 로그인하면 동기화됩니다.', '{n} companies belong to another account and don\'t sync with this one. Sign in with that account to sync them.'],
+  'settings.sync.held.freePlan': ['요금제 변경을 확인하는 중입니다 — 확인되면 회사 {n}개 동기화를 바로 다시 시작합니다.', 'Checking your plan change — sync of {n} companies resumes as soon as it\'s confirmed.'],
+  'settings.sync.held.stalled': ['동기화가 {m}분째 멈춰 있습니다. Argo를 완전히 종료한 뒤 다시 열어 주세요.', 'Sync has been stalled for {m} min. Quit Argo completely and open it again.'],
+  'settings.sync.held.notStarted': ['동기화가 아직 시작되지 않았습니다. Argo를 완전히 종료한 뒤 다시 열어 주세요.', 'Sync hasn\'t started yet. Quit Argo completely and open it again.'],
   'settings.sync.credErr': ['설정 저장에 실패했습니다', 'Failed to save the setting'],
   // E2EE(종단간 암호화) — 회사 데이터까지 본인만 여는 열쇠 구조
   'settings.e2ee.title': ['종단간 암호화', 'End-to-end encryption'],

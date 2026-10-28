@@ -1795,6 +1795,8 @@ function SyncCard({ ws }) {
             {/* 자격 회수 실행 관측(분리 검수 HIGH-2) — "회수됩니다" 단정 대신 실제 실행된 사이클에 사실 표시 */}
             {mine?.withdrawn ? ` · ${t('settings.sync.credWithdrawn', { n: mine.withdrawn })}` : ''}
           </span>
+          {/* 건너뛴 이유(src/sync.mjs syncHeldView) — 회사가 다른 기기로 안 내려오는 원인과 할 일을 문장으로(2026-10-28 고객 C) */}
+          <SyncHeldRows held={sync.held} plan={plan} onClaimed={() => api(`/api/companies/${ws}/connections`).then((d) => setSync(d.sync ?? null)).catch(() => {})} />
           {/* 크기 제한을 넘어 동기화하지 않는 파일(src/sync.mjs SYNC_MAX_OBJECT_BYTES) — 실패가 아니라 제외라 빨간 오류 줄이 아니라 안내 줄로 */}
           {mine?.oversize ? (
             <span title={(mine.oversizeRels ?? []).join('\n')} style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.6 }}>
@@ -1924,6 +1926,43 @@ function SyncCard({ ws }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** 동기화가 회사를 건너뛴 이유 줄들 — SyncCard 안(동기화 켜짐 갈래). 요약은 회사 수만 온다(sync.held, 회사 id 없음).
+    · 주인 없는 회사: 문장 + [이 계정에 연결](홈 배너와 같은 /api/account/claim — 루프백·실로그인만 통과, CSRF 검사).
+    · 다른 계정 주인·루프 정지·루프 미시작: 문장(할 일 포함).
+    · 무료 판정 회사: 계정 요금제가 무료가 아닐 때만(무료면 머리의 '이 기기에만 저장' 알약이 이미 말한다) — Pro 전환 직후 판정 갱신 대기.
+    잠금 대기는 lastError(settings.sync.err.otherProcess)가 이미 보여 여기서 다시 쓰지 않는다. */
+function SyncHeldRows({ held, plan, onClaimed }) {
+  const { t } = useLang();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  if (!held) return null;
+  const line = { fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.6 };
+  async function claim() {
+    if (busy) return;
+    setBusy(true); setFailed(false);
+    try { await api('/api/account/claim', {}); onClaimed?.(); } catch { setFailed(true); } finally { setBusy(false); }
+  }
+  return (
+    <>
+      {held.noOwner > 0 && (
+        <div style={{ display: 'grid', gap: 6, marginTop: 2 }}>
+          <span style={line}>{t('settings.sync.held.noOwner', { n: held.noOwner })}</span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button type="button" className="btn sm" style={{ width: 'fit-content', whiteSpace: 'nowrap' }} disabled={busy} onClick={claim}>
+              {busy ? <Spinner size={12} /> : t('settings.sync.held.claim')}
+            </button>
+            {failed && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.sync.held.claimFailed')}</span>}
+          </div>
+        </div>
+      )}
+      {held.foreignOwner > 0 && <span style={line}>{t('settings.sync.held.foreignOwner', { n: held.foreignOwner })}</span>}
+      {held.freePlan > 0 && plan && plan !== 'free' && <span style={line}>{t('settings.sync.held.freePlan', { n: held.freePlan })}</span>}
+      {held.stalled > 0 && <span role="alert" style={{ ...line, color: 'var(--danger)' }}>{t('settings.sync.held.stalled', { m: held.stalled })}</span>}
+      {held.notStarted && <span role="alert" style={{ ...line, color: 'var(--danger)' }}>{t('settings.sync.held.notStarted')}</span>}
+    </>
   );
 }
 
