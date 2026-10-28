@@ -41,6 +41,8 @@ export async function GET(req) {
       anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       session: data.session,
     });
+    // 게스트 회사 자동 귀속은 여기서 하지 않는다 — 공개 GET이고 token_hash에는 PKCE가 없어, 다른 사이트가 공격자 계정 링크로 이 주소를 열게 하면
+    // 게스트 회사가 그 계정으로 넘어간다(PR #1183 검수 재현). 남은 회사는 CSRF 검사·확인을 거치는 [이 계정에 연결](/api/account/claim)로만 귀속한다.
     ensureSync(); // 자격이 방금 생겼다 — 재시작 없이 동기화 기동
     res.cookies.set('argo-device', '1', { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 24 * 365 });
   }

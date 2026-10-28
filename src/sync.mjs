@@ -444,10 +444,14 @@ async function holdSyncLock() {
   try {
     const cur = JSON.parse(await readFile(f, 'utf8'));
     if (cur.pid !== process.pid && Date.now() - cur.ts < LOCK_STALE_MS) {
-      try { process.kill(cur.pid, 0); return false; } catch { /* 죽은 pid → 탈취 */ }
+      // 잠금 주인(pid·앱 버전·주인이 처음 잡은 시각)을 진단용으로 남긴다 — 앱 업데이트 뒤 옛 프로세스가 남아 잠금을 쥐는지 화면·로그에서 가른다(2026-10-28 고객 C 조사)
+      try { process.kill(cur.pid, 0); lockState.holder = { pid: Number(cur.pid) || null, ver: typeof cur.ver === 'string' ? cur.ver.slice(0, 24) : null, since: Number(cur.since) || null }; return false; } catch { /* 죽은 pid → 탈취 */ }
     }
   } catch { /* 없음/손상 → 획득 */ }
-  try { await mkdir(WS_ROOT, { recursive: true }); await writeFile(f, JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch { /* 쓰기 실패 시에도 진행 */ }
+  lockState.holder = null;
+  lockState.since ??= Date.now();
+  // ver·since는 진단용(다른 프로세스가 대기 화면에 보인다) — 판정은 종전처럼 pid·ts만 본다(옛 판의 잠금 파일도 그대로 읽는다)
+  try { await mkdir(WS_ROOT, { recursive: true }); await writeFile(f, JSON.stringify({ pid: process.pid, ts: Date.now(), ver: APP_VERSION ?? null, since: lockState.since })); } catch { /* 쓰기 실패 시에도 진행 */ }
   return true;
 }
 
@@ -2288,7 +2292,37 @@ export function syncStatus() {
   // 별도 번들에서 사본이 갈라져 항상 null이 되는 함정(위 lease 주석과 동일 클래스).
   // 주인 없는 회사(no-owner)는 화면에 싣지 않는다 — 동기화한 적도 클라우드 사본도 없다(설정 화면은 companies[ws] 존재를 '동기화한 적 있음'으로 읽는다).
   const companies = Object.fromEntries(Object.entries(status.companies).filter(([, c]) => c?.skipped !== 'no-owner'));
-  return { ...status, on: syncOn(), leader: isCloudLeader(), companies, quota: quotaStatus() };
+  const on = syncOn();
+  const held = syncHeldView(status, { on, loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder, cycleMs: CYCLE_MS });
+  return { ...status, on, leader: isCloudLeader(), companies, quota: quotaStatus(), held };
+}
+/** 동기화가 회사를 건너뛴 이유 요약(순수, 설정 '기기 간 동기화' 카드용) — 회사 수와 상태만 싣는다(회사 id·이름 없음: 같은 기기의 다른 계정 화면에도 실린다).
+    2026-10-28 고객 C: 메인 PC의 회사가 노트북에 안 내려왔는데 카드에는 아무 이유도 없었다.
+    · noOwner     = 주인 없는 회사(게스트 시절 생성·귀속 안 함) — 클라우드에 자리가 없어 올리지 않는다. 카드가 [이 계정에 연결]을 준다.
+    · foreignOwner= 다른 계정이 주인인 회사 — 이 계정으로는 올리지 않는다.
+    · freePlan    = 이 기기의 동기화가 무료로 판정해 건너뛴 회사(계정 요금제가 Pro면 판정 갱신 대기 — 결제 화면 조회가 캐시를 지운다).
+    · lockWait    = 같은 데이터 폴더를 다른 Argo 프로세스가 동기화 중이라 기다림.
+    · stalled     = 사이클이 끝난 지 오래(분) — 사이클 중이 아닌데 정한 시간 넘게 다음 사이클이 없다. 긴 사이클(큰 파일)은 정지로 보지 않는다.
+    · notStarted  = 동기화 자격은 있는데 이 프로세스에 루프가 없다.
+    건너뜀은 마지막 로컬 수집(scanAt) 이후에 기록된 것만 센다 — 귀속·삭제된 회사의 옛 표지가 남지 않게. */
+export const STALL_AFTER_MS = (cycleMs) => Math.max(20 * cycleMs, 3 * 60_000);
+export function syncHeldView(st, { now = Date.now(), on, loopStarted, lockElsewhere = false, lockHolder = null, cycleMs = CYCLE_MS } = {}) {
+  const count = (kind) => (on ? Object.values(st?.companies ?? {}).filter((c) => c?.skipped === kind && Number(c.ts) >= (Number(st?.scanAt) || 0)).length : 0);
+  const idle = on && loopStarted && !st?.cycling && Number(st?.cycleEndAt) > 0 ? now - Number(st.cycleEndAt) : 0;
+  return {
+    noOwner: count('no-owner'),
+    foreignOwner: count('foreign-owner'),
+    freePlan: count('free-plan'),
+    lockWait: !!(on && lockElsewhere),
+    stalled: idle > STALL_AFTER_MS(cycleMs) ? Math.floor(idle / 60_000) : 0,
+    notStarted: !!(on && !loopStarted),
+    // 진단(2026-10-28 PR #1183 검수 요청) — 지금 루프 단계·마지막 사이클 끝 시각·마지막 오류 종류·잠금 주인(pid·앱 버전). 개인 정보·토큰 없음.
+    phase: !on ? 'off' : !loopStarted ? 'not-started' : (st?.phase ?? 'starting'),
+    lastCycleAt: Number(st?.cycleEndAt) || null,
+    errorCode: on ? (st?.errorCode ?? '') : '',
+    lockPid: on && lockElsewhere ? (lockHolder?.pid ?? null) : null,
+    lockVer: on && lockElsewhere ? (lockHolder?.ver ?? null) : null,
+  };
 }
 /** 새 기기의 첫 동기화가 아직 끝나지 않았는가(홈 화면용, 순수 판독) — 동기화가 켜져 있고 ① 원격에서 처음 발견한 회사를 내려받는 중이거나
     ② 사이클이 한 번도 끝나지 않았고 기기 전체 오류(자격 없음·다른 프로세스가 동기화 중·요금제 차단)도 없다. 오류가 있으면 거짓 — 끝나지 않는 "내려받는 중"을 막는다.
@@ -2339,6 +2373,7 @@ const currentSessionUid = () => ((loadSyncCreds() && serviceCredsAllowed()) ? nu
     에러를 무한 반복하던 실사고(2026-07-25, lean-ax-zl5j). 격리 정책이 맞고, 남의 회사를 밀지 않는
     것이 동기화의 몫이다. 서비스 모드(셀프호스트·워커)는 다중 오너가 정당하므로 게이트 없음. */
 async function collectLocalTargets(sessionUid) {
+  status.scanAt = Date.now(); // 이번 수집의 시작 — 이보다 오래된 건너뜀 표지는 화면 요약(syncHeldView)에서 세지 않는다
   const targets = new Map(); // wsId → owner
   const noSecretsWs = new Set(); // credSync:false 회사 — 자격 3종 불가시 + 클라우드 사본 회수(syncCompany opts)
   let entries = [];
@@ -2520,12 +2555,31 @@ function startLeaseLoop() {
   })();
 }
 
+/** 루프 단계(진단) — 'not-started'(자격 없이 기동·루프 없음) · 'no-creds'(기기 세션 없음·만료·최소 버전 미만) · 'lock-wait'(다른 프로세스가 잠금) ·
+    'plan-check'(요금제 확인 중) · 'free'(무료 판정 — 이 기기에만) · 'paywalled' · 'syncing'(회사 루프) · 'idle'(사이클 끝).
+    errorCode = 마지막 오류의 종류('auth'·'other-process'·'paywall'·'company'·'exception'·''). 문장 원문(회사 id·경로가 섞일 수 있음)은 화면 title에만 쓴다. */
+function setPhase(phase, errorCode = '') { status.phase = phase; status.errorCode = errorCode || ''; }
+/** '[argo] sync …' 한 줄 — 단계·오류 종류·요금제·잠금 주인(pid·앱 버전)·회사 수가 바뀌었을 때와 그대로여도 1시간마다(진단 로그 파일이 이 줄을 남긴다, #1184).
+    토큰·계정 id·이메일·회사 id·경로는 싣지 않는다(개수와 상태만). */
+const SYNC_LOG_EVERY_MS = 60 * 60_000;
+function logSyncPhase(now = Date.now()) {
+  const h = syncHeldView(status, { now, on: syncOn(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder });
+  const line = `[argo] sync phase=${h.phase} err=${h.errorCode || '-'} plan=${status.plan ?? '-'} lock=${h.lockWait ? `pid:${h.lockPid ?? '?'}/v${h.lockVer ?? '?'}` : '-'} noOwner=${h.noOwner} foreign=${h.foreignOwner} free=${h.freePlan} ver=${APP_VERSION ?? '-'}`;
+  const key = line;
+  const last = (globalThis.__argoSyncPhaseLog ??= { key: '', at: 0 });
+  if (key === last.key && now - last.at < SYNC_LOG_EVERY_MS) return;
+  last.key = key; last.at = now;
+  console.log(line);
+}
+
 /** 한 사이클 — 진행 중 여부(cycling)와 원격에서 처음 발견한 회사 복원 중 여부(restoring)를 화면용 상태에 남긴다(firstSyncPending). */
 async function cycle() {
   status.cycling = true;
   let reached = false;
   try { reached = await cycleOnce(); } finally {
     status.cycling = false;
+    status.cycleEndAt = Date.now(); // 루프 정지 판정(syncHeldView.stalled)의 기준
+    logSyncPhase();
     // 매니페스트 보류로 첫 복원이 남아 있으면(restorePending) 사이클 사이에도 restoring을 유지한다 — 홈이 빈 목록 대신 "내려받는 중"을 보인다.
     // 사이클이 회사 루프를 마쳤을 때만(자격 없음·다른 프로세스·요금제 차단·예외로 일찍 끝나면 종전처럼 끈다 — 끝나지 않는 "내려받는 중" 방지)
     status.restoring = reached === true && restorePending.size > 0;
@@ -2533,11 +2587,12 @@ async function cycle() {
 }
 
 async function cycleOnce() {
-  if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; return; }
+  if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; setPhase('no-creds', 'auth'); return; }
   // 크로스 프로세스 락 — 같은 root를 다른 살아있는 프로세스가 동기화 중이면 파일 동기화는 대기(이중 동기화=대형 유실 차단)
   lockState.elsewhere = !(await holdSyncLock());
   if (lockState.elsewhere) {
     status.lastError = '같은 데이터 루트를 다른 프로세스가 동기화 중 — 이 인스턴스는 대기';
+    setPhase('lock-wait', 'other-process');
     // 파일 동기화는 대기한다. 실행 담당 판정은 리스 타이머(startLeaseLoop)가 이 프로세스가 실행 리스 주인이면 따로 한다(leaseTick 주석).
     // 로컬 회사 수집은 그대로 한다 — 주인 없는·다른 계정 회사의 결과(no-owner·foreign-owner)를 이 프로세스에도 남겨야 놓친 루틴 회차 판정(companySyncedSince)이
     // 그 회사를 보류하지 않는다(B25 — 종전에는 리스 중재가 이 수집을 대신 불렀다).
@@ -2583,13 +2638,14 @@ async function cycleOnce() {
   // 조회 실패는 가용성 우선 통과(fail-open) — 최종 집행은 서버 RLS. (fetchPlan이 예외 대부분을 null로
   // 삼키므로 이 catch는 심층 방어다.)
   let freePlan = false;
+  setPhase('plan-check', status.errorCode);
   if (!(loadSyncCreds() && serviceCredsAllowed())) {
     try {
       // 계정별 10분 캐시(src/plan-cache.mjs) — 매 주기 /auth/v1/user + rpc/my_plan 2건이던 것(프로세스당 분당 15건)을 10분에 2건으로.
       // 키에 세션 사용자를 넣어 계정이 바뀌면 바로 빗나가고, 업로드 거절(아래)·결제 화면 조회(me/billing)가 캐시를 지운다.
       const ent = await resolvePlan(keyOwner || localOwners[0] || null, sessionUid);
       status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
-      if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
+      if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; setPhase('paywalled', 'paywall'); return; }
       freePlan = ent.plan === 'free' || (ent.plan == null && planIsFreeLocal()); // 조회 실패면 같은 계정의 마지막 확정 판정(F6)
     } catch (e) {
       status.plan = null; // stale 잔존 차단 — 직전 사이클 plan이 설정 배지에 남지 않게(분리 검수 LOW)
@@ -2600,11 +2656,13 @@ async function cycleOnce() {
   // 하지 않는다 — 계정 키·기기 키·DEK·목록·색인·tombstone·파일 왕복 모두. 서버도 무료 계정의 읽기·쓰기를 막고(20261019130000·130100) 무료 사본은
   // 정리됐다(2026-10-19 유건 결정) — 종전 복원 예외(로컬 0개·state 없는 회사의 클라우드 복원)는 받을 것이 없다.
   if (freePlan) {
+    setPhase('free', '');
     for (const wsId of targets.keys()) status.companies[wsId] = { ts: Date.now(), skipped: 'free-plan' };
     status.lastError = '';
     status.lastTs = Date.now();
     return true;
   }
+  setPhase('syncing', status.errorCode);
   // 계정 키 확보 — 크레덴셜 봉투(v2)의 열쇠. 실패해도 사이클은 계속(크레덴셜만 이번 사이클 제외).
   await ensureAccountKey(client(), keyOwner);
   // E2EE 단계 0 — 기기 공개키 등록부 구축(내부 1회 가드·실패 무해). 켜기 전까지 다른 동작 없음.
@@ -2722,8 +2780,28 @@ async function cycleOnce() {
   if (companyFailed === 0) {
     status.lastError = '';
   }
+  setPhase('idle', companyFailed ? 'company' : '');
   status.lastTs = Date.now();
   return true; // 회사 루프까지 마쳤다(cycle()의 restoring 유지 판정)
+}
+
+/** 자격이 아직 없을 때(게스트·로그아웃 상태로 기동) — 기기 세션·페어링 자격 파일이 생기면 루프를 붙인다. 로그인 라우트(device/login·link·
+    auth/callback·confirm·pair/accept)는 저장 직후 ensureSync()를 직접 부르지만, 그 밖의 경로(같은 데이터 폴더에 다른 프로세스 — 터미널 argo 등 — 가
+    로그인을 저장, 라우트 번들 밖 저장)는 재시작 전까지 동기화가 아예 없었다(2026-10-28 고객 C 조사 — 메인 PC 세션에 storage·색인 요청 0).
+    네트워크 요청은 없다: CYCLE_MS마다 파일 두 개의 존재만 본다(loadDeviceSession은 mtime 도장 캐시). ARGO_SYNC=0이면 보지 않는다.
+    타이머는 unref — 프로세스 종료를 붙잡지 않는다. Next 번들이 갈려도 globalThis 표지 하나만 돈다. */
+function watchForCreds() {
+  if (process.env.ARGO_SYNC === '0' || globalThis.__argoSync || globalThis.__argoSyncCredWatch) return;
+  console.log(`[argo] sync phase=not-started err=no-creds ver=${APP_VERSION ?? '-'}`); // 자격 없이 기동 — 진단 로그에 남긴다(감시 시작 때 한 번)
+  const iv = setInterval(() => {
+    if (globalThis.__argoSync) { clearInterval(iv); globalThis.__argoSyncCredWatch = null; return; }
+    if (!syncOn()) return;
+    clearInterval(iv); globalThis.__argoSyncCredWatch = null;
+    console.log('[argo] 동기화 자격 확인 — 루프 시작');
+    ensureSync();
+  }, CYCLE_MS);
+  iv.unref?.();
+  globalThis.__argoSyncCredWatch = iv;
 }
 
 /** 즉시 동기화 요청 — 로컬 변경(메시지 전송 등) 직후 호출하면 다음 대기를 건너뛰고 바로 push/pull.
@@ -2735,7 +2813,7 @@ export function nudgeSync() {
 }
 
 export function ensureSync() {
-  if (!syncOn()) return;
+  if (!syncOn()) { watchForCreds(); return; }
   if (globalThis.__argoSync) return;
   globalThis.__argoSync = true;
   (async () => {
@@ -2746,7 +2824,7 @@ export function ensureSync() {
     startLeaseLoop(); // 실행 담당 판정은 파일 동기화와 따로(leaseTick)
     for (;;) {
       globalThis.__argoSyncPending = false;
-      try { await cycle(); } catch (e) { status.lastError = String(e.message).slice(0, 120); }
+      try { await cycle(); } catch (e) { status.lastError = String(e.message).slice(0, 120); setPhase(status.phase, 'exception'); }
       if (globalThis.__argoSyncPending) continue; // 사이클 도중 nudge 도착 → 대기 없이 즉시 재실행
       await new Promise((resolve) => {
         let done = false;
