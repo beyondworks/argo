@@ -812,13 +812,16 @@ const RUNTIME_TEXT = {
   login: ['이 기기의 Argo 로그인이 필요', 'this device needs an Argo login'],
   owner: ['이 회사를 만든 계정으로 로그인해야 응답', 'sign in with the account that created this company'],
   company: ['회사 설정을 읽지 못해 시작하지 못함', "couldn't read company settings"],
+  // 새 메신저 연결(agent-link, 옛 브리지 꺼짐 — 0.1.115부터 기본): 옛 브리지 심박은 오지 않으므로 'offline'로 읽지 않는다(2026-10-28 제보)
+  link: ['새 Argo 메신저로 연결 — 이 컴퓨터에서 Argo가 켜져 있으면 메신저에서 에이전트에게 일을 맡길 수 있음', 'connected through the new Argo Messenger — while Argo is running on this computer, agents take work from Messenger'],
 };
 
 async function messengerSection(wsId, { lang, now }) {
   const [{ msgrGatewayStatus, msgrRuntimeState, gatewayStatus, loadConnections }, { notifyChannelState }, { loadDeviceSession, deviceSessionDead }, company] = await Promise.all([
     import('./connections.mjs'), import('./msgr-notify.mjs'), import('./devicesession.mjs'), loadCompany(wsId).catch(() => ({}))]);
   const L = ko(lang) ? 0 : 1;
-  const rt = msgrRuntimeState(await msgrGatewayStatus(wsId));
+  const { msgrV2Mode } = await import('./agent-link-flags.mjs');
+  const rt = msgrV2Mode() ? { state: 'link' } : msgrRuntimeState(await msgrGatewayStatus(wsId)); // 새 메신저면 옛 브리지 응답 상태를 보지 않는다
   const gw = await gatewayStatus(wsId).catch(() => null);
   const conns = await loadConnections(wsId).catch(() => ({}));
   const signedIn = !!loadDeviceSession()?.user?.id && !deviceSessionDead(); // 기기 세션 파일만 본다(토큰 갱신·네트워크 0)

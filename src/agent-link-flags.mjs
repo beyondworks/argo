@@ -9,6 +9,9 @@ const ON = new Set(['1', 'on', 'true', 'yes']);
 export const agentLinkEnabled = (env = process.env) => !OFF.has(val(env.ARGO_AGENT_LINK));
 /** 옛 메신저 브리지: 기본 끔. ARGO_MSGR_LEGACY가 1·on·true·yes일 때만 켠다. */
 export const legacyMsgrBridgeEnabled = (env = process.env) => ON.has(val(env.ARGO_MSGR_LEGACY));
+/** 이 앱이 메신저에 새 연결로만 붙는가 — 새 연결 켬 + 옛 브리지 끔(0.1.115부터 기본). 설정 '메신저 연결' 카드와 에이전트 상태 도구가
+    옛 중단 스위치·옛 브리지 응답 상태 대신 새 메신저 안내를 보일지 고른다(2026-10-28 제보). */
+export const msgrV2Mode = (env = process.env) => agentLinkEnabled(env) && !legacyMsgrBridgeEnabled(env);
 /** 메신저 v2 회의방·외부 봇 경로(A+): 새 연결이 켜져 있으면 기본 켬. ARGO_MSGR_MEETING이 0·off·false·no면 끈다(그때는 회의방 일도 1:1 경로).
     서버는 본체가 알린 기능(features)의 offer만 만든다 — 서버 스위치가 회의방을 열기 전에는 회의방 일이 오지 않는다. */
 export const msgrMeetingEnabled = (env = process.env) => agentLinkEnabled(env) && !OFF.has(val(env.ARGO_MSGR_MEETING));

@@ -6,16 +6,18 @@ import { sessionClient } from '../../../../../src/gateway/msgr.mjs';
 import { loadCompany } from '../../../../../src/workspace.mjs';
 import { pauseState, cachedPause } from '../../../../../src/msgr-archive.mjs';
 import { archiveStatus, startArchive } from '../../../../../src/msgr-archive-run.mjs';
+import { msgrV2Mode } from '../../../../../src/agent-link-flags.mjs';
 
 export async function GET(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
+  const v2 = msgrV2Mode(); // 새 메신저 연결만 쓰는 앱 — 설정 카드가 옛 중단 스위치 대신 새 메신저 안내를 보인다(msgrPausedView, 2026-10-28 제보). 요청 0
   const c = await sessionClient().catch(() => null);
-  if (!c) return Response.json({ signedIn: false, paused: cachedPause()?.paused === true, status: 'none' });
+  if (!c) return Response.json({ signedIn: false, paused: cachedPause()?.paused === true, status: 'none', v2 });
   // ?local=1 — 회사 화면 머리의 완료 안내가 쓴다. 스위치는 읽은 값만(RPC 0회) — 앱 시작 확인·설정 화면이 이미 읽는다
   const local = new URL(req.url).searchParams.get('local') === '1';
   const pause = local ? (cachedPause() ?? { paused: false, since: null }) : await pauseState(c.client);
-  return Response.json({ signedIn: true, paused: pause.paused, since: pause.since, ...(await archiveStatus(c.uid, ws)) });
+  return Response.json({ signedIn: true, paused: pause.paused, since: pause.since, v2, ...(await archiveStatus(c.uid, ws)) });
 }
 
 export async function POST(req, { params }) {

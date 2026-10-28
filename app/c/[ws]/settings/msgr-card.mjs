@@ -13,9 +13,13 @@ export const MESSENGER_WAITLIST = 'https://argo.ceo/messenger#waitlist'; // 메�
     msgrCard = 'full'(지금 카드) | 'waitlist'(제목 + '메신저 출시 알림 받기' 단추 하나) · noticeSettingsLink = 회사 화면 완료 안내의 '설정에서 보기' 단추(갈 곳이 없어져 뺀다).
     paused = GET /api/companies/[ws]/msgr-archive 응답의 paused(설정 화면 부모가 연결 탭을 열 때 한 번 읽는다, 서버는 10분 캐시 — 새 주기 호출 없음).
     known = 그 응답을 받았나(실패도 받은 것으로 본다 — 실패면 paused false, main과 같다). 받기 전에는 msgrCard 'pending'(카드 자리를 비운다):
-    MsgrCard가 먼저 그려졌다가 출시 알림 카드로 바뀌며 GET /msgr·이관 GET을 한 번씩 더 보내던 깜빡임을 막는다(검수 1, 2026-10-16). */
-export function msgrPausedView(paused, { known = true } = {}) {
+    MsgrCard가 먼저 그려졌다가 출시 알림 카드로 바뀌며 GET /msgr·이관 GET을 한 번씩 더 보내던 깜빡임을 막는다(검수 1, 2026-10-16).
+    v2 =같은 응답의 v2(이 앱이 새 메신저 연결 agent-link로 붙고 옛 브리지는 꺼진 상태 — 0.1.115부터 기본값, src/agent-link-flags.mjs).
+    그때 옛 중단 스위치(msgr_paused)·옛 브리지 응답 상태는 이 앱과 무관하다 — 'v2' 카드(새 메신저에서 바로 연결된다는 안내 + 메신저 받기)를 보인다
+    (2026-10-28 제보: 0.1.118 Windows에서 메신저 재오픈 뒤에도 '출시 알림 받기'만 보이거나 '응답을 확인하지 못함'이 계속 뜸). */
+export function msgrPausedView(paused, { known = true, v2 = false } = {}) {
   const on = paused === true;
+  if (known && v2 === true) return { showMsgrNotify: !on, msgrCard: 'v2', noticeSettingsLink: true };
   return { showMsgrNotify: !on, msgrCard: !known ? 'pending' : on ? 'waitlist' : 'full', noticeSettingsLink: !on };
 }
 

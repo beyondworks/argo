@@ -28,6 +28,7 @@ const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 // 설정 탭 — 각 카드는 정확히 한 탭에만 속한다(test/tabs-layout). 렌더 순서: 작은 카드 → 전폭(.wide) 카드.
 const SETTINGS_TABS = ['general', 'ai', 'connections', 'devices', 'danger'];
 import { checkoutUrl } from './checkout-link.mjs';
+import { openAuthUrl } from './connector-open.mjs'; // 커넥터 인가 창 — 앱에서는 시스템 브라우저(2026-10-28 제보)
 import { gistLabel } from '../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 import { nameplateOwner } from '../../../lib/nameplate-owner.mjs'; // 명패 사용자 줄 — 기본값 'captain'을 그대로 보이지 않는다(M10)
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
@@ -63,7 +64,7 @@ function Settings({ params }) {
     api(`/api/companies/${ws}/msgr-archive`).then((d) => { if (live) { setMsgrPaused(d?.paused === true); setMsgrArchive(d ?? null); } }).catch(() => { if (live) setMsgrPaused(false); }); // 실패 = 모름 → main과 같은 카드
     return () => { live = false; };
   }, [ws, tab, msgrPaused]);
-  const pv = msgrPausedView(msgrPaused, { known: msgrPaused !== null });
+  const pv = msgrPausedView(msgrPaused, { known: msgrPaused !== null, v2: msgrArchive?.v2 === true }); // v2 = 새 메신저 연결(옛 브리지 꺼짐) — 옛 카드 대신 새 메신저 안내
 
   useEffect(() => {
     api(`/api/companies/${ws}`).then((d) => {
@@ -207,7 +208,7 @@ function Settings({ params }) {
       {tab === 'connections' && (
       <div className="cardcols" data-tab-pane="connections">
       <div className="cardrow"><NotifyChannelsCard ws={ws} showMsgr={pv.showMsgrNotify} /></div>
-      <div className="cardrow">{pv.msgrCard === 'pending' ? null : pv.msgrCard === 'waitlist' ? <MsgrWaitlistCard archive={msgrArchive} /> : <MsgrCard ws={ws} agents={data?.agents ?? []} />}</div>
+      <div className="cardrow">{pv.msgrCard === 'pending' ? null : pv.msgrCard === 'v2' ? <MsgrV2Card archive={msgrArchive} /> : pv.msgrCard === 'waitlist' ? <MsgrWaitlistCard archive={msgrArchive} /> : <MsgrCard ws={ws} agents={data?.agents ?? []} />}</div>
       <div className="cardrow">
       <ConnectionCard ws={ws} kind="telegram" title={t('activity.telegram')}
         help={t('settings.conn.tgHelp')}
@@ -930,6 +931,28 @@ function MsgrWaitlistCard({ archive = null }) {
   );
 }
 
+/** 새 메신저 연결(agent-link, 옛 브리지 꺼짐 — 0.1.115부터 기본)일 때 'Argo 메신저 연결' 카드 자리 — 옛 브리지의 조직 등록·응답 상태 대신
+    새 메신저에서 이 컴퓨터로 바로 연결된다는 안내와 '메신저 받기' 하나(2026-10-28 제보, msgrPausedView 'v2'). */
+function MsgrV2Card({ archive = null }) {
+  const { t } = useLang();
+  const link = msgrGetLink(false);
+  const line = waitlistArchiveLine(archive); // 옮겨진 메신저 기록 한 줄 — 출시 알림 카드와 같은 자리(보관 폴더를 다시 찾을 곳)
+  const openFolder = () => import('@tauri-apps/plugin-opener').then((m) => m.revealItemInDir(`${line.dir}/README.md`)).catch(() => {});
+  return (
+    <div className="card msgr-v2" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <span className="card-title">{t('settings.msgr.title')}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.v2Line')}</p>
+      <div><a className="btn sm" href={link.href} target="_blank" rel="noopener noreferrer">{t(link.labelKey)}</a></div>
+      {line && <div className="msgr-archive-line" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--fg-2)' }}>
+        <span>{t('settings.msgr.archiveLine')}</span>
+        {isTauriApp()
+          ? <button type="button" className="btn sm" onClick={openFolder}>{t('settings.msgrArchive.open')}</button>
+          : <span className="mono" style={{ overflowWrap: 'anywhere', color: 'var(--fg-1)' }}>{line.dir}</span>}
+      </div>}
+    </div>
+  );
+}
+
 function MsgrCard({ ws, agents }) {
   const { t } = useLang();
   const [st, setSt] = useState(null); // { signedIn, orgs:[{id,name,role}], crews:[등록 행] }
@@ -1301,8 +1324,10 @@ function ConnectorsCard({ ws }) {
     try {
       const d = await api(`/api/companies/${ws}/connectors`, { id, action });
       if (action === 'connect' && d.authUrl) {
-        window.open(d.authUrl, '_blank', 'noopener,noreferrer'); // 동의는 사용자 계정 행위 — 새 창에서
-        setWaiting(id);
+        // 앱 웹뷰는 window.open을 무시한다 — 시스템 브라우저로 연다(connector-open.mjs, 2026-10-28 제보)
+        const opened = await openAuthUrl(d.authUrl, { tauri: isTauriApp(), openUrl: (u) => import('@tauri-apps/plugin-opener').then((m) => m.openUrl(u)), windowOpen: (...a) => window.open(...a) });
+        if (opened) setWaiting(id);
+        else setErr(t('login.openFailed'));
       }
       await load();
     } catch (e) {
