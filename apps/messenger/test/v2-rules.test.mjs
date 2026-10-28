@@ -152,6 +152,33 @@ test('④ 기기 목록·상태 안내(U6c-2a): 이 기기 먼저·사용 중 �
   for (const k of ['v2.state.paused', 'v2.state.update', 'v2.state.signedOut', 'v2.state.loginRequired']) assert.doesNotMatch(DICT[k][1], /[가-힣]/, k);
 });
 
+test('④ 기기 로그아웃 문구(2026-10-28): 데스크톱 Argo(실행기·상주 서버)가 함께 로그아웃되면 확인 창·완료 안내에 받지 못함·다시 로그인을 알린다', async () => {
+  const { deviceRows, revokeCopy } = await import('../src/v2/devices.mjs');
+  const me = { id: 'b', kind: 'app', app: 'messenger', state: 'active', is_current: true };
+  const phone = { id: 'p', kind: 'app', app: 'messenger', state: 'active', is_current: false };
+  const runner = { id: 'r', kind: 'runner', app: 'desktop', state: 'active', is_current: false };
+  const resident = { id: 's', kind: 'resident', app: 'other', state: 'active', is_current: false };
+  // 모든 기기: 사용 중인 데스크톱 기기가 있으면 경고·완료 안내가 바뀐다
+  for (const extra of [runner, resident]) {
+    const c = revokeCopy({ kind: 'all' }, deviceRows([me, phone, extra]));
+    assert.deepEqual([c.title, c.desc, c.confirm, c.done], ['v2.dev.all.title', 'v2.dev.all.descDesktop', 'v2.dev.all', 'v2.dev.all.doneDesktop'], extra.kind);
+  }
+  // 데스크톱 기기가 없거나 이미 로그아웃·만료됐으면 종전 문구
+  assert.deepEqual(revokeCopy({ kind: 'all' }, deviceRows([me, phone])), { title: 'v2.dev.all.title', desc: 'v2.dev.all.desc', confirm: 'v2.dev.all', done: 'v2.dev.all.done' });
+  assert.equal(revokeCopy({ kind: 'all' }, deviceRows([me, { ...runner, state: 'revoked' }, { ...resident, state: 'expired' }])).desc, 'v2.dev.all.desc');
+  // 한 기기: 실행기 줄이면 데스크톱 문구, 메신저 앱 줄이면 종전 문구
+  const rows = deviceRows([me, phone, runner]);
+  const one = (id) => revokeCopy({ kind: 'one', row: rows.find((x) => x.id === id) });
+  assert.deepEqual([one('r').desc, one('r').done], ['v2.dev.revoke.descDesktop', 'v2.dev.revokedDesktop']);
+  assert.deepEqual([one('p').desc, one('p').done], ['v2.dev.revoke.desc', 'v2.dev.revoked']);
+  // 사전: ko·en 둘 다, 영어에 한글 없음, 경고 문구는 '데스크톱 Argo'·다시 로그인을 말한다
+  for (const k of ['v2.dev.all.descDesktop', 'v2.dev.all.doneDesktop', 'v2.dev.revoke.descDesktop', 'v2.dev.revokedDesktop']) {
+    assert.ok(DICT[k]?.[0] && DICT[k]?.[1], k); assert.doesNotMatch(DICT[k][1], /[가-힣]/, k);
+    assert.match(DICT[k][0], /Argo/, k); assert.match(DICT[k][0], /다시 로그인/, k); assert.match(DICT[k][1], /Argo/, k); assert.match(DICT[k][1], /[Ss]ign in again/, k);
+  }
+  for (const k of ['v2.dev.all.descDesktop', 'v2.dev.revoke.descDesktop']) { assert.match(DICT[k][0], /받지 못합니다/, k); assert.match(DICT[k][1], /stops receiving work/, k); }
+});
+
 // ── #1086 검수 1·2: 등록 대기 상한·다시 붙기 그만둠·뒤로 감, 이 기기 폐기 실패 ──────────────────────
 function fakeMachine(snap) {
   const fns = new Set(); let s = snap; let retries = 0;

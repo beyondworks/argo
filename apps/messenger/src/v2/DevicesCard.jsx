@@ -3,7 +3,7 @@
 // 읽는 때: 카드를 열 때 한 번, 로그아웃한 뒤 한 번(주기 조회 없음). 모든 기기 로그아웃 = 다른 기기를 하나씩 폐기한 뒤 이 기기도 폐기하고 로그아웃.
 import { useCallback, useEffect, useState } from 'react';
 import { ConfirmModal } from '@argo/ui';
-import { deviceRows, revokeAllDevices } from './devices.mjs';
+import { deviceRows, revokeAllDevices, revokeCopy } from './devices.mjs';
 
 export function DevicesCard({ client, t, lang, onSignedOut, onError, onNote }) {
   const [rows, setRows] = useState(null); const [err, setErr] = useState(false);
@@ -17,12 +17,13 @@ export function DevicesCard({ client, t, lang, onSignedOut, onError, onNote }) {
   useEffect(() => { void load(); }, [load]);
   const view = deviceRows(rows ?? [], { lang });
   const revoke = async (id) => { const r = await client.rpc('msgr2_device_revoke', { p_device: id }); if (r.error) throw new Error(r.error.message); return r.data; };
+  const copy = ask ? revokeCopy(ask, view) : null; // 데스크톱 Argo(실행기·상주 서버)가 함께 로그아웃되면 경고·완료 안내가 바뀐다(문구만)
   const confirm = async () => {
     if (!ask) return; setBusy(true);
     try {
-      if (ask.kind === 'one') { await revoke(ask.row.id); onNote?.(t('v2.dev.revoked')); setAsk(null); await load(); return; }
+      if (ask.kind === 'one') { await revoke(ask.row.id); onNote?.(t(copy.done)); setAsk(null); await load(); return; }
       if (await revokeAllDevices(view, revoke) === 'self_failed') { onError?.(t('v2.dev.selfFailed')); await load().catch(() => {}); return; } // 순서·실패 규칙은 devices.mjs
-      setAsk(null); onSignedOut?.('v2.dev.all.done');
+      setAsk(null); onSignedOut?.(copy.done);
     } catch { onError?.(t('v2.dev.revokeFailed')); await load().catch(() => {}); } finally { setBusy(false); }
   };
   const others = view.filter((x) => x.active && !x.current).length;
@@ -44,8 +45,8 @@ export function DevicesCard({ client, t, lang, onSignedOut, onError, onNote }) {
         ))}
       </div>}
       {view.some((x) => x.active) && <div className="row"><button type="button" className="btn sm danger" disabled={busy} onClick={() => setAsk({ kind: 'all' })}>{t('v2.dev.all')}</button>{others > 0 && <span className="msgr-klabel">{t('v2.dev.others', { n: others })}</span>}</div>}
-      {ask && <ConfirmModal title={t(ask.kind === 'all' ? 'v2.dev.all.title' : 'v2.dev.revoke.title')} description={t(ask.kind === 'all' ? 'v2.dev.all.desc' : 'v2.dev.revoke.desc')}
-        confirmLabel={t(ask.kind === 'all' ? 'v2.dev.all' : 'v2.dev.revoke')} busy={busy} onConfirm={confirm} onClose={() => { if (!busy) setAsk(null); }} />}
+      {ask && <ConfirmModal title={t(copy.title)} description={t(copy.desc)}
+        confirmLabel={t(copy.confirm)} busy={busy} onConfirm={confirm} onClose={() => { if (!busy) setAsk(null); }} />}
     </section>
   );
 }
