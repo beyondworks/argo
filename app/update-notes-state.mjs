@@ -58,6 +58,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.118': Object.freeze(['updates.note.memoryKeep', 'updates.note.msgrShellApproval', 'updates.note.agentOnline']),
   // 0.1.119 — connectorOpen: 커넥터 '연결'이 앱에서 시스템 브라우저로 열림(#1180) · msgrV2Settings: 설정 › 연결·에이전트 상태가 새 메신저 기준(#1180)
   '0.1.119': Object.freeze(['updates.note.connectorOpen', 'updates.note.msgrV2Settings']),
+  // 0.1.120 — msgrLinkStatus: 러너 감지 초과 뒤 재등록·기기 폐기 뒤 재연결·설정에 실제 연결 상태(#1186) · syncStatus: 앱 로그인 게스트 회사 귀속·로그인 뒤 동기화 시작·동기화 카드 진단(#1183) · diagLogs: 출시 빌드 진단 로그와 폴더 열기(#1184)
+  '0.1.120': Object.freeze(['updates.note.msgrLinkStatus', 'updates.note.syncStatus', 'updates.note.diagLogs']),
 });
 
 export function stableVersion(value) {
