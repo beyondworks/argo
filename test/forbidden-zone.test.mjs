@@ -474,7 +474,7 @@ const DOT_ITEMS = [
   ['root', '.account-secrets-local.json'],
   ['root', '.account-secrets-3f2a1b7c-0000-4000-8000-000000000001.json'],
   ['root', '.account-secrets.json'],
-  ['root', '.device-id'], ['root', '.guest-mode.json'],
+  ['root', '.device-id'], ['root', '.guest-mode.json'], ['root', '.claim-pending.json'],
   ['root', '.local-assets/key'], ['ws', '.local-assets/staging/file'],
   ['root', '.sync-process.lock'], ['root', '.tombstones/my-co.json'],
   ['root', '.scheduler.lock'], ['root', '.gateway.lock'], ['root', '.tmp-lease-gateway-123-abc'],
