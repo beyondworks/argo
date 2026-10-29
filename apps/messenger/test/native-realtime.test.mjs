@@ -250,3 +250,53 @@ test('App wires native notification taps into the app-level navigation inbox (su
   assert.match(app, /mountNativeNotificationTaps\([\s\S]+onTap: \(\{ channelId \}\) => \{ if \(!disposed\) offer\(channelId, 'mac'\); \}/);
   assert.match(app, /navInbox\.offer\(\{ channelId, source, owner:/);
 });
+
+// 업데이트 필요 화면(#1178) — 막힌 맥 앱은 네이티브 실시간(소켓·25초 심박·토큰 갱신·REST 읽기)을 시작하지 않고, 돌던 것은 멈춘다(검수 중간 2026-10-27)
+const heldHarness = (held) => {
+  const calls = []; const hold = { on: held };
+  const auth = { stopAutoRefresh: () => calls.push(['stopAutoRefresh']), startAutoRefresh: () => calls.push(['startAutoRefresh']), setSession: async (v) => ({ data: { session: v }, error: null }) };
+  const invoke = async (command, args) => { calls.push([command, args]); return command === 'native_realtime_start' ? { status: 'connected', generation: calls.length, userId: args.session.userId } : { status: 'stopped' }; };
+  const coordinator = createNativeRealtimeCoordinator({ enabled: true, auth, invoke, supabaseUrl: 'https://example.invalid', anonKey: 'public-anon', lang: 'ko', getContext: () => ({}), getHold: () => hold.on });
+  return { coordinator, calls, hold };
+};
+
+test('업데이트 화면으로 켜진 맥 앱: 네이티브 실시간을 시작하지 않는다(native_realtime_start 0) — 토큰 갱신은 JS 쪽에 남는다', async () => {
+  const { coordinator, calls } = heldHarness(true);
+  await coordinator.handleAuth('INITIAL_SESSION', session('u1'));
+  await coordinator.handleAuth('TOKEN_REFRESHED', session('u1', 'a2', 'r2'));
+  assert.equal(calls.filter(([c]) => c === 'native_realtime_start').length, 0);
+  assert.ok(!calls.some(([c]) => c === 'stopAutoRefresh'), '네이티브에 갱신을 넘기지 않는다');
+});
+
+test('돌던 중 업데이트 화면에 막히면 네이티브 실시간을 멈추고, 풀리면 마지막 세션으로 다시 시작한다', async () => {
+  const { coordinator, calls, hold } = heldHarness(false);
+  await coordinator.handleAuth('INITIAL_SESSION', session('u1'));
+  assert.equal(calls[0][0], 'native_realtime_start');
+  calls.length = 0;
+  hold.on = true; await coordinator.setHold();
+  assert.deepEqual(calls.map(([c]) => c), ['native_realtime_stop', 'startAutoRefresh'], '멈춤 = 연결 끊고 갱신은 JS로');
+  calls.length = 0;
+  await coordinator.setHold(); // 같은 상태로 다시 불러도
+  assert.deepEqual(calls.map(([c]) => c), [], '이미 멈춘 상태면 아무것도 보내지 않는다');
+  hold.on = false; await coordinator.setHold();
+  assert.equal(calls[0]?.[0], 'native_realtime_start', '풀림 = 다시 시작');
+  assert.equal(calls[0][1].session.userId, 'u1');
+});
+
+test('로그아웃한 뒤에는 멈춤이 풀려도 다시 시작하지 않는다(마지막 세션 없음)', async () => {
+  const { coordinator, calls, hold } = heldHarness(true);
+  await coordinator.handleAuth('INITIAL_SESSION', session('u1'));
+  await coordinator.handleAuth('SIGNED_OUT', null);
+  calls.length = 0;
+  hold.on = false; await coordinator.setHold();
+  assert.equal(calls.filter(([c]) => c === 'native_realtime_start').length, 0);
+});
+
+test('배선 — 앱 루트가 업데이트 화면 상태로 네이티브 실시간 멈춤을 걸고, 장착 효과보다 먼저 선언한다(첫 시작부터 막힘)', () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const hold = app.indexOf('useEffect(() => { setNativeRealtimeHold(!!updateGate); }, [updateGate]);');
+  assert.ok(hold > 0, '멈춤 배선');
+  assert.ok(hold < app.indexOf('const native = mountNativeRealtime('), '장착보다 먼저');
+  const nr = readFileSync(new URL('../src/native-realtime.mjs', import.meta.url), 'utf8');
+  assert.match(nr, /getHold: \(\) => nativeHold/, '장착한 관리자가 모듈 멈춤 상태를 읽는다');
+});

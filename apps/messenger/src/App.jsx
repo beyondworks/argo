@@ -148,7 +148,7 @@ setDeliveryReporter((kind, message) => pushDiag(kind, message)); // 전송 실�
 import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition, noticeAfterSignIn } from './session-notice.mjs';
-import { createNativeSessionApplier, mountNativeRealtime, mountNativeNotificationTaps, updateNativeRealtimeContext } from './native-realtime.mjs';
+import { createNativeSessionApplier, mountNativeRealtime, mountNativeNotificationTaps, updateNativeRealtimeContext, setNativeRealtimeHold } from './native-realtime.mjs';
 import { createSessionRecovery, waitingView } from './session-recovery.mjs';
 import { createNavInbox, decideNav } from './notif-nav.mjs';
 import { authCleanupState, authStorageKey, hasStoredAuthSession } from './auth-storage.mjs';
@@ -414,6 +414,8 @@ export default function App() {
   const [signingOut, setSigningOut] = useState(false);
   const [updateGate, setUpdateGate] = useState(() => V2 && updateGateActive(globalThis.localStorage, APP_VERSION)); // 이 앱 버전이 서버 최소 버전에 걸렸다 — 셸을 올리지 않는다(요청 0)
   const onUpdateRequired = useCallback(() => { markUpdateGate(globalThis.localStorage, APP_VERSION); setUpdateGate(true); }, []);
+  // 맥 네이티브 실시간도 업데이트 화면 동안 멈춘다(셸을 내려도 루트가 장착한 소켓·심박·토큰 갱신은 남는다 — #1178 검수 중간). 장착 효과보다 먼저 선언(첫 시작부터 막힘)
+  useEffect(() => { setNativeRealtimeHold(!!updateGate); }, [updateGate]); // 세션과 묶지 않는다 — 세션 적용과 네이티브 시작이 같은 틱이라, 세션을 기다리면 한 번 붙었다 끊긴다
   const [cleanupEpoch, setCleanupEpoch] = useState(0);
   const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false); const recoveryRef = useRef(null);
   const screenNoticeKey = useRef(null); // signOutNotice로 띄운 로그인 화면 이유 안내 — 다시 로그인하면 지운다(session-notice.mjs noticeAfterSignIn, F8)
