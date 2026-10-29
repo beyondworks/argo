@@ -13,7 +13,7 @@ import { startFakeSupabase } from './helpers/fake-supabase-http.mjs';
 import { childEnv, srcUrl, seedRoot } from './helpers/sync-child.mjs';
 import {
   lockTakeoverReason, olderLockHolder, LOCK_FROZEN_MS, LOCK_FUTURE_SLACK_MS, LOCK_TAKEOVER_WAIT_MS,
-  syncLoopStalled, SYNC_WATCHDOG_MS, syncDiagTag,
+  syncLoopStalled, SYNC_WATCHDOG_MS, syncDiagTag, watchdogTick,
 } from '../src/sync.mjs';
 
 const fakes = [];
@@ -28,7 +28,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 ${script}
 await sleep(${Number(waitMs)});
 const s = sync.syncStatus();
-process.stdout.write('\\n@@' + JSON.stringify({ held: s.held, lastError: s.lastError, watchdogRestarts: globalThis.__argoSyncStatus?.watchdogRestarts ?? 0, pid: process.pid }) + '\\n');
+if (globalThis.__probe) process.stdout.write('\\n@@probe' + JSON.stringify(globalThis.__probe) + '\\n');
+process.stdout.write('\\n@@' + JSON.stringify({ held: s.held, lastError: s.lastError, watchdogRestarts: globalThis.__argoSyncStatus?.watchdogRestarts ?? 0, busy: globalThis.__argoSyncCompanyBusy?.size ?? 0, pid: process.pid }) + '\\n');
 process.exit(0);`;
   return new Promise((resolve, reject) => {
     const p = spawn(process.execPath, ['--input-type=module', '-e', body], { env: childEnv(root, { ARGO_AGENT_LINK: '0', ...env }), stdio: ['ignore', 'pipe', 'pipe'] });
@@ -38,7 +39,7 @@ process.exit(0);`;
     const t = setTimeout(() => { p.kill('SIGKILL'); reject(new Error(`child timeout\n${err.slice(-2000)}`)); }, waitMs + 40_000);
     p.on('exit', () => {
       clearTimeout(t);
-      const line = out.split('\n').find((l) => l.startsWith('@@'));
+      const line = out.split('\n').find((l) => l.startsWith('@@{'));
       if (!line) return reject(new Error(`no status\n${out.slice(-2000)}\n${err.slice(-2000)}`));
       resolve({ status: JSON.parse(line.slice(2)), out: out + err, pid: p.pid });
     });
@@ -114,10 +115,12 @@ test('사이클 감시 판정 — 흔적(시작·걷기·받기·올리기·사�
   assert.equal(syncLoopStalled({ loopStartAt: now - 60 * 60_000, beatAt: now - 11 * 60_000, cycleEndAt: now - 12 * 60_000, cycling: true }, now), true, 'W1 사이클 안에서 await가 끝나지 않음');
 });
 
-test('사이클이 끝나지 않는 await에 멈추면 감시가 루프를 다시 띄워 동기화가 이어진다(경우 표 W1)', async () => {
+test('사이클이 회사 밖의 끝나지 않는 await에 멈추면 감시가 루프를 다시 띄워 동기화가 이어진다(경우 표 W1)', async () => {
   const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
   let hung = 0;
-  fake.fault = (req, path) => (req.method === 'GET' && path.startsWith('/storage/v1/object/') && hung++ === 0 ? 'hang' : null); // 첫 저장소 읽기 하나만 영영 답하지 않는다(클라이언트 30초 시간 초과보다 먼저 감시가 잡는다)
+  // 회사 목록 단계(색인 RPC)의 첫 요청 하나만 영영 답하지 않는다(클라이언트 30초 시간 초과보다 먼저 감시가 잡는다). 회사 안의 멈춤은 아래 '옛 사이클이 잡은 회사' 시험 —
+  // 그 회사는 옛 사이클이 놓을 때까지 새 루프가 건너뛴다(같은 회사 syncCompany가 겹치지 않는 쪽이 우선, #1190 검수 I1)
+  fake.fault = (req, path) => (path.endsWith('/rpc/argo_sync_index') && hung++ === 0 ? 'hang' : null);
   const root = await mkdtemp(join(tmpdir(), 'argo-0121-watchdog-'));
   seedRoot(root, { url: fake.url, wsId: 'co-dog' });
   const r = await runChild({ root, env: { ARGO_SYNC_CYCLE_MS: '300', ARGO_SYNC_WATCHDOG_MS: '1500' }, waitMs: 8_000 });
@@ -125,6 +128,62 @@ test('사이클이 끝나지 않는 await에 멈추면 감시가 루프를 다�
   assert.match(r.out, /\[argo\] sync watchdog restart — \d+분 동안 사이클 진척 없음/);
   assert.ok(r.status.watchdogRestarts >= 1, `감시 재시작 수 ${r.status.watchdogRestarts}`);
   assert.ok(uploads(fake).length > 0, '새 루프가 회사를 올렸다(멈춘 옛 요청의 30초 시간 초과를 기다리지 않음)');
+});
+
+/* ─── ② 검수 I1(#1190) — 잠자기를 멈춤으로 보지 않고, 같은 회사 syncCompany는 한 프로세스에서 겹치지 않는다 ─── */
+// 자식 안에서 manifest 요청(info·내려받기)의 동시 진행 수를 센다. jumpMs > 0이면 첫 manifest 요청 도중 벽시계만 건너뛴다(잠자기 흉내 — 타이머는 단조 시계라 제때 돈다).
+const manifestProbe = (jumpMs) => `
+const realNow = Date.now; let off = 0; Date.now = () => realNow() + off;
+const realFetch = globalThis.fetch; let inflight = 0, jumped = false;
+globalThis.__probe = { maxInflight: 0, manifestReqs: 0 };
+globalThis.fetch = async (input, init) => {
+  const m = String(input?.url ?? input).includes('__manifest__');
+  if (m) {
+    inflight++; globalThis.__probe.manifestReqs++; globalThis.__probe.maxInflight = Math.max(globalThis.__probe.maxInflight, inflight);
+    if (${Number(jumpMs)} > 0 && !jumped) { jumped = true; setTimeout(() => { off += ${Number(jumpMs)}; }, 100); }
+  }
+  try { return await realFetch(input, init); } finally { if (m) inflight--; }
+};
+sync.ensureSync();`;
+const probeOf = (out) => JSON.parse(out.match(/@@probe(\{.*\})/)?.[1] ?? 'null');
+
+test('감시 박자 판정 — 박자가 예정의 2배 넘게 늦으면 잠자기(재시작 아님), 아니면 종전 멈춤 판정', () => {
+  const now = 1_800_000_000_000;
+  const st = { loopStartAt: now - 60 * 60_000, beatAt: now - 11 * 60_000, cycling: true };
+  assert.equal(watchdogTick(st, { now, lastTickAt: now - 15 * 60_000, intervalMs: 60_000 }), 'sleep', '15분 잠들었다 깸 — 흔적이 오래돼도 멈춤으로 보지 않는다');
+  assert.equal(watchdogTick(st, { now, lastTickAt: now - 60_000, intervalMs: 60_000 }), 'stalled', '박자는 제때 — 진짜 멈춤');
+  assert.equal(watchdogTick({ ...st, beatAt: now - 1_000 }, { now, lastTickAt: now - 60_000, intervalMs: 60_000 }), 'ok');
+  assert.equal(watchdogTick(st, { now, lastTickAt: now - 119_000, intervalMs: 60_000 }), 'stalled', '2배 이하의 늦음은 잠자기로 보지 않는다');
+});
+
+test('잠자기 흉내(manifest 요청 도중 벽시계 2.5초 건너뜀)에도 감시가 루프를 다시 띄우지 않고, 같은 회사 요청이 겹치지 않는다(검수 I1 재현)', async () => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
+  let delayed = 0;
+  fake.fault = (req, path) => (path.includes('__manifest__') && delayed++ === 0 ? 1_000 : null); // 첫 manifest 요청만 1초 늦게 — 감시(1.5초)보다 짧아 잠자기가 없으면 멈춤이 아니다
+  const root = await mkdtemp(join(tmpdir(), 'argo-0121-sleep-'));
+  seedRoot(root, { url: fake.url, wsId: 'co-sleep' });
+  const r = await runChild({ root, env: { ARGO_SYNC_CYCLE_MS: '300', ARGO_SYNC_WATCHDOG_MS: '1500' }, waitMs: 4_000, script: manifestProbe(2_500) });
+  const probe = probeOf(r.out);
+  assert.ok(probe && probe.manifestReqs > 0, '시험이 실제로 manifest 요청 중 잠자기를 흉내 냈다');
+  assert.equal(r.status.watchdogRestarts, 0, '잠자기는 재시작 사유가 아니다(진단 꼬리 w도 오르지 않는다)');
+  assert.doesNotMatch(r.out, /sync watchdog restart/);
+  assert.equal(probe.maxInflight, 1, `같은 회사 manifest 요청이 동시에 ${probe.maxInflight}개 — 두 사이클이 겹쳤다`);
+  assert.ok(uploads(fake).length > 0, '동기화는 이어진다');
+});
+
+test('진짜 멈춤 뒤 옛 사이클이 늦게 돌아와도 새 루프는 옛 사이클이 잡은 회사를 건너뛴다 — 같은 회사 syncCompany가 겹치지 않는다', async () => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
+  let delayed = 0;
+  fake.fault = (req, path) => (path.includes('__manifest__') && delayed++ === 0 ? 4_000 : null); // 첫 manifest 요청이 4초 — 감시(1.5초)가 새 루프를 띄운 뒤 옛 사이클이 돌아온다
+  const root = await mkdtemp(join(tmpdir(), 'argo-0121-busy-'));
+  seedRoot(root, { url: fake.url, wsId: 'co-busy' });
+  const r = await runChild({ root, env: { ARGO_SYNC_CYCLE_MS: '300', ARGO_SYNC_WATCHDOG_MS: '1500' }, waitMs: 7_000, script: manifestProbe(0) });
+  const probe = probeOf(r.out);
+  assert.ok(r.status.watchdogRestarts >= 1, '멈춤으로 보고 새 루프를 띄웠다(시험 전제)');
+  assert.match(r.out, /앞 사이클이 아직 이 회사를 처리 중 — 이번 사이클은 건너뜀/);
+  assert.equal(probe.maxInflight, 1, `같은 회사 manifest 요청이 동시에 ${probe.maxInflight}개 — 두 사이클이 겹쳤다`);
+  assert.ok(uploads(fake).length > 0, '옛 사이클이 끝난 뒤 동기화가 이어진다');
+  assert.equal(r.status.busy, 0, '옛 사이클이 회사를 놓았다 — 남으면 새 루프가 그 회사를 영영 건너뛴다');
 });
 
 /* ─── ④ 진단 꼬리표 확장(#1189 형식 뒤에 값이 있을 때만) ─── */

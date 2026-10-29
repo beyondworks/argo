@@ -2845,6 +2845,12 @@ async function cycleOnce(gen = null) {
       continue;
     }
     if ((uploadBackoff.get(wsId) ?? 0) > Date.now()) { status.companies[wsId] = { ts: Date.now(), skipped: 'upload-denied' }; continue; } // 전부 거절된 회사는 쉰다
+    // 같은 프로세스 안에서 한 회사의 syncCompany는 하나만(#1190 검수 I1) — 감시가 새 루프를 띄운 뒤에도 옛 사이클이 이 회사를 아직 잡고 있으면 건너뛴다.
+    // .sync-process.lock은 프로세스 사이만 막는다. 두 사이클이 같은 회사의 .sync-state를 각자 읽고 마지막 쓴 쪽이 이기면 이중 동기화(대형 유실) 계열이다.
+    const busyGen = companyBusy.get(wsId);
+    if (busyGen !== undefined && busyGen !== (gen ?? 0)) { noteOnce(`${wsId}:busy`, `[argo] 동기화(${wsId}): 앞 사이클이 아직 이 회사를 처리 중 — 이번 사이클은 건너뜀`); continue; }
+    noteOnce(`${wsId}:busy`, '');
+    companyBusy.set(wsId, gen ?? 0);
     try {
       const reseal = !!resealSet[wsId];
       const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId), reseal, quotaFull: quotaFullNow() });
@@ -2888,6 +2894,8 @@ async function cycleOnce(gen = null) {
       setCompanyError(wsId, `${wsId}: ${String(e.message).slice(0, 120)}`); // 첫 주기에 throw해도 회사로 등록된다(2차 LOW-1)
       console.error(`[argo] 동기화 실패(${wsId}):`, e.message);
       companyFailed++;
+    } finally {
+      if (companyBusy.get(wsId) === (gen ?? 0)) companyBusy.delete(wsId);
     }
   }
   await refreshQuota().catch(() => {}); // 업로드했거나 한도에 닿은 사이클 뒤에만, 최대 QUOTA_CHECK_MS에 한 번(읽기 RPC 1건)
@@ -2940,6 +2948,15 @@ export function syncLoopStalled(st, now = Date.now(), ms = SYNC_WATCHDOG_MS) {
   return last > 0 && now - last > ms;
 }
 const loopCurrent = (gen) => gen == null || globalThis.__argoSyncGen === gen;
+/** 지금 syncCompany가 도는 회사 → 그 사이클의 루프 세대(cycleOnce 회사 루프). globalThis — Next 번들이 갈려도 하나. */
+const companyBusy = (globalThis.__argoSyncCompanyBusy ??= new Map());
+/** 감시 한 박자 판정(순수) — 'sleep' = 감시 박자가 예정(intervalMs)의 2배 넘게 늦게 왔다: 기기가 잠들었다 깼다(밀린 타이머가 I/O보다 먼저 돈다).
+    이때는 멈춤으로 보지 않고 기준 시각만 지금으로 옮긴다(#1190 검수 I1 — 10분 넘는 잠자기 뒤 멀쩡한 사이클을 멈춤으로 보고 새 루프를 띄웠다).
+    'stalled' = 흔적 없이 SYNC_WATCHDOG_MS가 지났다. 'ok' = 그 밖. (export: 회귀 테스트용) */
+export function watchdogTick(st, { now = Date.now(), lastTickAt = 0, intervalMs, ms = SYNC_WATCHDOG_MS } = {}) {
+  if (lastTickAt > 0 && now - lastTickAt > 2 * intervalMs) return 'sleep';
+  return syncLoopStalled(st, now, ms) ? 'stalled' : 'ok';
+}
 function runSyncLoop() {
   const gen = (globalThis.__argoSyncGen = (globalThis.__argoSyncGen || 0) + 1);
   status.loopStartAt = Date.now();
@@ -2965,15 +2982,21 @@ function runSyncLoop() {
 }
 function startSyncWatchdog() {
   if (globalThis.__argoSyncWatchdog) return;
+  const intervalMs = Math.min(60_000, Math.max(250, SYNC_WATCHDOG_MS / 4));
+  let lastTickAt = Date.now();
   const iv = setInterval(() => {
-    if (!syncLoopStalled(status)) return;
+    const now = Date.now();
+    const verdict = watchdogTick(status, { now, lastTickAt, intervalMs });
+    lastTickAt = now;
+    if (verdict === 'sleep') { status.beatAt = now; return; } // 잠자기 — 기준 시각만 옮긴다(재시작·w 증가 없음)
+    if (verdict !== 'stalled') return;
     const mins = Math.floor((Date.now() - Math.max(Number(status.loopStartAt) || 0, Number(status.beatAt) || 0, Number(status.cycleEndAt) || 0)) / 60_000);
     status.watchdogRestarts = (status.watchdogRestarts || 0) + 1;
     console.warn(`[argo] sync watchdog restart — ${mins}분 동안 사이클 진척 없음(phase=${status.phase ?? '-'}) · 루프를 다시 시작`);
     status.cycling = false;
     startLeaseLoop(); // 버킷 준비에서 멈춘 경우 리스 루프도 아직 없다(한 번만 뜬다)
     runSyncLoop();
-  }, Math.min(60_000, Math.max(250, SYNC_WATCHDOG_MS / 4)));
+  }, intervalMs);
   iv.unref?.();
   globalThis.__argoSyncWatchdog = iv;
 }
