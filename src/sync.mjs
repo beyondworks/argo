@@ -342,6 +342,10 @@ const CLIENT_OPTS = {
   global: { fetch: withArgoClientInfo((url, opts) => fetch(url, { ...opts, signal: opts?.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) })) },
 };
 let sb = null, sbKey = '';
+/** 지금 동기화 목적지의 정체(주소·오너 지문, 값 노출 없음) — 회사 기록(.sync-state.json)에 같이 남긴다. 목적지가 바뀐 기록(옛 설치본이 남은 페어링 파일 주소로
+    맞춘 base)을 새 목적지와 비교하면 '다른 기기가 지움'·'원격만 바뀜'으로 오판해 로컬을 지우거나 옛 판으로 덮는다(0.1.121 분리 검수 높음) → 비우고 합치기만. */
+let syncTarget = null;
+const targetOf = (url, owner) => createHash('sha256').update(`${url}|${owner ?? ''}`).digest('hex').slice(0, 16);
 /** 세션 모드 클라이언트 옵션(액세스 토큰이 있으면 인증 헤더 포함). export: 시험용 */
 export const syncClientOptions = (accessToken) => ({
   ...CLIENT_OPTS,
@@ -389,6 +393,7 @@ async function ensureClientOnce() {
   if (svc) {
     const k = `svc:${credsEpoch()}`;
     if (sbKey !== k) { sb = createClient(svc.url, svc.key, syncClientOptions()); sbKey = k; resetDiscoverClock(); }
+    syncTarget = targetOf(svc.url, svc.owner);
     return true;
   }
   const sess = await getFreshDeviceSession();
@@ -399,6 +404,7 @@ async function ensureClientOnce() {
     sbKey = k;
     resetDiscoverClock();
   }
+  syncTarget = targetOf(sess.url, sess.user?.id);
   return true;
 }
 
@@ -1483,6 +1489,14 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   const local = await walk(root, root, {}, failedDirs); // 자격 3종은 diff 루프의 불가시 가드가 단일 게이트(walk 중복 게이트 금지 — 등가 변이 실증)
   const stateDoc = await loadState(wsId);
   const state = stateDoc.files ?? {};
+  // 목적지가 바뀐 기록 — 기록이 남긴 목적지와 지금이 다르거나, 목적지 표지가 없는 옛 기록인데 이 기기에 쓰지 않는 서비스 자격 파일이 남아 있으면
+  // (옛 설치본이 그 파일 주소로 맞춘 base) 기록을 비우고 합치기만 한다(삭제 0 — epoch 합치기와 같은 원리). 정상 기기(표지 없음·파일 없음)는 종전과 같다.
+  const targetMoved = Object.keys(state).length > 0 && !!syncTarget
+    && (typeof stateDoc.target === 'string' ? stateDoc.target !== syncTarget : (!usableSyncCreds() && !!loadSyncCreds()));
+  if (targetMoved) {
+    console.warn(`[argo] 동기화(${wsId}): 동기화 목적지가 바뀐 기록 — 이 기기 기록을 비우고 합친다(삭제 0)`);
+    for (const k of Object.keys(state)) delete state[k];
+  }
   // 빈 항목 기억 이어 받기(MISSING_RECHECK_STEPS_MS 주석) — 메모리에 없을 때만(재시작 직후). 모양이 이상한 줄은 버리고, 남은 시간은 가장 긴 간격으로 자른다(시계·손상 방어).
   if (stateDoc.missing && typeof stateDoc.missing === 'object') {
     const cap = Date.now() + MISSING_RECHECK_STEPS_MS[MISSING_RECHECK_STEPS_MS.length - 1];
@@ -1658,7 +1672,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
 
   // 새 시작(freshStartAllowed 주석) — 브레이크·사전 확인보다 먼저(기록을 비우면 둘 다 판정할 삭제가 없다). 꺼져 있으면 아무것도 하지 않는다.
   let epoch = typeof remote.epoch === 'string' ? remote.epoch : null;
-  let adopt = false; // 이번 사이클이 새 시작 합치기인가(양쪽이 다른 노트는 수정 시각이 늦은 쪽이 정본)
+  let adopt = targetMoved; // 이번 사이클이 새 시작 합치기인가(목적지가 바뀐 기록을 비운 사이클도 같다)(양쪽이 다른 노트는 수정 시각이 늦은 쪽이 정본)
   const preProbe = new Map(); // 정리 판정에서 확인한 blob — 아래 사전 확인이 다시 묻지 않는다
   const freshOn = !manifestExists && Object.keys(state).length > 0 ? await freshStartAllowed() : false; // 묻는 것은 이 경우뿐(정상 동기화 호출 0)
   let freshStarted = false;
@@ -1686,7 +1700,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         console.warn(`[argo] 동기화(${wsId}): 클라우드 사본이 정리됐다(매니페스트·blob 없음) — 이 기기 파일 기준으로 새로 올린다(새 시작 ${epoch}, 로컬 삭제 0)`);
         for (const k of Object.keys(state)) delete state[k];
         preProbe.clear();
-        await writeJsonAtomic(stateFile(wsId), { files: {}, ts: Date.now(), epoch, freshStart: true }); // 기록을 먼저 비운다 — 업로드 도중 끊겨도 다음 사이클은 첫 동기화
+        await writeJsonAtomic(stateFile(wsId), { files: {}, ts: Date.now(), epoch, freshStart: true, ...(syncTarget ? { target: syncTarget } : {}) }); // 기록을 먼저 비운다 — 업로드 도중 끊겨도 다음 사이클은 첫 동기화
       }
     }
   }
@@ -2090,7 +2104,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       if (!(rel in remote.files) || isDevArtifactRel(rel)) { missingSeen.delete(k); continue; } // 빠진 항목·이제 불가시인 임시 파일은 잊는다
       if (kept < MISSING_STATE_MAX) { missingOut[rel] = { sig: v.sig, until: v.until, n: v.n ?? 1 }; kept++; }
     } }
-  await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now(), ...(remote.epoch ? { epoch: remote.epoch } : stateDoc.epoch ? { epoch: stateDoc.epoch } : {}),
+  await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now(), ...(syncTarget ? { target: syncTarget } : {}), ...(remote.epoch ? { epoch: remote.epoch } : stateDoc.epoch ? { epoch: stateDoc.epoch } : {}),
     ...((freshStarted || stateDoc.freshStart) && manifestDenied ? { freshStart: true } : {}), // 매니페스트를 못 쓴 새 시작은 표시를 남겨 다음 사이클이 같은 표지로 잇는다(F5)
     ...(oversize.size ? { oversize: { n: oversize.size, rels: oversizeRels, limit: SYNC_MAX_OBJECT_BYTES } } : {}), ...(Object.keys(missingOut).length ? { missing: missingOut } : {}) });
   return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(quotaHit ? { quotaHit } : {}), ...(deferred ? { deferred } : {}), ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}), ...(failures.length ? { failures } : {}), ...(missing ? { missing, missingRels } : {}), ...(needsRecovery ? { needsRecovery, needsRecoveryRels } : {}), ...(concurrentDeletes ? { concurrentDeletes } : {}), ...(oversize.size ? { oversize: oversize.size, oversizeRels, oversizeLimit: SYNC_MAX_OBJECT_BYTES } : {}) };

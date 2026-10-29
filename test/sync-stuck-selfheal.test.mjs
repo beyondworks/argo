@@ -88,3 +88,35 @@ test('진단 꼬리표는 기존 X-Client-Info 뒤에 붙고, 없거나 실패�
   await withSyncDiag(base, () => { throw new Error('x'); })('http://x', { headers: { 'X-Client-Info': 'b' } });
   assert.equal(seen, 'b');
 });
+
+// 0.1.121 분리 검수(높음): 옛 설치본은 남은 자격 파일의 주소(A)로 맞춘 기록(base)을 남겼다. 고친 판이 우리 클라우드(B)로 돌아오며 그 base로 비교하면
+// A에만 올린 파일을 'B에서 지워짐'으로 읽어 로컬에서 지웠다. 기록에 목적지 표지가 없고 쓰지 않는 자격 파일이 남았거나, 표지가 지금과 다르면 비우고 합치기만 한다.
+test('목적지가 바뀐 옛 기록(base) — 로컬 파일을 지우지 않고 새 목적지로 올린다', { timeout: 90_000 }, async () => {
+  const { readFileSync, existsSync } = await import('node:fs');
+  const fakeA = await startFakeSupabase({ plan: 'pro' }); fakes.push(fakeA);
+  const fakeB = await startFakeSupabase({ plan: 'pro' }); fakes.push(fakeB);
+  // 다른 기기가 B에 같은 회사를 먼저 올린다(매니페스트 있음, only-b.md만)
+  const other = await mkdtemp(join(tmpdir(), 'argo-target-other-'));
+  seedRoot(other, { url: fakeB.url });
+  writeFileSync(join(other, '.device-id'), 'fixture-other-0002');
+  writeFileSync(join(other, 'co-1234', 'only-b.md'), 'from other device');
+  await runSyncChild({ root: other, env: { ARGO_SYNC_CYCLE_MS: '1000', NEXT_PUBLIC_SUPABASE_URL: fakeB.url, NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fixture' }, waitMs: 4000 });
+  assert.ok(fakeB.store.size > 0, 'B에 다른 기기 사본이 올라가야 시험이 성립한다');
+  // 이 기기는 A로 맞춘 기록을 갖고 있다(only-a.md가 base에 있음)
+  const root = await mkdtemp(join(tmpdir(), 'argo-target-mine-'));
+  seedRoot(root, { url: fakeA.url });
+  writeFileSync(join(root, 'co-1234', 'only-a.md'), 'only uploaded to A');
+  await runSyncChild({ root, env: { ARGO_SYNC_CYCLE_MS: '1000', NEXT_PUBLIC_SUPABASE_URL: fakeA.url, NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fixture' }, waitMs: 4000 });
+  const stPath = join(root, 'co-1234', '.sync-state.json');
+  const st = JSON.parse(readFileSync(stPath, 'utf8'));
+  assert.ok(st.files?.['only-a.md'], `A 기준 기록이 있어야 한다: ${Object.keys(st.files ?? {})}`);
+  delete st.target; writeFileSync(stPath, JSON.stringify(st)); // 옛 설치본 기록(표지 없음)
+  writeFileSync(join(root, '.sync-credentials.json'), JSON.stringify({ url: fakeA.url, key: 'stale', owner: 'u1' })); // 옛 판이 쓰던 남은 자격 파일
+  const dev = JSON.parse(readFileSync(join(root, '.device-session.json'), 'utf8'));
+  writeFileSync(join(root, '.device-session.json'), JSON.stringify({ ...dev, url: fakeB.url }), { mode: 0o600 });
+  await runSyncChild({ root, env: { ARGO_SYNC_CYCLE_MS: '1000', NEXT_PUBLIC_SUPABASE_URL: fakeB.url, NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fixture' }, waitMs: 5000 });
+  assert.ok(existsSync(join(root, 'co-1234', 'only-a.md')), 'A에만 올렸던 로컬 파일이 지워졌다');
+  assert.ok([...fakeB.store.keys()].some((k) => k.endsWith('co-1234/only-a.md')), `B로 올라가야 한다: ${[...fakeB.store.keys()].join(', ')}`);
+  assert.ok(existsSync(join(root, 'co-1234', 'only-b.md')), '다른 기기 파일도 받아야 한다');
+  assert.equal(JSON.parse(readFileSync(stPath, 'utf8')).target?.length, 16, '기록에 목적지 표지가 남는다');
+});
