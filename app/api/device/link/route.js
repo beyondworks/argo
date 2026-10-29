@@ -3,7 +3,7 @@
 import { saveDeviceSession } from '../../../../src/devicesession.mjs';
 import { ensureSync } from '../../../../src/sync.mjs';
 import { guestModeOn } from '../../../../src/gueststate.mjs';
-import { claimLocalToAccount } from '../../../../src/accountclaim.mjs';
+import { claimOrDefer } from '../../../../src/accountclaim.mjs';
 import { AUTH_ON, isLoopbackHost, csrfDenied } from '../../../auth.mjs';
 import { verifyAccessToken, linkFailure, describeFailure } from '../../../../src/auth-error.mjs';
 
@@ -34,7 +34,7 @@ export async function POST(req) {
     // 빠져 있어 앱으로 로그인한 사용자의 게스트 회사는 주인 없음으로 남아 동기화 대상 밖이었다(2026-10-28 고객 C: .guest-mode.json enabled:true 잔존).
     // 실패해도 로그인은 성공 — 홈 배너·설정 동기화 카드의 [이 계정에 연결]이 남은 것을 받는다.
     let claimed = null;
-    if (guestModeOn()) claimed = await claimLocalToAccount(user.id).catch((e) => ({ error: String(e?.message ?? e) }));
+    if (guestModeOn()) claimed = await claimOrDefer(user.id); // 실패 = { error } + 귀속 대기 표지(동기화가 다시 시도, 0.1.121)
     ensureSync();
     return Response.json({ ok: true, user: { id: user.id, email: user.email ?? '' }, claimed }, { headers: { 'Set-Cookie': marker() } });
   } catch (e) {

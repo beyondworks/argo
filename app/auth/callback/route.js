@@ -5,7 +5,7 @@ import { publicUrl } from '../../http-origin.mjs';
 import { saveDeviceSession } from '../../../src/devicesession.mjs';
 import { ensureSync } from '../../../src/sync.mjs';
 import { guestModeOn } from '../../../src/gueststate.mjs';
-import { claimLocalToAccount } from '../../../src/accountclaim.mjs';
+import { claimOrDefer } from '../../../src/accountclaim.mjs';
 import { isLoopbackHost } from '../../auth.mjs';
 
 export async function GET(req) {
@@ -44,8 +44,9 @@ export async function GET(req) {
       anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       session: data.session,
     });
-    // 게스트 → 로그인 자동 귀속(기기 로그인 라우트와 같은 계약, accountclaim.mjs). 실패해도 로그인은 성공.
-    if (guestModeOn()) await claimLocalToAccount(data.session.user.id).catch(() => {});
+    // 게스트 → 로그인 자동 귀속(기기 로그인 라우트와 같은 계약, accountclaim.mjs). 실패해도 로그인은 성공 — 실패는 버리지 않고
+    // 로그와 귀속 대기 표지로 남겨 동기화 사이클이 같은 계정으로 다시 시도한다(0.1.121, claimOrDefer).
+    if (guestModeOn()) await claimOrDefer(data.session.user.id);
     ensureSync(); // 자격이 방금 생겼다 — 재시작 없이 동기화 기동
     res.cookies.set('argo-device', '1', { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 24 * 365 });
     res.cookies.set('argo-guest', '', { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 0 });

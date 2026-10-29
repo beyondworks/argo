@@ -288,6 +288,7 @@ const WS_DOT_FILES = new Set([
   // 열리던 것이 분리 검수 HIGH였다(#213 → 이 커밋 → 여기, 같은 계급 세 번째).
   '.account-secrets',
   '.device-id', '.guest-mode.json', '.sync-process.lock', '.tombstones',
+  '.claim-pending.json', // 게스트 회사 귀속 대기 표지(accountclaim.mjs, 2026-10-30) — 크루가 심으면 동기화 사이클이 게스트 회사를 지금 로그인한 계정으로 귀속한다
   '.lease-peer.json', // 다른 기기의 리스를 본 적 있음 표지(sync.mjs, 2026-10-09) — 크루가 지우면 이 기기가 단일 기기 판정으로 돌아가 서버(예비)와 함께 담당이 될 수 있다
   '.local-assets', // local source approvals, receipts and staging must not be edited by crews
   '.scheduler.lock', // daemonLease('scheduler') — 미래 ts를 심으면 리더 선출이 영구 실패한다

@@ -39,6 +39,8 @@ import { invalidatePath } from './memindex.mjs'; // 원격 mtime을 심는 수�
 import { holdsDaemonLease, daemonLeasesSettled } from './lock.mjs'; // 실행 리스(게이트웨이·스케줄러) 주인만 클라우드 리스에 참여 — leaseTick
 import { leaseRole, ROLE_RANK, docRank, roleMark } from './lease-role.mjs'; // 실행 담당 역할 순위(우선 > 일반 > 예비) — renewLease·standbyIdle
 import { createPrefetch } from './sync-prefetch.mjs'; // 원격 파일 받기만 동시에 — 쓰기·판정은 루프 순서 그대로
+import { cmpVersion } from './version-compare.mjs'; // 잠금 주인 판 비교(holdSyncLock 회수)
+import { guestModeOn } from './gueststate.mjs'; // 귀속 대기 다시 시도(retryClaimIfPending)의 전제
 
 const BUCKET = 'companies';
 // 준실시간 — 기본 8s(웹↔앱 지연 단축). ARGO_SYNC_CYCLE_MS로 조정(비용/지연 트레이드오프).
@@ -210,7 +212,7 @@ export function _walkCacheForTest() { return walkCache; }
 // 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
 const LOCK_STALE_MS = Math.max(CYCLE_MS * 3, 120_000);
-const LOCK_FUTURE_SLACK_MS = 60_000; // 잠금 시각이 이만큼 넘게 미래면 시계가 앞서 있던 때의 잔존 — 회수한다(holdSyncLock)
+export const LOCK_FUTURE_SLACK_MS = 60_000; // 잠금 시각이 이만큼 넘게 미래면 시계가 앞서 있던 때의 잔존 — 회수한다(holdSyncLock)
 export const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다 (export: 회귀 테스트용)
 /** 확인된 보유자의 다시 쓰기 간격 — TTL의 1/2(60초). 다른 기기는 글의 ts + TTL까지 살아 있는 리스로 보므로, 다시 쓰기가 한 번 실패해도
     다음 판정에서 다시 쓸 여유가 남는다. 30초(TTL/4)이던 것을 로그 수집 과금(2026-10-13: 리스 쓰기 한 번 = edge POST + storage POST·Put·AdminDelete)
@@ -464,23 +466,60 @@ const skey = (...segs) => segs.flatMap((s) => s.split('/')).map(encSeg).join('/'
 /* ─── 크로스 프로세스 단일 동기화 락 ───
    같은 데이터 루트에 두 서버가 뜨면(실수로 dev + 상주 동시 기동 등) 서로의 로컬·원격·.sync-state를
    두고 레이스하며 삭제 피드백 루프를 만든다(실측 대형 유실). 한 root당 한 프로세스만 동기화하도록
-   pidfile로 막는다. .lock은 EXCLUDE라 동기화 대상 아님. */
+   pidfile로 막는다. .lock은 EXCLUDE라 동기화 대상 아님.
+   회수(0.1.121, 2026-10-30 고객 C — 메인 PC가 0.1.120 뒤에도 사이클 첫 단계에서 5시간 멈춤): 종전에는 'pid가 살아 있고 ts가 120초 안'이면 끝없이 기다렸다.
+   옛 판 사이드카가 남아 ts만 갱신하거나, ts가 미래(시계 되돌림)인데 pid가 살아 있으면(Windows pid 재사용 포함) 영영 풀리지 않는다.
+   미래 ts는 #1189가 먼저 회수했다. 여기에 같은 (pid, ts)가 120초 넘게 그대로·주인 판이 내 판보다 낮음을 더한다(pid 생존은 보조). 주인이 살아 있을 수 있는 이 둘은
+   내 잠금을 쓴 뒤 LOCK_TAKEOVER_WAIT_MS 동안 동기화를 미뤄, 옛 주인이 하던 사이클을 끝내고 내 잠금을 보고 물러날 시간을 준다.
+   옛 판(0.1.116~0.1.120)의 판정은 pid·ts만 보므로 살아 있는 내 pid와 신선한 ts를 보면 기다린다 — 서로 뺏는 일이 없다. */
+export const LOCK_FROZEN_MS = 120_000;       // 같은 (pid, ts)를 이만큼 넘게 보면(단조 시계) 주인이 갱신하지 않는 잠금이다
+export const LOCK_VER_SINCE = '0.1.120';     // 잠금 파일에 ver를 처음 쓴 판 — ver가 없으면 이보다 옛 판
+export const LOCK_TAKEOVER_WAIT_MS = Math.max(2 * CYCLE_MS, 20_000);
+const unknownAppVer = (v) => typeof v !== 'string' || !v || cmpVersion(v, '0.0.0') === 0;
+/** 잠금 주인의 판이 내 판보다 낮은가(순수). 내 판을 모르면 거짓(최신 앱끼리 뺏지 않게). 주인 ver가 없으면 LOCK_VER_SINCE 이전 판. (export: 회귀 테스트용) */
+export const olderLockHolder = (holderVer, myVer) => {
+  if (unknownAppVer(myVer)) return false;
+  if (holderVer == null || holderVer === '') return cmpVersion(myVer, LOCK_VER_SINCE) >= 0;
+  return !unknownAppVer(holderVer) && cmpVersion(holderVer, myVer) < 0;
+};
+/** 다른 프로세스의 잠금(cur)을 가져올 이유(순수) — null이면 살아 있는 주인을 기다린다. 'stale'·'dead'·'future'는 바로 가져온다
+    (future = 살아 있는 주인이라면 사이클마다 지금 시각으로 다시 썼을 것 — #1189와 같다), 'frozen'·'older'는 주인이 살아 있을 수 있어 넘겨받기 대기. frozenMs = 같은 (pid, ts)를 본 시간(단조 시계). (export: 회귀 테스트용) */
+export function lockTakeoverReason(cur, { now, myVer, frozenMs = 0, alive }) {
+  const ts = Number(cur?.ts);
+  if (!Number.isFinite(ts) || now - ts >= LOCK_STALE_MS) return 'stale';
+  if (ts - now > LOCK_FUTURE_SLACK_MS) return 'future';
+  if (frozenMs > LOCK_FROZEN_MS) return 'frozen';
+  if (olderLockHolder(cur.ver, myVer)) return 'older';
+  if (!alive(cur.pid)) return 'dead';
+  return null;
+}
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 async function holdSyncLock() {
   const f = join(WS_ROOT, '.sync-process.lock');
-  try {
-    const cur = JSON.parse(await readFile(f, 'utf8'));
-    // 미래 시각 잠금(시계가 앞서 있던 때 쓴 것)은 버린다 — 나이가 음수라 영영 '신선'으로 보이고, Windows는 pid가 다른 프로세스에 다시 쓰여
-    // 살아 있음 확인도 통과해 이 데이터 폴더의 동기화가 그 시각까지 멈췄다(2026-10-30 재현). 살아 있는 주인은 사이클마다 지금 시각으로 다시 쓰므로 영향이 없다.
-    const age = Date.now() - Number(cur.ts);
-    if (cur.pid !== process.pid && age < LOCK_STALE_MS && age > -LOCK_FUTURE_SLACK_MS) {
-      // 잠금 주인(pid·앱 버전·주인이 처음 잡은 시각)을 진단용으로 남긴다 — 앱 업데이트 뒤 옛 프로세스가 남아 잠금을 쥐는지 화면·로그에서 가른다(2026-10-28 고객 C 조사)
-      try { process.kill(cur.pid, 0); lockState.holder = { pid: Number(cur.pid) || null, ver: typeof cur.ver === 'string' ? cur.ver.slice(0, 24) : null, since: Number(cur.since) || null }; return false; } catch { /* 죽은 pid → 탈취 */ }
+  let cur = null;
+  try { cur = JSON.parse(await readFile(f, 'utf8')); } catch { /* 없음/손상 → 획득 */ }
+  const mono = performance.now();
+  if (cur && cur.pid !== process.pid) {
+    // 잠금 주인(pid·앱 버전·주인이 처음 잡은 시각)을 진단용으로 남긴다 — 앱 업데이트 뒤 옛 프로세스가 남아 잠금을 쥐는지 화면·로그에서 가른다(2026-10-28 고객 C 조사)
+    const holder = { pid: Number(cur.pid) || null, ver: typeof cur.ver === 'string' ? cur.ver.slice(0, 24) : null, since: Number(cur.since) || null };
+    const seen = `${cur.pid}:${cur.ts}`;
+    if (lockState.seenKey !== seen) { lockState.seenKey = seen; lockState.seenAt = mono; }
+    const reason = lockTakeoverReason(cur, { now: Date.now(), myVer: APP_VERSION, frozenMs: mono - lockState.seenAt, alive: pidAlive });
+    if (!reason) { lockState.holder = holder; return false; }
+    if (reason === 'frozen' || reason === 'older') {
+      lockState.takeover = { reason, until: mono + LOCK_TAKEOVER_WAIT_MS, holder };
+      console.warn(`[argo] sync lock takeover reason=${reason} pid=${holder.pid ?? '?'} ver=${holder.ver ?? '-'} — 내 잠금을 쓰고 ${Math.round(LOCK_TAKEOVER_WAIT_MS / 1000)}초 뒤 동기화`);
     }
-  } catch { /* 없음/손상 → 획득 */ }
-  lockState.holder = null;
+  }
+  lockState.seenKey = '';
   lockState.since ??= Date.now();
-  // ver·since는 진단용(다른 프로세스가 대기 화면에 보인다) — 판정은 종전처럼 pid·ts만 본다(옛 판의 잠금 파일도 그대로 읽는다)
+  // ver·since는 진단용(다른 프로세스가 대기 화면에 보인다)이자 0.1.121 회수 판정(older)의 근거다
   try { await mkdir(WS_ROOT, { recursive: true }); await writeFile(f, JSON.stringify({ pid: process.pid, ts: Date.now(), ver: APP_VERSION ?? null, since: lockState.since })); } catch { /* 쓰기 실패 시에도 진행 */ }
+  if (lockState.takeover) {
+    if (mono < lockState.takeover.until) { lockState.holder = lockState.takeover.holder; return false; } // 넘겨받기 대기 — 잠금은 내 것, 동기화는 아직
+    lockState.takeover = null;
+  }
+  lockState.holder = null;
   return true;
 }
 
@@ -1055,6 +1094,7 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
 /* ─── 로컬 스캔 (내용 해시 포함 — 변경 판별의 진실) ─── */
 const hashBuf = (buf) => createHash('sha1').update(buf).digest('hex').slice(0, 16);
 async function walk(dir, base = dir, out = {}, failed = null, ctx = null) {
+  beat(); // 사이클 감시 흔적(큰 폴더 걷기도 진척으로 센다)
   const top = !ctx;
   if (top) {
     const now = Date.now();
@@ -1276,12 +1316,14 @@ export async function syncStateExists(wsId) {
 const loadState = (wsId) => readJsonLenient(stateFile(wsId), { files: {} });
 
 async function download(key, signal) {
+  beat();
   const { data, error } = await client().storage.from(BUCKET).download(key, fresh(), signal ? { signal } : undefined);
   if (error) throw Object.assign(new Error(error.message), { notFound: isNotFound(error) });
   return Buffer.from(await data.arrayBuffer());
 }
 
 async function upload(key, buf, extra = null) {
+  beat();
   const { error } = await client().storage.from(BUCKET).upload(
     key, new Blob([buf]), { upsert: true, contentType: 'application/octet-stream', ...extra },
   );
@@ -2345,15 +2387,17 @@ export function syncStatus() {
 /** 원격 진단 꼬리표(순수) — 앱이 이미 30분마다 보내는 최소 버전 확인 요청의 X-Client-Info 끝에 붙는다(src/app-gate.mjs). 요청 수는 늘지 않는다.
     고객에게 로그를 묻지 않고 운영 edge_logs에서 이 기기의 동기화가 어디서 멈췄는지 본다(2026-10-30 유건 지시). 계정·회사·경로·토큰은 싣지 않는다 —
     단계·오류 종류·잠금 대기(주인 앱 버전)·건너뛴 회사 수·쓰지 않는 서비스 자격 파일이 남았는지만. 형식: sync/<단계>.<오류>.<잠금>.o<주인없음>f<남의계정>.c<0|1> */
-export function syncDiagTag(held, { credsFileIgnored = false } = {}) {
+export function syncDiagTag(held, { credsFileIgnored = false, takeover = null, watchdog = 0, claimError = false } = {}) {
   const clean = (v) => String(v ?? '').replace(/[^A-Za-z0-9.-]/g, '').slice(0, 16) || '-';
   const lock = held?.lockWait ? `L${clean(held.lockVer)}` : '-';
-  return `sync/${clean(held?.phase)}.${clean(held?.errorCode)}.${lock}.o${Number(held?.noOwner) || 0}f${Number(held?.foreignOwner) || 0}.c${credsFileIgnored ? 1 : 0}`;
+  // 0.1.121 자가 복구(값이 있을 때만 덧붙인다): t<잠금 회수 이유 frozen|older>·w<사이클 감시 재시작 수>·k1(귀속 대기 다시 시도 실패)
+  const extra = `${takeover ? `.t${clean(takeover)}` : ''}${Number(watchdog) > 0 ? `.w${Number(watchdog)}` : ''}${claimError ? '.k1' : ''}`;
+  return `sync/${clean(held?.phase)}.${clean(held?.errorCode)}.${lock}.o${Number(held?.noOwner) || 0}f${Number(held?.foreignOwner) || 0}.c${credsFileIgnored ? 1 : 0}${extra}`;
 }
 globalThis.__argoSyncDiagTag = () => {
   try {
     const held = syncHeldView(status, { on: syncOn(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder, cycleMs: CYCLE_MS });
-    return syncDiagTag(held, { credsFileIgnored: staleCredsSeen() });
+    return syncDiagTag(held, { credsFileIgnored: staleCredsSeen(), takeover: lockState.takeover?.reason, watchdog: status.watchdogRestarts, claimError: !!status.claimError });
   } catch { return null; }
 };
 export const STALL_AFTER_MS = (cycleMs) => Math.max(20 * cycleMs, 3 * 60_000);
@@ -2450,6 +2494,21 @@ async function collectLocalTargets(sessionUid) {
     } catch { /* 회사 아님 */ }
   }
   return { targets, noSecretsWs };
+}
+
+/** 귀속 대기 다시 시도(0.1.121, 2026-10-30 고객 C) — 안전한 로그인 경로(device/login·device/link·auth/callback)가 게스트 회사 귀속을 시도했다가
+    실패하면 .claim-pending.json(uid)을 남긴다(accountclaim.mjs claimOrDefer). 이 사이클의 세션 사용자가 그 uid이고 게스트 표시와 주인 없는 회사가
+    남아 있을 때만 같은 claimLocalToAccount로 다시 한다. 표지 없이 '로그인 + 게스트 표시 + 주인 없는 회사'만 보고 귀속하면 /auth/confirm(교차 사이트
+    GET)으로 저장된 남의 세션에 게스트 회사가 넘어간다(PR #1183 검수, test/sync-stall-reasons ①) — 그래서 표지가 전제다. 표지 없는 남은 회사는
+    종전처럼 CSRF 검사를 거치는 [이 계정에 연결](/api/account/claim)이 받는다. 네트워크 요청 0(파일만). 실패는 10분 뒤 다시(accountclaim.mjs). */
+async function retryClaimIfPending(sessionUid) {
+  if (!sessionUid || process.env.ARGO_TENANT_OWNER?.trim()) { status.claimError = ''; return false; }
+  const noOwner = Object.values(status.companies).some((c) => c?.skipped === 'no-owner' && Number(c.ts) >= (Number(status.scanAt) || 0));
+  if (!noOwner || !guestModeOn()) { status.claimError = ''; return false; }
+  const { retryPendingClaim } = await import('./accountclaim.mjs'); // 정적 import는 순환(accountclaim → sync nudgeSync)
+  const r = await retryPendingClaim(sessionUid).catch((e) => ({ error: String(e?.message || e) }));
+  status.claimError = r?.error ? 'claim' : '';
+  return (r?.claimed ?? 0) > 0;
 }
 
 /** 리더 양보 판단 — 이 기기에 쓸 러너가 있는가(60s 캐시 — resolveRunner는 파일·호스트 프로브라 매 8s는 과함).
@@ -2624,10 +2683,11 @@ function logSyncPhase(now = Date.now()) {
 }
 
 /** 한 사이클 — 진행 중 여부(cycling)와 원격에서 처음 발견한 회사 복원 중 여부(restoring)를 화면용 상태에 남긴다(firstSyncPending). */
-async function cycle() {
+async function cycle(gen = null) {
   status.cycling = true;
+  beat();
   let reached = false;
-  try { reached = await cycleOnce(); } finally {
+  try { reached = await cycleOnce(gen); } finally {
     status.cycling = false;
     status.cycleEndAt = Date.now(); // 루프 정지 판정(syncHeldView.stalled)의 기준
     logSyncPhase();
@@ -2637,7 +2697,7 @@ async function cycle() {
   }
 }
 
-async function cycleOnce() {
+async function cycleOnce(gen = null) {
   if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; setPhase('no-creds', 'auth'); return; }
   await parkIgnoredCreds(); // 옛 판이 같은 폴더에서 그 파일로 다른 목적지에 붙지 않게(목적지 판정은 치운 이름으로도 한다)
   // 크로스 프로세스 락 — 같은 root를 다른 살아있는 프로세스가 동기화 중이면 파일 동기화는 대기(이중 동기화=대형 유실 차단)
@@ -2655,6 +2715,7 @@ async function cycleOnce() {
   // 로컬 회사 수집 — 소유자 게이트 규칙은 collectLocalTargets 주석
   const sessionUid = currentSessionUid();
   const { targets, noSecretsWs } = await collectLocalTargets(sessionUid);
+  await retryClaimIfPending(sessionUid); // 귀속되면 claimLocalToAccount가 nudge — 다음 사이클이 바로 그 회사를 올린다
   const localOwners = [...new Set(targets.values())];
   // 리스 중재는 요금제 게이트보다 **먼저** 한다(architect 권고 2026-07-23). 리더 선출은 과금 대상이 아니라
   // 이중 실행 방지용 조정이고, 무료 계정도 단일 기기에서 루틴·메신저가 돌아야 한다(PRODUCT-SPEC: Free=로컬
@@ -2761,6 +2822,8 @@ async function cycleOnce() {
   if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
   let companyFailed = 0;
   for (const [wsId, owner] of targets) {
+    if (!loopCurrent(gen)) return false; // 감시가 새 루프를 띄웠다 — 멈췄던 옛 사이클은 다음 회사로 가지 않는다
+    beat();
     // 확정 free는 파일 왕복을 걸지 않는다(복원 예외) — 업로드는 RLS(is_pro)가 거부하는데 파일 삭제
     // 전파는 소유권 정책(20260723 꼬리: free도 select/delete 허용)상 성공해, 클라우드 사본이 삭제만
     // 반영하며 단조 감소한다(전수리뷰 2026-07-30 #6). 미확인(null)은 기존 결정대로 낙관 통과
@@ -2782,6 +2845,12 @@ async function cycleOnce() {
       continue;
     }
     if ((uploadBackoff.get(wsId) ?? 0) > Date.now()) { status.companies[wsId] = { ts: Date.now(), skipped: 'upload-denied' }; continue; } // 전부 거절된 회사는 쉰다
+    // 같은 프로세스 안에서 한 회사의 syncCompany는 하나만(#1190 검수 I1) — 감시가 새 루프를 띄운 뒤에도 옛 사이클이 이 회사를 아직 잡고 있으면 건너뛴다.
+    // .sync-process.lock은 프로세스 사이만 막는다. 두 사이클이 같은 회사의 .sync-state를 각자 읽고 마지막 쓴 쪽이 이기면 이중 동기화(대형 유실) 계열이다.
+    const busyGen = companyBusy.get(wsId);
+    if (busyGen !== undefined && busyGen !== (gen ?? 0)) { noteOnce(`${wsId}:busy`, `[argo] 동기화(${wsId}): 앞 사이클이 아직 이 회사를 처리 중 — 이번 사이클은 건너뜀`); continue; }
+    noteOnce(`${wsId}:busy`, '');
+    companyBusy.set(wsId, gen ?? 0);
     try {
       const reseal = !!resealSet[wsId];
       const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId), reseal, quotaFull: quotaFullNow() });
@@ -2825,6 +2894,8 @@ async function cycleOnce() {
       setCompanyError(wsId, `${wsId}: ${String(e.message).slice(0, 120)}`); // 첫 주기에 throw해도 회사로 등록된다(2차 LOW-1)
       console.error(`[argo] 동기화 실패(${wsId}):`, e.message);
       companyFailed++;
+    } finally {
+      if (companyBusy.get(wsId) === (gen ?? 0)) companyBusy.delete(wsId);
     }
   }
   await refreshQuota().catch(() => {}); // 업로드했거나 한도에 닿은 사이클 뒤에만, 최대 QUOTA_CHECK_MS에 한 번(읽기 RPC 1건)
@@ -2864,31 +2935,84 @@ export function nudgeSync() {
   if (wake) { globalThis.__argoSyncWake = null; wake(); }
 }
 
+/* ─── 사이클 감시(0.1.121, 2026-10-30 고객 C) — 루프가 돈 흔적 없이 SYNC_WATCHDOG_MS가 지나면 루프를 새 세대로 다시 시작한다 ───
+   흔적(beat) = 루프 시작·사이클 시작과 끝·회사 하나 시작·폴더 걷기·파일 받기와 올리기. 요청마다 30초 상한이 있어 정상 사이클은 10분 동안
+   흔적이 없을 수 없다 — 흔적이 없으면 await가 끝나지 않는 멈춤(루프 IIFE 중단 포함)이다. 옛 루프는 세대(__argoSyncGen)가 바뀐 것을 다음 확인 지점
+   (사이클 사이·회사 사이)에서 보고 끝난다. 잠금 대기·자격 없음 사이클은 사이클이 끝나므로 감시 대상이 아니다(잠금은 holdSyncLock 회수가 맡는다).
+   네트워크 요청 0 — 1분마다 메모리 시각 하나를 본다. */
+export const SYNC_WATCHDOG_MS = Number(process.env.ARGO_SYNC_WATCHDOG_MS) || 10 * 60_000; // env는 시험용(ARGO_SYNC_CYCLE_MS와 같은 관례)
+const beat = () => { status.beatAt = Date.now(); };
+/** 루프가 멈췄는가(순수) — 마지막 흔적(루프 시작·흔적·사이클 끝 중 가장 늦은 것)에서 ms가 지났다. 흔적이 하나도 없으면 거짓. (export: 회귀 테스트용) */
+export function syncLoopStalled(st, now = Date.now(), ms = SYNC_WATCHDOG_MS) {
+  const last = Math.max(Number(st?.loopStartAt) || 0, Number(st?.beatAt) || 0, Number(st?.cycleEndAt) || 0);
+  return last > 0 && now - last > ms;
+}
+const loopCurrent = (gen) => gen == null || globalThis.__argoSyncGen === gen;
+/** 지금 syncCompany가 도는 회사 → 그 사이클의 루프 세대(cycleOnce 회사 루프). globalThis — Next 번들이 갈려도 하나. */
+const companyBusy = (globalThis.__argoSyncCompanyBusy ??= new Map());
+/** 감시 한 박자 판정(순수) — 'sleep' = 감시 박자가 예정(intervalMs)의 2배 넘게 늦게 왔다: 기기가 잠들었다 깼다(밀린 타이머가 I/O보다 먼저 돈다).
+    이때는 멈춤으로 보지 않고 기준 시각만 지금으로 옮긴다(#1190 검수 I1 — 10분 넘는 잠자기 뒤 멀쩡한 사이클을 멈춤으로 보고 새 루프를 띄웠다).
+    'stalled' = 흔적 없이 SYNC_WATCHDOG_MS가 지났다. 'ok' = 그 밖. (export: 회귀 테스트용) */
+export function watchdogTick(st, { now = Date.now(), lastTickAt = 0, intervalMs, ms = SYNC_WATCHDOG_MS } = {}) {
+  if (lastTickAt > 0 && now - lastTickAt > 2 * intervalMs) return 'sleep';
+  return syncLoopStalled(st, now, ms) ? 'stalled' : 'ok';
+}
+function runSyncLoop() {
+  const gen = (globalThis.__argoSyncGen = (globalThis.__argoSyncGen || 0) + 1);
+  status.loopStartAt = Date.now();
+  (async () => {
+    for (;;) {
+      if (!loopCurrent(gen)) return; // 감시가 새 루프를 띄웠다 — 이 루프는 끝낸다
+      globalThis.__argoSyncPending = false;
+      try { await cycle(gen); } catch (e) { status.lastError = String(e.message).slice(0, 120); setPhase(status.phase, 'exception'); }
+      if (!loopCurrent(gen)) return;
+      if (globalThis.__argoSyncPending) continue; // 사이클 도중 nudge 도착 → 대기 없이 즉시 재실행
+      await new Promise((resolve) => {
+        let done = false;
+        const finish = () => { if (done) return; done = true; clearTimeout(t); if (globalThis.__argoSyncWake === finish) globalThis.__argoSyncWake = null; resolve(); };
+        const t = setTimeout(finish, CYCLE_MS);
+        globalThis.__argoSyncWake = finish;
+      });
+    }
+  })().catch((e) => {
+    // 루프 밖으로 새는 예외로 루프가 죽으면 한 주기 뒤 다시 띄운다(#1189와 같은 목적 — 감시 10분을 기다리지 않게). 그새 감시가 새 세대를 띄웠으면 그대로 둔다
+    console.warn('[argo] 동기화 루프 중단 — 다시 시작:', String(e?.message ?? e).slice(0, 120));
+    setTimeout(() => { if (loopCurrent(gen)) runSyncLoop(); }, CYCLE_MS).unref?.();
+  });
+}
+function startSyncWatchdog() {
+  if (globalThis.__argoSyncWatchdog) return;
+  const intervalMs = Math.min(60_000, Math.max(250, SYNC_WATCHDOG_MS / 4));
+  let lastTickAt = Date.now();
+  const iv = setInterval(() => {
+    const now = Date.now();
+    const verdict = watchdogTick(status, { now, lastTickAt, intervalMs });
+    lastTickAt = now;
+    if (verdict === 'sleep') { status.beatAt = now; return; } // 잠자기 — 기준 시각만 옮긴다(재시작·w 증가 없음)
+    if (verdict !== 'stalled') return;
+    const mins = Math.floor((Date.now() - Math.max(Number(status.loopStartAt) || 0, Number(status.beatAt) || 0, Number(status.cycleEndAt) || 0)) / 60_000);
+    status.watchdogRestarts = (status.watchdogRestarts || 0) + 1;
+    console.warn(`[argo] sync watchdog restart — ${mins}분 동안 사이클 진척 없음(phase=${status.phase ?? '-'}) · 루프를 다시 시작`);
+    status.cycling = false;
+    startLeaseLoop(); // 버킷 준비에서 멈춘 경우 리스 루프도 아직 없다(한 번만 뜬다)
+    runSyncLoop();
+  }, intervalMs);
+  iv.unref?.();
+  globalThis.__argoSyncWatchdog = iv;
+}
+
 export function ensureSync() {
   if (!syncOn()) { watchForCreds(); return; }
   if (globalThis.__argoSync) return;
   globalThis.__argoSync = true;
+  status.loopStartAt = Date.now(); // 아래 버킷 준비가 멈춰도 감시가 잡는다
+  startSyncWatchdog();
   (async () => {
     if (usableSyncCreds()) {
       try { await ensureClient(); await client().storage.createBucket(BUCKET, { public: false }); } catch { /* 이미 있음 */ }
     }
     console.log(`[argo] 기기 간 동기화 시작 (${Math.round(CYCLE_MS / 1000)}s 주기 · 로컬 변경 시 즉시)`);
     startLeaseLoop(); // 실행 담당 판정은 파일 동기화와 따로(leaseTick)
-    for (;;) {
-      globalThis.__argoSyncPending = false;
-      try { await cycle(); } catch (e) { status.lastError = String(e.message).slice(0, 120); setPhase(status.phase, 'exception'); }
-      if (globalThis.__argoSyncPending) continue; // 사이클 도중 nudge 도착 → 대기 없이 즉시 재실행
-      await new Promise((resolve) => {
-        let done = false;
-        const finish = () => { if (done) return; done = true; clearTimeout(t); globalThis.__argoSyncWake = null; resolve(); };
-        const t = setTimeout(finish, CYCLE_MS);
-        globalThis.__argoSyncWake = finish;
-      });
-    }
-  })().catch((e) => {
-    // 루프 밖으로 새는 예외(사이클 밖 줄 — 리스 루프 시작·대기 등)로 루프가 죽으면 표지만 남아 다시 켜지지 않았다 — 표지를 내리고 한 주기 뒤 다시 켠다
-    console.warn('[argo] 동기화 루프 중단 — 다시 시작:', String(e?.message ?? e).slice(0, 120));
-    globalThis.__argoSync = false;
-    setTimeout(ensureSync, CYCLE_MS).unref?.();
-  });
+    if (!globalThis.__argoSyncGen) runSyncLoop(); // 버킷 준비가 멈춰 감시가 먼저 루프를 띄웠으면 그대로 둔다
+  })();
 }

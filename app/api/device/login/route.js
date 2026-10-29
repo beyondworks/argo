@@ -4,7 +4,7 @@ import { argoCreateClient as createClient } from '../../../../src/supabase-clien
 import { saveDeviceSession } from '../../../../src/devicesession.mjs';
 import { ensureSync } from '../../../../src/sync.mjs';
 import { guestModeOn } from '../../../../src/gueststate.mjs';
-import { claimLocalToAccount } from '../../../../src/accountclaim.mjs';
+import { claimOrDefer } from '../../../../src/accountclaim.mjs';
 import { AUTH_ON, isLoopbackHost, csrfDenied } from '../../../auth.mjs';
 
 const marker = () => `argo-device=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 365}`;
@@ -31,7 +31,7 @@ export async function POST(req) {
     // (유건 지시 2026-08-21: 새 계정으로 인식하지 말고 그대로 이어서). 루프백·비워커는 위에서 보장.
     // 실패해도 로그인은 성공으로 둔다 — 홈의 수동 귀속 배너가 남은 것을 받는다(조용한 소실 금지).
     let claimed = null;
-    if (guestModeOn()) claimed = await claimLocalToAccount(data.session.user.id).catch((e) => ({ error: String(e?.message ?? e) }));
+    if (guestModeOn()) claimed = await claimOrDefer(data.session.user.id); // 실패 = { error } + 귀속 대기 표지(동기화가 다시 시도, 0.1.121)
     ensureSync(); // 자격이 방금 생겼다 — 재시작 없이 동기화 기동
     const headers = new Headers();
     headers.append('Set-Cookie', marker());
