@@ -5,7 +5,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from './helpers/tmp.mjs';
@@ -216,16 +216,26 @@ const guestCo = (root, id = 'guest-co') => {
 test('로그인 경로의 귀속이 실패하면 오류를 버리지 않고 귀속 대기 표지를 남기며, 같은 계정일 때만 10분 뒤 다시 시도한다(C1·C4)', async () => {
   const root = await mkdtemp(join(tmpdir(), 'argo-0121-claimdefer-'));
   guestCo(root);
-  chmodSync(join(root, 'guest-co'), 0o555); // company.json 원자적 쓰기가 실패하게(귀속 실패 재현)
   const S = (rel) => JSON.stringify(srcUrl(rel));
-  let res;
-  try {
-    res = await runScript(root, `
+  // 귀속 실패 주입 — OS와 무관하게(chmod는 Windows에서 쓰기를 막지 못해 귀속이 성공했다, #1190 Windows CI). 로더 훅이 workspace.mjs의
+  // updateCompany 첫머리에 '주입 플래그가 켜져 있으면 던진다' 한 줄을 끼운다(제품 코드는 그대로). 훅은 accountclaim을 부르기 전에 등록한다.
+  const MARK = 'export async function updateCompany(wsId, patch) {';
+  const hook = `export async function load(url, context, next) {
+  const r = await next(url, context);
+  if (!url.endsWith('/src/workspace.mjs')) return r;
+  const src = String(r.source);
+  if (!src.includes(${JSON.stringify(MARK)})) throw new Error('주입 지점 없음: updateCompany 머리가 바뀌었다');
+  return { ...r, source: src.replace(${JSON.stringify(MARK)}, ${JSON.stringify(MARK)} + " if (globalThis.__failUpdateCompany) throw new Error('주입 실패: updateCompany');") };
+}`;
+  const res = await runScript(root, `
+const { register } = await import('node:module');
+register('data:text/javascript,' + encodeURIComponent(${JSON.stringify(hook)}));
 const ac = await import(${S('accountclaim.mjs')});
 const fs = await import('node:fs');
+globalThis.__failUpdateCompany = true;
 const first = await ac.claimOrDefer('u1');
 const pending = JSON.parse(fs.readFileSync(process.env.ARGO_ROOT + '/.claim-pending.json', 'utf8'));
-fs.chmodSync(process.env.ARGO_ROOT + '/guest-co', 0o755);
+globalThis.__failUpdateCompany = false;
 const early = await ac.retryPendingClaim('u1');
 const other = await ac.retryPendingClaim('u-other', { now: Date.now() + 11 * 60_000 });
 const otherOwner = JSON.parse(fs.readFileSync(process.env.ARGO_ROOT + '/guest-co/company.json', 'utf8')).ownerId ?? null;
@@ -233,9 +243,8 @@ const later = await ac.retryPendingClaim('u1', { now: Date.now() + 11 * 60_000 }
 const owner = JSON.parse(fs.readFileSync(process.env.ARGO_ROOT + '/guest-co/company.json', 'utf8')).ownerId ?? null;
 process.stdout.write('\\n@@' + JSON.stringify({ first, pending: { uid: pending.uid, hasErr: !!pending.error, keys: Object.keys(pending).sort() }, early, other, otherOwner, later, owner,
   pendingLeft: fs.existsSync(process.env.ARGO_ROOT + '/.claim-pending.json'), guestLeft: fs.existsSync(process.env.ARGO_ROOT + '/.guest-mode.json') }) + '\\n');`);
-  } finally { try { chmodSync(join(root, 'guest-co'), 0o755); } catch { /* 이미 */ } }
   const { r, out } = res;
-  assert.ok(r.first.error, '로그인 라우트에는 { error }(종전 계약)');
+  assert.match(String(r.first.error), /주입 실패: updateCompany/, '로그인 라우트에는 { error }(종전 계약) — 주입한 실패가 실제로 났다');
   assert.match(out, /\[argo\] 게스트 회사 귀속 실패\(로그인은 성공/, '오류를 로그로 남긴다(auth/callback의 조용한 삼킴 제거)');
   assert.deepEqual(r.pending, { uid: 'u1', hasErr: true, keys: ['at', 'error', 'nextAt', 'uid'] }, '표지 = uid·시각·오류·다음 시도(토큰 없음)');
   assert.equal(r.early.skipped, 'wait', '10분 안에는 다시 하지 않는다');
