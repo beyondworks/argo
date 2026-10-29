@@ -4,6 +4,7 @@ const emptyContext = Object.freeze({
 
 let appContext = emptyContext;
 let mountedCoordinator = null;
+let nativeHold = false; // 업데이트 필요 화면(UpdateGate) 동안 네이티브 실시간을 멈춘다 — 막힌 맥 앱의 소켓·25초 심박·토큰 갱신·REST 읽기 0(#1178 검수 중간)
 const nativeTapStreams = new WeakMap();
 
 const nativeSession = (session) => {
@@ -88,8 +89,9 @@ export async function mountNativeNotificationTaps({ enabled, onTap }) {
   return attachNativeNotificationTaps({ listen, invoke, onTap });
 }
 
-export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabaseUrl, anonKey, lang, getContext }) {
+export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabaseUrl, anonKey, lang, getContext, getHold = () => false }) {
   let active = null;
+  let lastSession = null; // 멈춤이 풀리면 이 세션으로 다시 시작한다(로그아웃이면 null)
   let sessionSync = null;
   let chain = Promise.resolve();
   const enqueue = (task) => {
@@ -108,7 +110,7 @@ export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabas
   };
   const start = async (session) => {
     const parsed = nativeSession(session);
-    if (!enabled || !parsed) { await stopActive(true); return null; }
+    if (!enabled || !parsed || getHold()) { await stopActive(true); return null; }
     if (active?.userId === parsed.userId) return active;
     if (active) await stopActive(false);
     try {
@@ -128,7 +130,8 @@ export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabas
     }
   };
   const handleAuthNow = async (event, session) => {
-    if (event === 'SIGNED_OUT' || !session) { await stopActive(true); return; }
+    if (event === 'SIGNED_OUT' || !session) { lastSession = null; await stopActive(true); return; }
+    lastSession = session;
     const userId = session.user?.id;
     if (active?.userId === userId) return;
     await start(session);
@@ -175,6 +178,8 @@ export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabas
     updateContext: () => enqueue(updateContextNow),
     reconcile: () => enqueue(reconcileNow),
     stop: () => enqueue(() => stopActive(true)),
+    // 멈춤 상태가 바뀌면: 멈춤 = 지금 연결을 끊는다(JS 갱신으로 돌려준다), 풀림 = 마지막 세션으로 다시 시작한다
+    setHold: () => enqueue(async () => { if (getHold()) { if (active) await stopActive(true); } else if (lastSession && !active) await start(lastSession); }),
   };
 }
 
@@ -195,6 +200,13 @@ export function attachNativeRealtimeLifecycle(coordinator, win = window, doc = d
   };
 }
 
+/** 업데이트 필요 화면 동안 네이티브 실시간을 멈춘다(true) / 다시 켠다(false). 아직 장착 전이면 장착 뒤 첫 시작부터 적용된다. */
+export function setNativeRealtimeHold(on) {
+  if (nativeHold === !!on) return;
+  nativeHold = !!on;
+  mountedCoordinator?.setHold().catch(() => {});
+}
+
 export function updateNativeRealtimeContext(next) {
   appContext = { ...appContext, ...next };
   mountedCoordinator?.updateContext().catch(() => {});
@@ -203,7 +215,7 @@ export function updateNativeRealtimeContext(next) {
 export async function mountNativeRealtime({ enabled, auth, supabaseUrl, anonKey, lang }) {
   if (!enabled) return null;
   const [{ invoke }, { listen }] = await Promise.all([import('@tauri-apps/api/core'), import('@tauri-apps/api/event')]);
-  const coordinator = createNativeRealtimeCoordinator({ enabled, auth, invoke, supabaseUrl, anonKey, lang, getContext: currentContext });
+  const coordinator = createNativeRealtimeCoordinator({ enabled, auth, invoke, supabaseUrl, anonKey, lang, getContext: currentContext, getHold: () => nativeHold });
   mountedCoordinator = coordinator;
   const detachLifecycle = attachNativeRealtimeLifecycle(coordinator);
   const unlisten = await listen('native-realtime-session', ({ payload }) => { coordinator.handleNativeSession(payload).catch(() => {}); });
