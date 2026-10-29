@@ -210,6 +210,7 @@ export function _walkCacheForTest() { return walkCache; }
 // 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
 const LOCK_STALE_MS = Math.max(CYCLE_MS * 3, 120_000);
+const LOCK_FUTURE_SLACK_MS = 60_000; // 잠금 시각이 이만큼 넘게 미래면 시계가 앞서 있던 때의 잔존 — 회수한다(holdSyncLock)
 export const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다 (export: 회귀 테스트용)
 /** 확인된 보유자의 다시 쓰기 간격 — TTL의 1/2(60초). 다른 기기는 글의 ts + TTL까지 살아 있는 리스로 보므로, 다시 쓰기가 한 번 실패해도
     다음 판정에서 다시 쓸 여유가 남는다. 30초(TTL/4)이던 것을 로그 수집 과금(2026-10-13: 리스 쓰기 한 번 = edge POST + storage POST·Put·AdminDelete)
@@ -218,7 +219,7 @@ export const LEASE_RENEW_MS = LEASE_TTL_MS / 2;
 
 // 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선하되,
 // 호스티드 클라이언트에선 serviceCredsAllowed()가 서비스 모드를 금지해 세션이 쓰인다(ensureClient 참조).
-export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && process.env.ARGO_SYNC !== '0';
+export const syncOn = () => (!!usableSyncCreds() || !!loadDeviceSession()) && process.env.ARGO_SYNC !== '0';
 
 /** 회의록 파일과 충돌하는 크루 카드(agents/<slug>.md, 세척 후 slug === 'room-main' — slug.mjs) — 옛 버전 기기가 만든
     'Room Main' 크루는 이 기기에서 회의록 chats/room-main.json·회의 턴 마커를 덮는 파일 이름이 된다. 반입 문의 거절은
@@ -353,17 +354,25 @@ export const syncClientOptions = (accessToken) => ({
     구조적으로 우회 불가(보관 전파 경로가 opts 배선을 빠뜨렸던 분리 검수 HIGH-1 계열의 원천 차단).
     서비스 모드(셀프호스트·워커 = 사용자 자신의 인프라·자신의 열쇠)는 운영자가 곧 사용자라 원칙이
     이미 성립하므로 회사별 credSync 토글이 그대로 선택권으로 남는다. (export: 회귀 테스트용) */
-export const hostedCredsOff = () => !(loadSyncCreds() && serviceCredsAllowed());
+export const hostedCredsOff = () => !usableSyncCreds();
 
 /** 서비스롤(RLS 우회) 동기화가 정당한 컨텍스트인가 — 서비스롤 클라이언트 제거 완주(2026-07-23).
     허용: 자가호스트(공개키 미빌드 = AUTH off, 사용자가 곧 테넌트) 또는 워커(ARGO_TENANT_OWNER 바인딩, 오너 전용 인스턴스).
     금지: 호스티드 클라이언트(공개키 빌드 = AUTH_ON, 워커 아님) — 오설정으로 크라운주얼이 런타임에 새어들어도
     절대 service-mode로 RLS를 우회하지 않고 세션(JWT+RLS)만 쓴다. 정상 경로(서비스롤 부재)엔 무영향. (export: 회귀 테스트용) */
 export function serviceCredsAllowed(env = process.env) {
-  const authOn = !!(env.NEXT_PUBLIC_SUPABASE_URL && env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  // 공개 설정은 런타임 env만 보면 안 된다(2026-10-30 고객 C 메인 PC): 설치본 사이드카는 이 값을 **빌드 때 코드에 박아** 쓰고 실행 env로는 받지 않는다
+  // (Tauri가 넘기는 env에 없다). `env.X`처럼 변수로 읽으면 Next가 치환하지 못해 설치본에서 authOn이 늘 거짓 → 서비스 모드 허용 → 남은
+  // .sync-credentials.json(옛 페어링)이 동기화·실행 담당 판정을 우리 클라우드가 아닌 그 파일의 주소로 보냈다(운영 요청 0건, 사흘 넘게 미동기화).
+  // 그래서 기본 env일 때는 `process.env.NEXT_PUBLIC_…`를 글자 그대로 읽어 빌드 값을 함께 본다(번들에선 상수, node 시험에선 런타임 env와 같다).
+  const authOn = !!(env.NEXT_PUBLIC_SUPABASE_URL && env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+    || (env === process.env && !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY));
   const isWorker = !!env.ARGO_TENANT_OWNER?.trim();
   return !authOn || isWorker;
 }
+/** 이 프로세스가 쓸 수 있는 서비스 자격 — 금지된 맥락(호스티드 클라이언트)에서는 파일이 남아 있어도 없는 것으로 본다. 금지된 자격의 owner가
+    판정 대상(syncKeyOwner)·발견 오너·리스 계정으로 새면 세션 모드에서도 남의 오너로 요금제를 물어 영구 무료가 된다(#1183 후보 b'). (export: 회귀 테스트용) */
+export const usableSyncCreds = () => (serviceCredsAllowed() ? loadSyncCreds() : null);
 
 // cycle 시작마다 호출 — 서비스 모드는 epoch, 세션 모드는 access token으로 캐시 키를 삼아
 // 자격 회전 시에만 클라이언트를 재생성한다. false = 쓸 자격 없음(이번 사이클 스킵).
@@ -376,8 +385,8 @@ async function ensureClient() {
   return ok;
 }
 async function ensureClientOnce() {
-  const svc = loadSyncCreds();
-  if (svc && serviceCredsAllowed()) {
+  const svc = usableSyncCreds();
+  if (svc) {
     const k = `svc:${credsEpoch()}`;
     if (sbKey !== k) { sb = createClient(svc.url, svc.key, syncClientOptions()); sbKey = k; resetDiscoverClock(); }
     return true;
@@ -443,7 +452,10 @@ async function holdSyncLock() {
   const f = join(WS_ROOT, '.sync-process.lock');
   try {
     const cur = JSON.parse(await readFile(f, 'utf8'));
-    if (cur.pid !== process.pid && Date.now() - cur.ts < LOCK_STALE_MS) {
+    // 미래 시각 잠금(시계가 앞서 있던 때 쓴 것)은 버린다 — 나이가 음수라 영영 '신선'으로 보이고, Windows는 pid가 다른 프로세스에 다시 쓰여
+    // 살아 있음 확인도 통과해 이 데이터 폴더의 동기화가 그 시각까지 멈췄다(2026-10-30 재현). 살아 있는 주인은 사이클마다 지금 시각으로 다시 쓰므로 영향이 없다.
+    const age = Date.now() - Number(cur.ts);
+    if (cur.pid !== process.pid && age < LOCK_STALE_MS && age > -LOCK_FUTURE_SLACK_MS) {
       // 잠금 주인(pid·앱 버전·주인이 처음 잡은 시각)을 진단용으로 남긴다 — 앱 업데이트 뒤 옛 프로세스가 남아 잠금을 쥐는지 화면·로그에서 가른다(2026-10-28 고객 C 조사)
       try { process.kill(cur.pid, 0); lockState.holder = { pid: Number(cur.pid) || null, ver: typeof cur.ver === 'string' ? cur.ver.slice(0, 24) : null, since: Number(cur.since) || null }; return false; } catch { /* 죽은 pid → 탈취 */ }
     }
@@ -522,7 +534,7 @@ if (!leaseState.peers) {
   leaseState.peersSavedAt = Object.fromEntries(Object.entries(leaseState.peers).map(([k, v]) => [k, Number(v?.at) || 0]));
 }
 /** 이 기기가 지금 쓰는 계정 — 기기 세션의 사용자(호스티드) 또는 서비스 자격의 오너(셀프호스트). 둘 다 파일 도장 캐시라 싸다. */
-const leaseAccount = () => String(loadDeviceSession()?.user?.id ?? loadSyncCreds()?.owner ?? '');
+const leaseAccount = () => String(loadDeviceSession()?.user?.id ?? usableSyncCreds()?.owner ?? '');
 /** 이 계정이 최근 14일 안에 다른 기기의 리스 글을 봤는가 — 봤으면 그 표지(없으면 null). */
 function peerSeen(now = Date.now()) {
   const e = leaseState.peers?.[leaseAccount()];
@@ -2118,7 +2130,7 @@ async function loadSyncIndex() {
 
 /* ─── 원격 회사 발견 — 내가 책임지는 오너의 회사만. 새 기기가 자기 회사를 복원하는 경로. ─── */
 async function discoverRemote(localOwners, index = null) {
-  const fixed = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
+  const fixed = process.env.ARGO_SYNC_OWNER || usableSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
   const allow = fixed ? new Set([fixed]) : new Set(localOwners);
   if (allow.size === 0) return []; // 지정 오너도, 로컬 회사도 없으면 발견 안 함(무차별 복제 차단)
   // 색인이 있고 그 오너가 이 사이클의 오너와 같을 때만 list(storage.search)를 건너뛴다 — 다르면(ARGO_SYNC_OWNER 오설정 등) 종전 경로.
@@ -2188,7 +2200,7 @@ async function syncTombstones(fixedOwner, { remote: doRemote = true, index = nul
   //    기기 세션이 없는 셀프호스트에서 로컬 tombstone의 ownerId도 오너로 인정한다.
   //    세션(JWT) 모드는 cycle의 로컬 수집과 같은 소유자 게이트 — 다른 계정 소유 tombstone으로
   //    남의 prefix에 list/upload를 매 사이클 반복하지 않는다(사후 검수 2026-07-25). 서비스 모드는 무게이트.
-  const gateUid = (loadSyncCreds() && serviceCredsAllowed()) ? null : (loadDeviceSession()?.user?.id ?? null);
+  const gateUid = usableSyncCreds() ? null : (loadDeviceSession()?.user?.id ?? null);
   const allowOwner = (o) => !gateUid || o === gateUid;
   const owners = new Set(fixedOwner && allowOwner(fixedOwner) ? [fixedOwner] : []);
   for (const t of local.values()) if (t.ownerId && allowOwner(t.ownerId)) owners.add(t.ownerId);
@@ -2305,6 +2317,20 @@ export function syncStatus() {
     · stalled     = 사이클이 끝난 지 오래(분) — 사이클 중이 아닌데 정한 시간 넘게 다음 사이클이 없다. 긴 사이클(큰 파일)은 정지로 보지 않는다.
     · notStarted  = 동기화 자격은 있는데 이 프로세스에 루프가 없다.
     건너뜀은 마지막 로컬 수집(scanAt) 이후에 기록된 것만 센다 — 귀속·삭제된 회사의 옛 표지가 남지 않게. */
+/** 원격 진단 꼬리표(순수) — 앱이 이미 30분마다 보내는 최소 버전 확인 요청의 X-Client-Info 끝에 붙는다(src/app-gate.mjs). 요청 수는 늘지 않는다.
+    고객에게 로그를 묻지 않고 운영 edge_logs에서 이 기기의 동기화가 어디서 멈췄는지 본다(2026-10-30 유건 지시). 계정·회사·경로·토큰은 싣지 않는다 —
+    단계·오류 종류·잠금 대기(주인 앱 버전)·건너뛴 회사 수·쓰지 않는 서비스 자격 파일이 남았는지만. 형식: sync/<단계>.<오류>.<잠금>.o<주인없음>f<남의계정>.c<0|1> */
+export function syncDiagTag(held, { credsFileIgnored = false } = {}) {
+  const clean = (v) => String(v ?? '').replace(/[^A-Za-z0-9.-]/g, '').slice(0, 16) || '-';
+  const lock = held?.lockWait ? `L${clean(held.lockVer)}` : '-';
+  return `sync/${clean(held?.phase)}.${clean(held?.errorCode)}.${lock}.o${Number(held?.noOwner) || 0}f${Number(held?.foreignOwner) || 0}.c${credsFileIgnored ? 1 : 0}`;
+}
+globalThis.__argoSyncDiagTag = () => {
+  try {
+    const held = syncHeldView(status, { on: syncOn(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder, cycleMs: CYCLE_MS });
+    return syncDiagTag(held, { credsFileIgnored: !usableSyncCreds() && !!loadSyncCreds() });
+  } catch { return null; }
+};
 export const STALL_AFTER_MS = (cycleMs) => Math.max(20 * cycleMs, 3 * 60_000);
 export function syncHeldView(st, { now = Date.now(), on, loopStarted, lockElsewhere = false, lockHolder = null, cycleMs = CYCLE_MS } = {}) {
   const count = (kind) => (on ? Object.values(st?.companies ?? {}).filter((c) => c?.skipped === kind && Number(c.ts) >= (Number(st?.scanAt) || 0)).length : 0);
@@ -2365,7 +2391,7 @@ export const syncRunsElsewhere = () => syncOn() && lockState.elsewhere;
 const setCompanyError = (wsId, msg) => { status.lastError = msg; (status.companies[wsId] ??= { ts: Date.now() }).error = msg; };
 
 /** 세션(JWT) 모드면 세션 사용자 id, 서비스 모드(셀프호스트·워커)면 null — 회사 소유자 게이트와 요금제 캐시 키가 같이 쓴다. */
-const currentSessionUid = () => ((loadSyncCreds() && serviceCredsAllowed()) ? null : (loadDeviceSession()?.user?.id ?? null));
+const currentSessionUid = () => (usableSyncCreds() ? null : (loadDeviceSession()?.user?.id ?? null));
 
 /** 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
     세션(JWT) 모드는 현재 계정 소유가 아닌 회사를 제외한다 — 다른 계정 소유의 로컬 사본(계정 전환·
@@ -2443,7 +2469,7 @@ async function probeRunnerUsable(targets) {
     텔레그램 토큰 클레임도 같은 기준이다 — 폴러는 게이트웨이 리스 주인에서만 돈다(gateway.mjs의 procLeader 게이트).
     파일 동기화와 따로 도는 이유는 위 클라우드 리스 머리말(D 3차 검수). 동기화 락과는 무관하다 — 같은 데이터 루트를 다른 프로세스가 동기화 중이어도 판정한다. */
 /** 계정 키·요금제 판정의 오너 — 서비스 자격의 오너, 기기 세션 사용자 순(cycleOnce·leaseTick 공용) */
-const syncKeyOwner = () => process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
+const syncKeyOwner = () => process.env.ARGO_SYNC_OWNER || usableSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
 /** 요금제 판정 — 계정별 10분 캐시(src/plan-cache.mjs). 동기화 사이클과 리스 타이머가 같이 쓴다(같은 키라 한쪽이 물으면 다른 쪽은 캐시).
     같은 키의 동시 조회는 하나로 묶는다(기동 직후 두 루프가 함께 물어 my_plan이 두 번 나가지 않게). */
 const planInflight = new Map();
@@ -2486,7 +2512,7 @@ async function leaseTick() {
   const owner = [...new Set(targets.values())][0];
   if (!owner) { leaseState.checkedAt = Date.now(); return; } // 로컬 회사 0개 — 이 기기에서 돌릴 루틴·폴러 자체가 없다(아래 cycle 주석). 판정은 끝난 것으로
   // 확정 무료 = 이 기기 단독 — 리스·토큰 클레임을 읽지도 쓰지도 않는다(isCloudLeader·tokenOwnership이 이 기기를 담당으로 본다). 판정은 동기화 사이클과 같은 캐시.
-  if (!(loadSyncCreds() && serviceCredsAllowed())) {
+  if (!usableSyncCreds()) {
     const ent = await resolvePlan(syncKeyOwner() || owner, currentSessionUid()).catch(() => null);
     if (ent?.plan === 'free' || (ent?.plan == null && planIsFreeLocal())) { leaseState.checkedAt = Date.now(); return; } // 조회 실패면 마지막 확정 판정(F6)
   }
@@ -2639,7 +2665,7 @@ async function cycleOnce() {
   // 삼키므로 이 catch는 심층 방어다.)
   let freePlan = false;
   setPhase('plan-check', status.errorCode);
-  if (!(loadSyncCreds() && serviceCredsAllowed())) {
+  if (!usableSyncCreds()) {
     try {
       // 계정별 10분 캐시(src/plan-cache.mjs) — 매 주기 /auth/v1/user + rpc/my_plan 2건이던 것(프로세스당 분당 15건)을 10분에 2건으로.
       // 키에 세션 사용자를 넣어 계정이 바뀌면 바로 빗나가고, 업로드 거절(아래)·결제 화면 조회(me/billing)가 캐시를 지운다.
@@ -2817,7 +2843,7 @@ export function ensureSync() {
   if (globalThis.__argoSync) return;
   globalThis.__argoSync = true;
   (async () => {
-    if (loadSyncCreds()) {
+    if (usableSyncCreds()) {
       try { await ensureClient(); await client().storage.createBucket(BUCKET, { public: false }); } catch { /* 이미 있음 */ }
     }
     console.log(`[argo] 기기 간 동기화 시작 (${Math.round(CYCLE_MS / 1000)}s 주기 · 로컬 변경 시 즉시)`);
@@ -2833,5 +2859,10 @@ export function ensureSync() {
         globalThis.__argoSyncWake = finish;
       });
     }
-  })();
+  })().catch((e) => {
+    // 루프 밖으로 새는 예외(사이클 밖 줄 — 리스 루프 시작·대기 등)로 루프가 죽으면 표지만 남아 다시 켜지지 않았다 — 표지를 내리고 한 주기 뒤 다시 켠다
+    console.warn('[argo] 동기화 루프 중단 — 다시 시작:', String(e?.message ?? e).slice(0, 120));
+    globalThis.__argoSync = false;
+    setTimeout(ensureSync, CYCLE_MS).unref?.();
+  });
 }
