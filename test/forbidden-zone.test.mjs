@@ -469,7 +469,7 @@ const DOT_ITEMS = [
   ['ws', '.msgr-cc/crew-receipt.json'],
   ['ws', '.gateway-telegram.json'], // 게이트웨이 상태(persist.mjs) — 어떤 단언도 안 지키던 사각
   ['root', '.device-session.json'], ['root', '.tmp-devsess-123-abc'],
-  ['root', '.sync-credentials.json'],
+  ['root', '.sync-credentials.json'], ['root', '.sync-credentials.ignored.json'],
   // 계정 자격 3형태 — 로컬·사용자 스코프(로그인 시 uid로 바뀐다)·레거시
   ['root', '.account-secrets-local.json'],
   ['root', '.account-secrets-3f2a1b7c-0000-4000-8000-000000000001.json'],

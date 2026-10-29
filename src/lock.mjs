@@ -54,7 +54,9 @@ export function daemonLease(name, { ttl = 15_000, beat = 5_000 } = {}) {
           // 그대로면 버려진 기록으로 보고 가져간다 — 아무도 못 잡는 교착이 되지 않게. 보유자는 종전대로 다시 쓴다.
           if (!mine) { corruptSince ||= Date.now(); if (Date.now() - corruptSince < ttl) return; }
         }
-        if (cur && cur.owner !== OWNER && Date.now() - cur.ts < ttl) { mine = false; return; } // 살아있는 리더 존중
+        // 미래 시각 기록(시계가 앞서 있던 때)은 버린 것으로 본다 — 나이가 음수라 그 시각까지 아무도 리더가 못 됐다(동기화 잠금과 같은 계열, 2026-10-30)
+        const age = Date.now() - Number(cur?.ts);
+        if (cur && cur.owner !== OWNER && age < ttl && age > -ttl) { mine = false; return; } // 살아있는 리더 존중
       } catch (e) {
         // 파일이 없거나 쓰다 만 내용이면 선점을 시도한다. 그 밖의 I/O 오류(EPERM·EBUSY 등)는 남의 살아 있는 리스를 못 읽은 것일 수 있어
         // 보유자가 아니면 이번 박자를 건너뛴다(아래 catch). '파일 없음'으로 보고 빼앗아 이중 리더가 되던 것(2026-10-08 검수 M-2, 2.8초).

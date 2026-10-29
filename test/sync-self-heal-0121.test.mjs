@@ -1,11 +1,10 @@
 // 0.1.121 핫픽스 — 고객 C(2026-10-30) 메인 PC가 0.1.120 뒤에도 동기화 사이클 첫 단계에서 5시간 멈춘 것을 앱이 스스로 풀게 한다.
-// ① 동기화 잠금 회수(옛 판 사이드카·미래 ts·멈춘 ts) ② 사이클 감시(멈추면 루프 다시 시작) ③ 호스티드 빌드의 서비스 모드 금지(빌드 값)
-// ④ 30분 최소 버전 확인 요청에 동기화 진단 꼬리(요청 수 그대로) ⑤ 안전한 로그인 경로가 남긴 귀속 대기만 다시 시도(교차 사이트 confirm은 아님).
+// #1189(남은 페어링 자격·미래 시각 잠금·진단 꼬리표)에 더해: ① 잠금 회수(옛 판 사이드카·멈춘 ts) ② 사이클 감시(끝나지 않는 await면 루프 다시 시작)
+// ④ 진단 꼬리표에 회수 이유·감시 재시작·귀속 실패 ⑤ 안전한 로그인 경로가 남긴 귀속 대기만 다시 시도(교차 사이트 confirm은 아님).
 // 자식 프로세스 + 가짜 Supabase로 실제 루프(ensureSync)를 돌린다 — 루프는 끝나지 않는 타이머라 시험 프로세스 안에서 돌리지 않는다.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:http';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -13,10 +12,9 @@ import { mkdtemp } from './helpers/tmp.mjs';
 import { startFakeSupabase } from './helpers/fake-supabase-http.mjs';
 import { childEnv, srcUrl, seedRoot } from './helpers/sync-child.mjs';
 import {
-  lockTakeoverReason, olderLockHolder, LOCK_FROZEN_MS, LOCK_FUTURE_SKEW_MS, LOCK_TAKEOVER_WAIT_MS,
-  syncLoopStalled, SYNC_WATCHDOG_MS, serviceCredsAllowed,
+  lockTakeoverReason, olderLockHolder, LOCK_FROZEN_MS, LOCK_FUTURE_SLACK_MS, LOCK_TAKEOVER_WAIT_MS,
+  syncLoopStalled, SYNC_WATCHDOG_MS, syncDiagTag,
 } from '../src/sync.mjs';
-import { syncDiagTag, withSyncDiag } from '../src/sync-diag.mjs';
 
 const fakes = [];
 after(async () => { for (const f of fakes) await f.close(); });
@@ -57,7 +55,7 @@ test('잠금 회수 판정 — 같은 판·살아 있는 주인은 기다리고,
   assert.equal(lockTakeoverReason(fresh({}), { now, myVer: me, alive }), 'older', 'L2 ver 없음 = 0.1.120 이전 옛 판(0.1.116~0.1.119 사이드카)');
   assert.equal(lockTakeoverReason(fresh({ ver: '0.1.120' }), { now, myVer: me, alive }), 'older', 'L3 낮은 판');
   assert.equal(lockTakeoverReason(fresh({ ver: '0.1.122' }), { now, myVer: me, alive }), null, 'L4 높은 판은 뺏지 않는다');
-  assert.equal(lockTakeoverReason({ pid: 4242, ts: now + LOCK_FUTURE_SKEW_MS + 5_000, ver: me }, { now, myVer: me, alive }), 'future', 'L5 미래 ts(시계 되돌림) + 살아 있는 pid(재사용 포함)');
+  assert.equal(lockTakeoverReason({ pid: 4242, ts: now + LOCK_FUTURE_SLACK_MS + 5_000, ver: me }, { now, myVer: me, alive }), 'future', 'L5 미래 ts(시계 되돌림) + 살아 있는 pid(재사용 포함)');
   assert.equal(lockTakeoverReason({ pid: 4242, ts: now + 30_000, ver: me }, { now, myVer: me, alive }), null, '작은 시계 차이는 회수 사유가 아니다');
   assert.equal(lockTakeoverReason(fresh({ ver: me }), { now, myVer: me, alive, frozenMs: LOCK_FROZEN_MS + 1 }), 'frozen', 'L6 같은 (pid, ts)를 120초 넘게 봄');
   assert.equal(lockTakeoverReason(fresh({ ver: me }), { now, myVer: me, alive, frozenMs: LOCK_FROZEN_MS - 1 }), null);
@@ -129,72 +127,12 @@ test('사이클이 끝나지 않는 await에 멈추면 감시가 루프를 다�
   assert.ok(uploads(fake).length > 0, '새 루프가 회사를 올렸다(멈춘 옛 요청의 30초 시간 초과를 기다리지 않음)');
 });
 
-/* ─── ③ 호스티드 빌드의 서비스 모드 금지(경우 표 S1~S3) ─── */
-test('서비스 모드 판정 — 빌드가 공개키로 만들어졌으면 런타임 env가 비어도 금지, 셀프호스트·워커는 종전대로 허용', () => {
-  assert.equal(serviceCredsAllowed({ ARGO_PARENT_PID: '123' }, { built: true }), false, 'S1 데스크톱 사이드카: 런타임 env에 공개키 없음 + 빌드 공개키 = 호스티드');
-  assert.equal(serviceCredsAllowed({ ARGO_TENANT_OWNER: 'u-worker' }, { built: true }), true, 'S3 워커는 허용');
-  assert.equal(serviceCredsAllowed({}, { built: false }), true, 'S2 셀프호스트(공개키 미빌드)는 허용');
-  assert.equal(serviceCredsAllowed({}), true, '명시 env(기본 env 아님)는 빌드 값을 섞지 않는다 — 종전 시험 의미 그대로');
-});
-
-test('호스티드 빌드에 남은 서비스 자격은 쓰지 않고 진단에 남긴다 — 기기 세션으로 동기화(경우 표 S1)', async () => {
-  const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
-  const root = await mkdtemp(join(tmpdir(), 'argo-0121-svc-'));
-  seedRoot(root, { url: fake.url, wsId: 'co-svc' });
-  writeFileSync(join(root, '.sync-credentials.json'), JSON.stringify({ url: fake.url, key: 'svc-fixture-not-a-real-key', owner: 'u1' }), { mode: 0o600 }); // 옛 페어링 흔적
-  // 자식 기본 env에는 공개키를 넣는다 — 기본 env(process.env)를 쓰는 경로에서 빌드 값과 같은 판정이 되는지(번들은 이 리터럴에 빌드 값을 박는다)
-  const r = await runChild({ root, env: { ARGO_SYNC_CYCLE_MS: '300', NEXT_PUBLIC_SUPABASE_URL: fake.url, NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fixture' }, waitMs: 3_000 });
-  assert.match(r.out, /\[argo\] sync service-creds-ignored/);
-  assert.equal(fake.hits.some((h) => h.auth === 'Bearer svc-fixture-not-a-real-key'), false, '서비스 자격으로 나간 요청 0');
-  assert.ok(uploads(fake).length > 0 && uploads(fake).every((h) => h.auth === 'Bearer h.p.s'), '기기 세션(JWT)으로 동기화');
-});
-
-/* ─── ④ 원격 진단 꼬리(경우 표 D1~D3) ─── */
-test('진단 꼬리 — 단계·오류 종류·잠금 주인 판·회수 이유·개수만, 계정·회사 id 없음', () => {
-  const g = {
-    __argoSync: true,
-    __argoSyncStatus: { phase: 'lock-wait', errorCode: 'other-process', scanAt: 10, watchdogRestarts: 2, svcIgnored: true, claimError: 'claim',
-      companies: { 'co-secret-1': { ts: 11, skipped: 'no-owner' }, 'co-old': { ts: 5, skipped: 'no-owner' }, 'co-x': { ts: 12, skipped: 'foreign-owner' } } },
-    __argoSyncLockState: { elsewhere: true, holder: { pid: 99, ver: '0.1.116' }, takeover: { reason: 'older' } },
-  };
-  const tag = syncDiagTag(g);
-  assert.equal(tag, 'argo-sync/lock-wait/other-process/l0.1.116/tolder/n1/f1/w2/s1/c1');
-  assert.match(tag, /^[A-Za-z0-9._/-]+$/);
-  assert.equal(/co-secret|u1|99/.test(tag), false, '회사 id·pid·계정 없음');
-  assert.equal(syncDiagTag({}), 'argo-sync/none');
-  assert.equal(syncDiagTag({ __argoSyncCredWatch: {} }), 'argo-sync/not-started');
-  assert.equal(syncDiagTag({ __argoSync: true, __argoSyncStatus: { phase: 'id le;"x' } }).split('/')[1], 'idlex', '이상한 글자는 지운다');
-});
-
-test('30분 최소 버전 확인 요청 한 건에 꼬리가 argo/<버전> 뒤에 붙고, 서버의 버전 추출·꼬리 판정은 그대로다(요청 수 그대로)', async () => {
-  const seen = [];
-  const srv = createServer((req, res) => { seen.push({ path: req.url, xci: req.headers['x-client-info'] }); res.writeHead(200, { 'content-type': 'application/json' }); res.end('"0.1.100"'); });
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  try {
-    const url = `http://127.0.0.1:${srv.address().port}`;
-    const { appGateClient, refreshAppGate, _resetAppGateForTest } = await import('../src/app-gate.mjs');
-    const { APP_VERSION } = await import('../src/app-version.mjs');
-    _resetAppGateForTest();
-    const root = await mkdtemp(join(tmpdir(), 'argo-0121-diag-'));
-    const prev = { s: globalThis.__argoSync, st: globalThis.__argoSyncStatus, l: globalThis.__argoSyncLockState };
-    Object.assign(globalThis, { __argoSync: true, __argoSyncStatus: { phase: 'lock-wait', errorCode: 'other-process', companies: {} }, __argoSyncLockState: { elsewhere: true, holder: { ver: '0.1.119' } } });
-    try { await refreshAppGate(root, { url, anonKey: 'anon-fixture', access_token: 'h.p.s' }, appGateClient); }
-    finally { Object.assign(globalThis, { __argoSync: prev.s, __argoSyncStatus: prev.st, __argoSyncLockState: prev.l }); }
-    assert.equal(seen.length, 1, '요청은 한 건(꼬리는 기존 요청에 싣는다)');
-    assert.equal(seen[0].path, '/rest/v1/rpc/argo_min_app_version');
-    const xci = seen[0].xci;
-    assert.ok(xci.endsWith(` argo/${APP_VERSION} argo-sync/lock-wait/other-process/l0.1.119/t-/n0/f0/w0/s0/c0`), xci);
-    // 서버(20261019135000 argo_xci_version): substring(xci from ' argo/([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})') — 꼬리가 버전 추출을 바꾸지 않는다
-    assert.equal(/ argo\/([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})/.exec(xci)?.[1], APP_VERSION);
-    assert.equal(xci.split(' argo/').length - 1, 1, "꼬리는 ' argo/'를 하나 더 만들지 않는다");
-  } finally { await new Promise((r) => srv.close(r)); }
-});
-
-test('withSyncDiag — 이미 꼬리가 있으면 다시 붙이지 않는다', async () => {
-  let got = null;
-  const f = withSyncDiag(async (_u, init) => { got = new Headers(init.headers).get('x-client-info'); }, () => 'argo-sync/idle/-/l-/t-/n0/f0/w0/s0/c0');
-  await f('http://x', { headers: { 'X-Client-Info': 'supabase-js/2 argo/0.1.121 argo-sync/old' } });
-  assert.equal(got, 'supabase-js/2 argo/0.1.121 argo-sync/old');
+/* ─── ④ 진단 꼬리표 확장(#1189 형식 뒤에 값이 있을 때만) ─── */
+test('진단 꼬리표 — 잠금 회수 이유·감시 재시작·귀속 실패를 값이 있을 때만 덧붙이고, #1189 형식은 그대로다', () => {
+  const held = { phase: 'lock-wait', errorCode: 'other-process', lockWait: true, lockVer: '0.1.119', noOwner: 1, foreignOwner: 0 };
+  assert.equal(syncDiagTag(held), 'sync/lock-wait.other-process.L0.1.119.o1f0.c0', '추가 값이 없으면 종전 그대로');
+  assert.equal(syncDiagTag(held, { takeover: 'older', watchdog: 2, claimError: true }), 'sync/lock-wait.other-process.L0.1.119.o1f0.c0.tolder.w2.k1');
+  assert.equal(syncDiagTag(held, { takeover: 'a b/<x>' }).endsWith('.tabx'), true, '헤더를 깨는 글자는 지운다');
 });
 
 /* ─── ⑤ 귀속 대기 다시 시도(경우 표 C1~C5) ─── */

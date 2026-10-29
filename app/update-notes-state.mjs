@@ -60,6 +60,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.119': Object.freeze(['updates.note.connectorOpen', 'updates.note.msgrV2Settings']),
   // 0.1.120 — msgrLinkStatus: 러너 감지 초과 뒤 재등록·기기 폐기 뒤 재연결·설정에 실제 연결 상태(#1186) · syncStatus: 앱 로그인 게스트 회사 귀속·로그인 뒤 동기화 시작·동기화 카드 진단(#1183) · diagLogs: 출시 빌드 진단 로그와 폴더 열기(#1184)
   '0.1.120': Object.freeze(['updates.note.msgrLinkStatus', 'updates.note.syncStatus', 'updates.note.diagLogs']),
+  // 0.1.121 — syncUnstuck: 남은 옛 연결 자격 파일·미래 시각 잠금 때문에 멈춰 있던 기기 간 동기화가 스스로 다시 돎(fix/sync-stuck-selfheal)
+  '0.1.121': Object.freeze(['updates.note.syncUnstuck']),
 });
 
 export function stableVersion(value) {
