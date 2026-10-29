@@ -15,8 +15,8 @@
 //
 // v1 한계(문서화): 서비스 키 기반(자가 호스팅 전제 — 패키징 앱은 사용자 JWT+RLS로 전환 예정),
 // 충돌은 LWW(더 최근 mtime 승) — md 양쪽 보존은 후속.
-import { mkdir, readFile, writeFile, readdir, stat, rm, utimes } from 'node:fs/promises';
-import { readFileSync, unlinkSync } from 'node:fs';
+import { mkdir, readFile, writeFile, readdir, stat, rm, utimes, rename } from 'node:fs/promises';
+import { readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { collidesWithRoom } from './slug.mjs';
 import { join, dirname, basename, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -317,7 +317,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
     base.startsWith('.gw-queue') ||
-    base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' || base === '.server-presence.json' ||
+    base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' || base === '.sync-credentials.ignored.json' || base === '.server-presence.json' ||
     base === '.device-session.json' || base === '.DS_Store' ||
     base === '.app-gate.json' || // 최소 앱 버전 판정(src/app-gate.mjs) — 기기마다 그 앱 버전으로 내린 판정이라 다른 기기로 넘기면 안 된다(데이터 루트 직속이라 회사 동기화 대상도 아니다 — 방어 일관)
     base === '.workroots.json' || // 외부 작업 폴더 — 기기 고유 경로라 타 기기로 넘기면 무의미하거나 의도 안 한 접근 허용이 된다
@@ -377,6 +377,17 @@ export function serviceCredsAllowed(env = process.env) {
 /** 이 프로세스가 쓸 수 있는 서비스 자격 — 금지된 맥락(호스티드 클라이언트)에서는 파일이 남아 있어도 없는 것으로 본다. 금지된 자격의 owner가
     판정 대상(syncKeyOwner)·발견 오너·리스 계정으로 새면 세션 모드에서도 남의 오너로 요금제를 물어 영구 무료가 된다(#1183 후보 b'). (export: 회귀 테스트용) */
 export const usableSyncCreds = () => (serviceCredsAllowed() ? loadSyncCreds() : null);
+/** 쓰지 않는(호스티드에서 금지된) 서비스 자격 파일을 치운 이름 — 옛 판(≤0.1.120)이 같은 폴더를 다시 동기화할 때 그 파일로 서비스 모드에 붙어
+    새 목적지 기준 기록과 옛 목적지를 비교해 로컬을 지우는 것을 막는다(0.1.121 재검수 중간). 지우지 않고 이름만 바꾼다(0600 유지 — rename은 모드 보존). */
+const IGNORED_CREDS = '.sync-credentials.ignored.json';
+const ignoredCredsLeft = () => { try { return existsSync(join(WS_ROOT, IGNORED_CREDS)); } catch { return false; } };
+/** 이 기기에 쓰지 않는 서비스 자격 파일이 남아 있었는가(치운 것 포함) — 목적지 표지 없는 옛 기록을 비울 근거·진단 꼬리표 c1. */
+const staleCredsSeen = () => (!usableSyncCreds() && !!loadSyncCreds()) || ignoredCredsLeft();
+async function parkIgnoredCreds() {
+  if (usableSyncCreds() || !loadSyncCreds()) return;
+  const from = join(WS_ROOT, '.sync-credentials.json');
+  try { if (existsSync(from)) { await rename(from, join(WS_ROOT, IGNORED_CREDS)); console.warn('[argo] 동기화: 이 앱에서 쓰지 않는 옛 연결 자격 파일을 치웠다(.sync-credentials.ignored.json)'); } } catch { /* 다음 사이클에 다시 */ }
+}
 
 // cycle 시작마다 호출 — 서비스 모드는 epoch, 세션 모드는 access token으로 캐시 키를 삼아
 // 자격 회전 시에만 클라이언트를 재생성한다. false = 쓸 자격 없음(이번 사이클 스킵).
@@ -1492,7 +1503,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // 목적지가 바뀐 기록 — 기록이 남긴 목적지와 지금이 다르거나, 목적지 표지가 없는 옛 기록인데 이 기기에 쓰지 않는 서비스 자격 파일이 남아 있으면
   // (옛 설치본이 그 파일 주소로 맞춘 base) 기록을 비우고 합치기만 한다(삭제 0 — epoch 합치기와 같은 원리). 정상 기기(표지 없음·파일 없음)는 종전과 같다.
   const targetMoved = Object.keys(state).length > 0 && !!syncTarget
-    && (typeof stateDoc.target === 'string' ? stateDoc.target !== syncTarget : (!usableSyncCreds() && !!loadSyncCreds()));
+    && (typeof stateDoc.target === 'string' ? stateDoc.target !== syncTarget : staleCredsSeen());
   if (targetMoved) {
     console.warn(`[argo] 동기화(${wsId}): 동기화 목적지가 바뀐 기록 — 이 기기 기록을 비우고 합친다(삭제 0)`);
     for (const k of Object.keys(state)) delete state[k];
@@ -2342,7 +2353,7 @@ export function syncDiagTag(held, { credsFileIgnored = false } = {}) {
 globalThis.__argoSyncDiagTag = () => {
   try {
     const held = syncHeldView(status, { on: syncOn(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder, cycleMs: CYCLE_MS });
-    return syncDiagTag(held, { credsFileIgnored: !usableSyncCreds() && !!loadSyncCreds() });
+    return syncDiagTag(held, { credsFileIgnored: staleCredsSeen() });
   } catch { return null; }
 };
 export const STALL_AFTER_MS = (cycleMs) => Math.max(20 * cycleMs, 3 * 60_000);
@@ -2628,6 +2639,7 @@ async function cycle() {
 
 async function cycleOnce() {
   if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; setPhase('no-creds', 'auth'); return; }
+  await parkIgnoredCreds(); // 옛 판이 같은 폴더에서 그 파일로 다른 목적지에 붙지 않게(목적지 판정은 치운 이름으로도 한다)
   // 크로스 프로세스 락 — 같은 root를 다른 살아있는 프로세스가 동기화 중이면 파일 동기화는 대기(이중 동기화=대형 유실 차단)
   lockState.elsewhere = !(await holdSyncLock());
   if (lockState.elsewhere) {

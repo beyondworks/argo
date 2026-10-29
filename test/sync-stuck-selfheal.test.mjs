@@ -119,4 +119,7 @@ test('목적지가 바뀐 옛 기록(base) — 로컬 파일을 지우지 않고
   assert.ok([...fakeB.store.keys()].some((k) => k.endsWith('co-1234/only-a.md')), `B로 올라가야 한다: ${[...fakeB.store.keys()].join(', ')}`);
   assert.ok(existsSync(join(root, 'co-1234', 'only-b.md')), '다른 기기 파일도 받아야 한다');
   assert.equal(JSON.parse(readFileSync(stPath, 'utf8')).target?.length, 16, '기록에 목적지 표지가 남는다');
+  // 옛 판이 같은 폴더를 다시 동기화해도 그 파일로 옛 목적지에 붙지 않게 치웠다(재검수 중간) — 지우지 않고 이름만
+  assert.ok(!existsSync(join(root, '.sync-credentials.json')), '쓰지 않는 자격 파일이 원래 이름으로 남았다');
+  assert.ok(existsSync(join(root, '.sync-credentials.ignored.json')), '치운 자격 파일이 없다(지우면 안 된다)');
 });
