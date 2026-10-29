@@ -62,6 +62,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.120': Object.freeze(['updates.note.msgrLinkStatus', 'updates.note.syncStatus', 'updates.note.diagLogs']),
   // 0.1.121 — syncUnstuck: 남은 옛 연결 자격 파일·미래 시각 잠금 때문에 멈춰 있던 기기 간 동기화가 스스로 다시 돎(fix/sync-stuck-selfheal)
   '0.1.121': Object.freeze(['updates.note.syncUnstuck']),
+  // 0.1.122 — 0.1.121은 공개하지 않음(가짜 서버 E2E에서 옛 판 프로세스가 남은 자격으로 잠금을 쥔 경우가 안 풀림). 같은 안내를 다시 싣는다: syncUnstuck(#1189·#1190 — 옛 판·멈춘 잠금 회수, 멈춘 사이클 감시, 귀속 대기)
+  '0.1.122': Object.freeze(['updates.note.syncUnstuck']),
 });
 
 export function stableVersion(value) {
