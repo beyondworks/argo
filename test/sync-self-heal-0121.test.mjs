@@ -287,6 +287,5 @@ test('로그인 라우트 세 곳(기기 로그인·앱 링크·OAuth 콜백)은
   assert.equal(/claimLocalToAccount\([^)]*\)\.catch\(\(\) => \{\}\)/.test(cb), false, '조용한 삼킴(.catch(() => {}))이 돌아왔다');
   assert.match(src('app/api/device/login/route.js'), /if \(guestModeOn\(\)\) claimed = await claimOrDefer\(data\.session\.user\.id\);/);
   assert.match(src('app/api/device/link/route.js'), /if \(guestModeOn\(\)\) claimed = await claimOrDefer\(user\.id\);/);
-  // 교차 사이트 GET(confirm)은 이 기기에 이미 같은 계정의 기기 세션이 있었을 때만 귀속한다(0.1.124 — 게스트 기기는 종전대로 귀속·표지 없음, 행동은 test/confirm-claim-prior-uid.test.mjs)
-  assert.match(src('app/auth/confirm/route.js'), /if \(priorUid && priorUid === data\.session\.user\?\.id && guestModeOn\(\)\) await claimOrDefer\(priorUid\);/);
+  assert.equal(/claimOrDefer|claim-pending/.test(src('app/auth/confirm/route.js')), false, '교차 사이트 GET(confirm)은 귀속 대기 표지를 쓰지 않는다');
 });

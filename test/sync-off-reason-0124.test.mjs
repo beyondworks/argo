@@ -1,7 +1,8 @@
 // 0.1.124 — 동기화가 꺼진 이유를 가른다(2026-10-30 고객 C 재판정: 두 PC 모두 앱만 썼는데 메인 PC 꼬리표가 sync/off — 앱 사이드카가 부모 env의
 // ARGO_SYNC=0을 물려받은 것으로 추정, src-tauri lib.rs는 부모 env를 지우지 않는다). 꺼졌으면 꼬리표·설정 카드가 이유를 싣는다:
 // env = 환경변수 ARGO_SYNC=0(로그인해도 켜지지 않는다), nosess = 기기 세션·서비스 자격 없음(로그아웃).
-// 그리고 /auth/confirm은 이 기기에 이미 같은 계정의 기기 세션이 있었을 때만 게스트 회사를 귀속한다(다른 로그인 경로와 같은 claimOrDefer).
+// /auth/confirm은 종전대로 게스트 회사를 귀속하지 않고 대기 표지도 남기지 않는다(PR #1195 검수 I1: '이전 세션과 같은 계정이면 귀속'은
+// 공격자 링크 두 번으로 뚫린다 — 1차로 기기 세션이 공격자 계정이 되고 게스트 표시는 남아, 2차에서 이전 uid = 공격자 = 새 uid가 된다).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -73,7 +74,7 @@ test('설정 동기화 카드 — 꺼진 이유가 env면 환경변수 문구를
 });
 
 /* ─── /auth/confirm 귀속(경우 표 B2~B4) ─── */
-async function confirmAs({ prior, loginAs }) {
+async function confirmAs({ prior, loginAs, times = 1 }) {
   const fake = await startFakeSupabase({ plan: 'pro', userId: loginAs }); fakes.push(fake);
   fake.fault = (req, path) => (path === '/auth/v1/verify' ? { status: 200, body: {
     access_token: 'h.p.s', refresh_token: 'rt-9', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600,
@@ -90,11 +91,12 @@ const { register } = await import('node:module');
 register(${JSON.stringify(new URL('./helpers/next-esm-resolve.mjs', import.meta.url).href)});
 const route = await import(${JSON.stringify(new URL('../app/auth/confirm/route.js', import.meta.url).href)});
 const { NextRequest } = await import('next/server');
-const res = await route.GET(new NextRequest('http://127.0.0.1:3299/auth/confirm?token_hash=th-x&type=email', { headers: { host: '127.0.0.1:3299', 'sec-fetch-site': 'cross-site' } }));
+let res;
+for (let i = 0; i < ${times}; i++) res = await route.GET(new NextRequest('http://127.0.0.1:3299/auth/confirm?token_hash=th-x' + i + '&type=email', { headers: { host: '127.0.0.1:3299', 'sec-fetch-site': 'cross-site' } }));
 process.stdout.write('\\n@@' + JSON.stringify({ status: res.status }) + '\\n');
 process.exit(0);`;
   const { r } = await runChild(root, body, { NEXT_PUBLIC_SUPABASE_URL: fake.url, NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fixture', ARGO_SYNC: '0' });
-  assert.ok(fake.count('POST /auth/v1/verify') >= 1, '확인 경로를 실제로 탔다');
+  assert.ok(fake.count('POST /auth/v1/verify') >= times, '확인 경로를 실제로 탔다(요청 수만큼)');
   assert.ok(r.status >= 300 && r.status < 400);
   return {
     owner: JSON.parse(readFileSync(join(root, 'guest-co', 'company.json'), 'utf8')).ownerId ?? null,
@@ -103,12 +105,18 @@ process.exit(0);`;
   };
 }
 
-test('/auth/confirm — 이 기기에 이미 같은 계정의 기기 세션이 있었으면 게스트 회사를 그 계정으로 귀속한다(B3)', async () => {
-  const r = await confirmAs({ prior: 'u-me', loginAs: 'u-me' });
-  assert.equal(r.owner, 'u-me'); assert.equal(r.guestLeft, false); assert.equal(r.pending, false);
+test('/auth/confirm — 교차 사이트 공격자 링크 두 번(1차로 기기 세션이 공격자 계정, 2차에서 이전 uid = 새 uid)에도 귀속·대기 표지 0(B7, PR #1195 검수 I1)', async () => {
+  const r = await confirmAs({ prior: null, loginAs: 'u-attacker', times: 2 });
+  assert.equal(r.owner, null, '피해자 게스트 회사가 공격자 소유가 되지 않는다');
+  assert.equal(r.guestLeft, true); assert.equal(r.pending, false);
 });
 
-test('/auth/confirm — 이전 세션이 없거나(게스트 기기, 교차 사이트 공격자 링크) 다른 계정이면 귀속·대기 표지 없음(B2·B4, PR #1183 검수 유지)', async () => {
+test('/auth/confirm — 이 기기에 이미 같은 계정의 기기 세션이 있어도 귀속하지 않는다(B3 — 그 세션이 PKCE·CSRF 경로로 생겼다는 근거가 없다, 남은 회사는 [이 계정에 연결])', async () => {
+  const r = await confirmAs({ prior: 'u-me', loginAs: 'u-me' });
+  assert.equal(r.owner, null); assert.equal(r.guestLeft, true); assert.equal(r.pending, false);
+});
+
+test('/auth/confirm — 이전 세션이 없거나(게스트 기기, 교차 사이트 공격자 링크) 다른 계정이어도 귀속·대기 표지 없음(B2·B4, PR #1183 검수 유지)', async () => {
   for (const prior of [null, 'u-me']) {
     const r = await confirmAs({ prior, loginAs: 'u-attacker' });
     assert.equal(r.owner, null, `이전 세션 ${prior ?? '없음'} — 공격자 계정으로 넘어가지 않는다`);
