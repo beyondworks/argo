@@ -64,8 +64,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.121': Object.freeze(['updates.note.syncUnstuck']),
   // 0.1.122 — 0.1.121은 공개하지 않음(가짜 서버 E2E에서 옛 판 프로세스가 남은 자격으로 잠금을 쥔 경우가 안 풀림). 같은 안내를 다시 싣는다: syncUnstuck(#1189·#1190 — 옛 판·멈춘 잠금 회수, 멈춘 사이클 감시, 귀속 대기)
   '0.1.122': Object.freeze(['updates.note.syncUnstuck']),
-  // 0.1.123 — cliSync: 앱 창을 닫고 터미널(argo)만 쓰는 PC에서도 기기 간 동기화가 돎(#1192 — 앱 공유 CLI가 앱 서버가 없을 때 동기화)
-  '0.1.123': Object.freeze(['updates.note.cliSync']),
+  // 0.1.123 — syncUnstuck(같은 문구 재사용 — i18n 공용 파일을 건드리지 않으려고): 앱 창을 닫고 터미널(argo)만 쓰는 PC에서도 기기 간 동기화가 돎(#1192)
+  '0.1.123': Object.freeze(['updates.note.syncUnstuck']),
 });
 
 export function stableVersion(value) {
