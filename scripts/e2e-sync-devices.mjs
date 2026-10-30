@@ -14,6 +14,7 @@
 //   --new  판정할 판(기본 HEAD). git ref면 임시 워크트리에 빌드, 폴더면 그 폴더의 .next/standalone을 쓴다(저장소 루트 — bin·src 포함).
 //   --old  옛 판(기본 v0.1.120) — S 칸의 회사 생성과 '살아 있는 옛 판' 프로세스.
 //   --cells core = K1·K3·S-custC(짧은 핵심), S = S 계열, K = K 계열, all(기본) = 전부.
+//   S-envOff(사이드카가 ARGO_SYNC=0을 물려받음)는 0.1.124+의 '꺼진 이유가 보인다'를 본다 — 그 전 판은 이 칸이 FAIL이다(꼬리표 sync/off.-).
 // 출력: <out>/<칸>.json(칸별 측정·판정), <out>/summary.json, 마지막 줄 요약 `e2e-sync-devices: N/M PASS …`. 하나라도 FAIL이면 exit 1.
 // 정리: 임시 폴더·빌드 워크트리·띄운 프로세스(프로세스 그룹)를 끝날 때(정상·예외·Ctrl+C) 지우고, 이 실행의 폴더를 가리키는 프로세스가 0개인지 확인한다.
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
@@ -35,7 +36,7 @@ const KEEP = argv.includes('--keep');
 const RUN = mkdtempSync(join(tmpdir(), 'argo-e2e-sync-devices-'));
 const OUT = resolve(opt('out', join(RUN, 'out'))); mkdirSync(OUT, { recursive: true });
 const S_OBSERVE_MS = Number(process.env.E2E_S_OBSERVE_MS) || 120_000; // 교체 뒤 관찰(2026-10-30 기준)
-const S_CELLS = ['S-control', 'S-creds', 'S-guest', 'S-future', 'S-oldRunning', 'S-oldEnded', 'S-custC', 'S-all', 'S-allEnded', 'S-sleep', 'S-sleepctl'];
+const S_CELLS = ['S-control', 'S-creds', 'S-guest', 'S-future', 'S-oldRunning', 'S-oldEnded', 'S-custC', 'S-all', 'S-allEnded', 'S-sleep', 'S-sleepctl', 'S-envOff'];
 const K_CELLS = ['K1-cliOnly', 'K2-appOnly', 'K3-both', 'K4-cliToApp', 'K5-appToCli', 'K6a-cliKilled', 'K6b-cliKill9', 'K7-exit', 'K8-local', 'K9-oneShot', 'K10-tag'];
 const CORE = ['K1-cliOnly', 'K3-both', 'S-custC'];
 const cellsArg = opt('cells', 'all');
@@ -128,9 +129,10 @@ function logFile(cell, name) { const f = join(OUT, `${cell}.${name}.log`); write
 // 앱 사이드카와 같은 env로 standalone 서버를 띄운다
 async function app(build, { home, root, log, extra = {} }) {
   const out = createWriteStream(log, { flags: 'a' });
+  const port = await freePort();
   const p = track(spawn(process.execPath, ['server.js'], { cwd: join(build.dir, '.next', 'standalone'), detached: true, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { PATH: process.env.PATH, HOME: home, PORT: String(await freePort()), HOSTNAME: '127.0.0.1', ARGO_ROOT: root, ARGO_STANDALONE: '1', NODE_ENV: 'production', ARGO_PARENT_PID: String(process.pid), ARGO_AGENT_LINK: '0', ...extra } }));
-  p.stdout.pipe(out); p.stderr.pipe(out); return p;
+    env: { PATH: process.env.PATH, HOME: home, PORT: String(port), HOSTNAME: '127.0.0.1', ARGO_ROOT: root, ARGO_STANDALONE: '1', NODE_ENV: 'production', ARGO_PARENT_PID: String(process.pid), ARGO_AGENT_LINK: '0', ...extra } }));
+  p.stdout.pipe(out); p.stderr.pipe(out); p.port = port; return p;
 }
 // 앱 공유 CLI(대화형은 가상 터미널) — script는 표준 입력이 진짜 파이프여야 한다(Node 'pipe'는 소켓이라 tcgetattr 실패) → 셸 파이프로 열린 채 둔다
 function cli(build, { home, log, args = [] }) {
@@ -215,6 +217,43 @@ async function runS(cell, NEW, OLD) {
   return r;
 }
 
+/* ─── S-envOff — 앱 사이드카가 부모 env의 ARGO_SYNC=0을 물려받은 경우(2026-10-30 고객 C 재판정 추정) ───
+   이 칸은 '동기화가 된다'가 아니라 '꺼진 이유가 보인다'를 본다(물려받은 값을 무시할지는 정책 결정 대기): 30분 확인 요청 꼬리표 sync/off.env,
+   서버 진단 로그 한 줄, 설정 카드가 읽는 값(connections API의 sync.held.errorCode = env — 카드 문구 렌더는 시험이 잠근다), 저장소 요청 0. */
+async function runEnvOff(cell, NEW) {
+  const r = { cell };
+  const F = await fake();
+  try {
+    const home = mkdtempSync(join(RUN, 'env-')); const root = join(home, 'root');
+    seedSession(root, F.url); writeFileSync(join(root, '.device-id'), 'e2e-main-0001');
+    await makeCompany(NEW, home, root);
+    const before = eligible(root);
+    const log = logFile(cell, 'main');
+    const srv = await app(NEW, { home, root, log, extra: { ARGO_SYNC: '0' } });
+    await sleep(20_000);
+    const base = `http://127.0.0.1:${srv.port}`, headers = { cookie: 'argo-device=1' };
+    await fetch(`${base}/api/app-gate`, { headers }).catch(() => null); // 화면이 켤 때 부르는 것과 같다 — 이 요청이 30분 확인 요청(꼬리표)을 보낸다
+    const conn = await fetch(`${base}/api/companies/${WS}/connections`, { headers }).then((x) => x.json()).catch((e) => ({ error: String(e) }));
+    await sleep(15_000);
+    r.sync = conn?.sync ? { on: conn.sync.on, held: conn.sync.held } : conn;
+    r.tags = [...new Set(F.tags)];
+    r.storageHits = F.hits.filter((h) => h.k.includes('/storage/')).length;
+    const mlog = readFileSync(log, 'utf8');
+    r.offLogLines = (mlog.match(/\[argo\] sync phase=off err=env/g) ?? []).length;
+    await stop(srv);
+    const after = eligible(root);
+    r.mainFiles = Object.keys(after).length; r.localDeleted = Object.keys(before).filter((k) => !(k in after)).length;
+    r.pass = {
+      offEnvTag: r.tags.some((t) => /^sync\/off\.env\./.test(t)),
+      cardValue: r.sync?.on === false && r.sync?.held?.errorCode === 'env',
+      offLogLine: r.offLogLines === 1,
+      noSyncRequests: r.storageHits === 0,
+      noLocalDelete: r.localDeleted === 0,
+    };
+  } finally { await F.close(); }
+  return r;
+}
+
 /* ─── K 계열 — 앱 데이터 폴더를 같이 쓰는 argo CLI ─── */
 async function runK(cell, NEW) {
   const r = { cell };
@@ -290,7 +329,7 @@ try {
     const derive = { 'K7-exit': (x) => ({ ...syncedPass(x), lockReleasedOnExit: x.lockAfterExit === null }), 'K10-tag': (x) => ({ ...syncedPass(x), cliTagged: x.tags.some((t) => /\.pcli$/.test(t)), noOffTag: !x.tags.some((t) => /^sync\/off\./.test(t)) }) };
     try {
       if (derive[cell]) { const base = results.find((x) => x.cell === 'K1-cliOnly' && !x.error) ?? await runK('K1-cliOnly', NEW); r = { ...base, cell, from: 'K1-cliOnly', pass: derive[cell](base) }; }
-      else r = cell.startsWith('S-') ? await runS(cell, NEW, OLD) : await runK(cell, NEW);
+      else r = cell === 'S-envOff' ? await runEnvOff(cell, NEW) : cell.startsWith('S-') ? await runS(cell, NEW, OLD) : await runK(cell, NEW);
     }
     catch (e) { r = { cell, error: String(e?.stack || e).slice(0, 800), pass: { ran: false } }; }
     r.PASS = Object.values(r.pass).every(Boolean); r.seconds = Math.round((Date.now() - s) / 1000);
