@@ -77,7 +77,10 @@ export function applyCliEnv({ repoRoot, env = process.env, platform = process.pl
   // 기기 세션 회전은 프로세스 간 잠금(#791)이 지킨다. 서버 타르볼·저장소 CLI는 종전대로 모드에 따라 갈린다.
   if (!env.ARGO_ROOT) env.ARGO_ROOT = cfg.root || (app || cliMode(cfg, env) === 'local' ? appDataRoot({ env, platform }) : accountRoot(env));
   if (app) env.ARGO_STANDALONE ||= '1'; // 같은 번들·같은 폴더인 앱 사이드카와 러너 판정을 맞춘다(검토 M-a) — 아니면 CLI가 claude를 "이 컴퓨터 로그인"으로 저장해 앱이 잘못된 연결로 본다
-  if (isAppShared({ repoRoot, env, platform, execPath })) env.ARGO_SYNC = '0'; // 앱 CLI는 동기화하지 않는다 — CLI가 동기화 락을 가지면 앱이 리더 판정에서 밀린다. 앱이 꺼진 사이의 대화는 앱을 켤 때 올라간다
+  // 앱 CLI는 앱 서버가 없을 때만 동기화한다(0.1.123) — 종전 ARGO_SYNC=0은 앱을 켜지 않고 CLI로만 쓰는 사람의 회사를 영영 올리지 않았다(고객 C).
+  // 루프는 대화형 세션만 띄운다(bin/argo.mjs interactive — 한 번 실행 명령은 ensureSync를 부르지 않는다). 사이클마다 앱 서버 표식을 보고 앱이 있으면 물러난다(sync.mjs appServerYield).
+  // 리더(실행 담당)는 종전대로 맡지 않는다(대화형이 ARGO_NO_LEADER=1) — 앱이 리더 판정에서 밀리지 않는다.
+  if (isAppShared({ repoRoot, env, platform, execPath })) env.ARGO_SYNC_YIELD_TO_APP = '1';
   // 공개 설정 우선순위: 환경변수 > cli.json > 배포물에 구운 argo-public.json > 레포 .env.local(개발)
   if (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     const src = [cfg.supabase, readJson(join(repoRoot, 'bin', 'argo-public.json')), publicSupabaseFromDotenv(join(repoRoot, '.env.local'))]

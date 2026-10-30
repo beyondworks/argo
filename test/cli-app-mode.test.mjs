@@ -26,7 +26,7 @@ test('앱 모드 판정 — ARGO_CLI_APP=1 또는 앱 번들 server 폴더/윈�
   assert.equal(appInstalled({ repoRoot: '/x/repo', env: { ARGO_CLI_APP: '0' }, platform: 'darwin', execPath: '/usr/bin/node' }), false);
 });
 
-test('앱 모드 환경 — 데이터 폴더는 앱 폴더(계정·로컬 모두), 동기화 끔, 앱 사이드카와 같은 러너 판정(ARGO_STANDALONE)', () => {
+test('앱 모드 환경 — 데이터 폴더는 앱 폴더(계정·로컬 모두), 앱 서버가 없을 때만 동기화(0.1.123), 앱 사이드카와 같은 러너 판정(ARGO_STANDALONE)', () => {
   const home = join(base, 'h1');
   for (const mode of [undefined, 'local', 'account']) {
     const cli = join(base, `cli-${mode}`); mkdirSync(cli, { recursive: true });
@@ -34,7 +34,8 @@ test('앱 모드 환경 — 데이터 폴더는 앱 폴더(계정·로컬 모두
     const env = { HOME: home, ARGO_CLI_HOME: cli, ARGO_CLI_APP: '1' };
     applyCliEnv({ repoRoot: base, env, platform: 'darwin', execPath: '/usr/bin/node' });
     assert.equal(env.ARGO_ROOT, appDataRoot({ env, platform: 'darwin', home }), `모드 ${mode}: 앱 폴더`);
-    assert.equal(env.ARGO_SYNC, '0', `모드 ${mode}: 앱 CLI는 동기화를 하지 않는다(리더 판정 M2 상태가 되지 않게)`);
+    assert.equal(env.ARGO_SYNC, undefined, `모드 ${mode}: 동기화를 통째로 끄지 않는다 — 앱을 켜지 않고 CLI로만 쓰면 회사가 영영 안 올라갔다(고객 C 0.1.122 sync/off)`);
+    assert.equal(env.ARGO_SYNC_YIELD_TO_APP, '1', `모드 ${mode}: 앱 서버가 있으면 물러난다(sync.mjs appServerYield)`);
     assert.equal(env.ARGO_STANDALONE, '1', `모드 ${mode}: 사이드카와 같은 판정(검토 M-a)`);
     assert.equal(isAppShared({ repoRoot: base, env, platform: 'darwin', execPath: '/usr/bin/node' }), true);
   }
@@ -45,6 +46,7 @@ test('앱 모드라도 사용자가 데이터 폴더를 직접 줬으면 그 폴
   applyCliEnv({ repoRoot: base, env, platform: 'darwin', execPath: '/usr/bin/node' });
   assert.equal(env.ARGO_ROOT, join(base, 'my-root'));
   assert.equal(env.ARGO_SYNC, undefined);
+  assert.equal(env.ARGO_SYNC_YIELD_TO_APP, undefined, '앱 폴더를 같이 쓰지 않으면 물러날 앱도 없다');
   assert.equal(isAppShared({ repoRoot: base, env, platform: 'darwin', execPath: '/usr/bin/node' }), false);
 });
 
@@ -54,6 +56,7 @@ test('서버 타르볼·저장소 CLI는 종전 그대로 — 계정은 CLI 전�
   assert.equal(env.ARGO_ROOT, join(base, 'cli-srv', 'cli-workspaces'));
   assert.equal(env.ARGO_STANDALONE, undefined);
   assert.equal(env.ARGO_SYNC, undefined);
+  assert.equal(env.ARGO_SYNC_YIELD_TO_APP, undefined);
 });
 
 test('앱 모드 환경이면 claude "이 컴퓨터 로그인" 자동 연결이 막힌다 — 앱이 같은 폴더에서 그 자격을 잘못된 연결로 보지 않게(검토 M-a)', () => {

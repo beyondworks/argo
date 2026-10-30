@@ -40,6 +40,7 @@ import { holdsDaemonLease, daemonLeasesSettled } from './lock.mjs'; // 실행 �
 import { leaseRole, ROLE_RANK, docRank, roleMark } from './lease-role.mjs'; // 실행 담당 역할 순위(우선 > 일반 > 예비) — renewLease·standbyIdle
 import { createPrefetch } from './sync-prefetch.mjs'; // 원격 파일 받기만 동시에 — 쓰기·판정은 루프 순서 그대로
 import { cmpVersion } from './version-compare.mjs'; // 잠금 주인 판 비교(holdSyncLock 회수)
+import { serverRunning } from './server-presence.mjs'; // 앱 공유 CLI는 앱 서버가 없을 때만 동기화(appServerYield)
 import { guestModeOn } from './gueststate.mjs'; // 귀속 대기 다시 시도(retryClaimIfPending)의 전제
 
 const BUCKET = 'companies';
@@ -2387,17 +2388,18 @@ export function syncStatus() {
 /** 원격 진단 꼬리표(순수) — 앱이 이미 30분마다 보내는 최소 버전 확인 요청의 X-Client-Info 끝에 붙는다(src/app-gate.mjs). 요청 수는 늘지 않는다.
     고객에게 로그를 묻지 않고 운영 edge_logs에서 이 기기의 동기화가 어디서 멈췄는지 본다(2026-10-30 유건 지시). 계정·회사·경로·토큰은 싣지 않는다 —
     단계·오류 종류·잠금 대기(주인 앱 버전)·건너뛴 회사 수·쓰지 않는 서비스 자격 파일이 남았는지만. 형식: sync/<단계>.<오류>.<잠금>.o<주인없음>f<남의계정>.c<0|1> */
-export function syncDiagTag(held, { credsFileIgnored = false, takeover = null, watchdog = 0, claimError = false } = {}) {
+export function syncDiagTag(held, { credsFileIgnored = false, takeover = null, watchdog = 0, claimError = false, role = null } = {}) {
   const clean = (v) => String(v ?? '').replace(/[^A-Za-z0-9.-]/g, '').slice(0, 16) || '-';
   const lock = held?.lockWait ? `L${clean(held.lockVer)}` : '-';
   // 0.1.121 자가 복구(값이 있을 때만 덧붙인다): t<잠금 회수 이유 frozen|older>·w<사이클 감시 재시작 수>·k1(귀속 대기 다시 시도 실패)
-  const extra = `${takeover ? `.t${clean(takeover)}` : ''}${Number(watchdog) > 0 ? `.w${Number(watchdog)}` : ''}${claimError ? '.k1' : ''}`;
+  // 0.1.123: p<cli|app> — 이 확인 요청을 보낸 프로세스(앱 공유 CLI·앱 사이드카). 같은 데이터 폴더를 같이 써 확인 기록(.app-gate.json)을 먼저 쓴 쪽만 보낸다
+  const extra = `${takeover ? `.t${clean(takeover)}` : ''}${Number(watchdog) > 0 ? `.w${Number(watchdog)}` : ''}${claimError ? '.k1' : ''}${role === 'cli' || role === 'app' ? `.p${role}` : ''}`;
   return `sync/${clean(held?.phase)}.${clean(held?.errorCode)}.${lock}.o${Number(held?.noOwner) || 0}f${Number(held?.foreignOwner) || 0}.c${credsFileIgnored ? 1 : 0}${extra}`;
 }
 globalThis.__argoSyncDiagTag = () => {
   try {
     const held = syncHeldView(status, { on: syncOn(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder, cycleMs: CYCLE_MS });
-    return syncDiagTag(held, { credsFileIgnored: staleCredsSeen(), takeover: lockState.takeover?.reason, watchdog: status.watchdogRestarts, claimError: !!status.claimError });
+    return syncDiagTag(held, { credsFileIgnored: staleCredsSeen(), takeover: lockState.takeover?.reason, watchdog: status.watchdogRestarts, claimError: !!status.claimError, role: procRole() });
   } catch { return null; }
 };
 export const STALL_AFTER_MS = (cycleMs) => Math.max(20 * cycleMs, 3 * 60_000);
@@ -2698,6 +2700,7 @@ async function cycle(gen = null) {
 }
 
 async function cycleOnce(gen = null) {
+  if (appServerYield()) { await releaseOwnSyncLock(); lockState.elsewhere = false; lockState.holder = null; status.lastError = ''; setPhase('yield', 'app-running'); return; } // 요청 0 — 앱이 동기화한다
   if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; setPhase('no-creds', 'auth'); return; }
   await parkIgnoredCreds(); // 옛 판이 같은 폴더에서 그 파일로 다른 목적지에 붙지 않게(목적지 판정은 치운 이름으로도 한다)
   // 크로스 프로세스 락 — 같은 root를 다른 살아있는 프로세스가 동기화 중이면 파일 동기화는 대기(이중 동기화=대형 유실 차단)
@@ -3001,10 +3004,29 @@ function startSyncWatchdog() {
   globalThis.__argoSyncWatchdog = iv;
 }
 
+/* ─── 앱 공유 CLI(0.1.123, 2026-10-30 고객 C) ───
+   앱과 같은 데이터 폴더를 쓰는 argo CLI(src/cli/env.mjs isAppShared)는 종전에 동기화를 아예 껐다(ARGO_SYNC=0). 그래서 앱을 켜지 않고 CLI로만 쓰는 사람의
+   회사는 클라우드로 올라가지 않았다(고객 C 메인 PC 0.1.122 꼬리표 sync/off — CLI 프로세스가 보낸 30분 확인 요청). 이제 CLI는 ARGO_SYNC_YIELD_TO_APP=1로
+   대화형 세션에서만 루프를 띄우고, 사이클마다 앱 서버 표식(.server-presence.json, server-presence.mjs serverRunning)을 본다:
+   앱이 살아 있으면 요청 없이 물러나고 내 잠금이면 놓는다(앱이 다음 사이클에 이어받는다), 앱이 없으면 같은 .sync-process.lock으로 동기화한다.
+   CLI가 끝나면 내 잠금을 지운다(강제 종료로 남은 잠금은 죽은 pid라 종전 규칙대로 바로 회수된다). 앱 서버는 이 env가 없어 종전과 같다. */
+const appServerYield = () => process.env.ARGO_SYNC_YIELD_TO_APP === '1' && !!serverRunning(WS_ROOT);
+/** 이 확인 요청을 보낸 쪽 — 앱 공유 CLI면 'cli', 앱 사이드카(Tauri가 ARGO_PARENT_PID를 넘긴다)면 'app', 그 밖(상주·dev·저장소 CLI)은 표시하지 않는다. */
+const procRole = () => (process.env.ARGO_SYNC_YIELD_TO_APP === '1' ? 'cli' : process.env.ARGO_PARENT_PID ? 'app' : null);
+const syncLockFile = () => join(WS_ROOT, '.sync-process.lock');
+/** 내 잠금일 때만 지운다 — 앱이 이미 새로 썼으면 건드리지 않는다. */
+async function releaseOwnSyncLock() {
+  try { if (JSON.parse(await readFile(syncLockFile(), 'utf8'))?.pid === process.pid) await rm(syncLockFile(), { force: true }); } catch { /* 없음 */ }
+}
+function releaseOwnSyncLockSync() {
+  try { if (JSON.parse(readFileSync(syncLockFile(), 'utf8'))?.pid === process.pid) unlinkSync(syncLockFile()); } catch { /* 없음 */ }
+}
+
 export function ensureSync() {
   if (!syncOn()) { watchForCreds(); return; }
   if (globalThis.__argoSync) return;
   globalThis.__argoSync = true;
+  if (process.env.ARGO_SYNC_YIELD_TO_APP === '1') process.once('exit', releaseOwnSyncLockSync); // 앱 공유 CLI가 끝나면 내 잠금을 놓는다(앱이 기다리지 않게)
   status.loopStartAt = Date.now(); // 아래 버킷 준비가 멈춰도 감시가 잡는다
   startSyncWatchdog();
   (async () => {
