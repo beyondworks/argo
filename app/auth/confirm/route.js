@@ -4,7 +4,9 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { publicUrl } from '../../http-origin.mjs';
-import { saveDeviceSession } from '../../../src/devicesession.mjs';
+import { saveDeviceSession, loadDeviceSession } from '../../../src/devicesession.mjs';
+import { guestModeOn } from '../../../src/gueststate.mjs';
+import { claimOrDefer } from '../../../src/accountclaim.mjs';
 import { ensureSync } from '../../../src/sync.mjs';
 import { isLoopbackHost } from '../../auth.mjs';
 
@@ -36,13 +38,17 @@ export async function GET(req) {
   if (error) return NextResponse.redirect(publicUrl(req, '/login'));
   // 기기 연동 — 이메일 매직링크(token_hash) 로그인도 기기 파일이 세션의 단일 소유자가 된다.
   if (useDevice && data?.session) {
+    const priorUid = loadDeviceSession()?.user?.id ?? null; // 저장 전 — 이 기기에 이미 있던 기기 세션의 계정
     await saveDeviceSession({
       url: process.env.NEXT_PUBLIC_SUPABASE_URL,
       anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       session: data.session,
     });
-    // 게스트 회사 자동 귀속은 여기서 하지 않는다 — 공개 GET이고 token_hash에는 PKCE가 없어, 다른 사이트가 공격자 계정 링크로 이 주소를 열게 하면
-    // 게스트 회사가 그 계정으로 넘어간다(PR #1183 검수 재현). 남은 회사는 CSRF 검사·확인을 거치는 [이 계정에 연결](/api/account/claim)로만 귀속한다.
+    // 게스트 회사 자동 귀속은 **이 기기에 이미 같은 계정의 기기 세션이 있었을 때만** 한다(다른 로그인 경로와 같은 claimOrDefer — 실패하면 대기 표지·같은 uid 10분 재시도).
+    // 공개 GET이고 token_hash에는 PKCE가 없어, 다른 사이트가 공격자 계정 링크로 이 주소를 열게 하면 게스트 회사가 그 계정으로 넘어간다(PR #1183 검수 재현).
+    // 게스트 기기(이전 세션 없음)는 공격자 링크와 사용자 로그인을 가를 수 없어 귀속하지 않는다 — 남은 회사는 CSRF 검사를 거치는 [이 계정에 연결]로만.
+    // 이전 세션의 계정과 같으면 귀속할 곳이 바뀌지 않는다: 공격자는 그 계정의 이메일 없이 그 계정의 token_hash를 만들 수 없다(경우 표 B2~B4).
+    if (priorUid && priorUid === data.session.user?.id && guestModeOn()) await claimOrDefer(priorUid);
     ensureSync(); // 자격이 방금 생겼다 — 재시작 없이 동기화 기동
     res.cookies.set('argo-device', '1', { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 24 * 365 });
   }

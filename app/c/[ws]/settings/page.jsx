@@ -1913,6 +1913,8 @@ function SyncCard({ ws }) {
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>
+          {/* 꺼진 이유가 환경변수면(src/sync.mjs syncOffReason — 앱 사이드카가 부모 env의 ARGO_SYNC=0을 물려받은 2026-10-30 고객 C 추정) 로그인해도 켜지지 않는다는 사실을 먼저 알린다 */}
+          {sync?.held?.errorCode === 'env' ? <p style={{ fontSize: 12.5, color: 'var(--fg)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offEnv')}</p> : null}
           <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
           {plan === 'free' ? (
             // R3(2026-09-29): 동기화를 켠 적 없는 free 사용자도 결제 진입로가 있어야 한다 — 이 자리가

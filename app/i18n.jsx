@@ -869,6 +869,7 @@ const DICT = {
   // offHelp 교정(2026-08-29 2차): 자격 3종은 Argo 클라우드로 올라가지 않는다(호스티드=구조적 강제, 셀프호스트=선택). 모드 무관 참.
   'settings.sync.offHelp': ['클라우드 키가 설정되면 자동으로 켜집니다. 회사 폴더가 클라우드에 복제돼 어느 컴퓨터에서 열어도 같은 회사가 이어집니다. 단 자격 증명(러너 로그인·봇 토큰·MCP 키)은 Argo 클라우드로 올라가지 않고 각 기기에만 저장됩니다(셀프호스트는 설정에서 선택).', 'Turns on automatically once cloud keys are configured. Your company folder replicates to the cloud so the same company continues on any computer. Credentials (runner logins, bot tokens, MCP keys), however, never go to Argo cloud — they stay on each device (self-hosting is a choice in settings).'],
   // free 플랜 동기화 배지(2026-09-29 R3) — "가동 중/꺼짐" 대신 이 사실을 고정 표시. 여러 기기 동기화는 Pro뿐.
+  'settings.sync.offEnv': ['환경변수(ARGO_SYNC=0)로 이 기기의 동기화가 꺼져 있습니다.', 'Sync is turned off on this device by an environment variable (ARGO_SYNC=0).'],
   'settings.sync.freeNote': ['이 기기에만 저장됩니다 · 여러 기기 동기화는 Pro', 'Stored on this device only · multi-device sync is Pro'],
   'settings.sync.credToggle': ['자격 증명 동기화', 'Credential sync'],
   'settings.sync.credOn': ['포함됨', 'Included'],
