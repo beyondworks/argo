@@ -22,6 +22,7 @@ import { appendEvent } from './events.mjs';
 import { jobHead, routineNoticeTail } from './inbound-marks.mjs'; // 장시간 작업 기록 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath, attachFailureNote } from './tg-format.mjs';
@@ -1135,6 +1136,24 @@ export function queueWorkerOptions(wsId, qkey) {
   return {};
 }
 
+/** 이 기기의 텔레그램 토큰 집합(클레임 등록용) — loaded = 이번에 읽은 [회사, 연결]. 읽기에 실패한 회사(목록에 없는데 폴더는 있음)는
+    lastTokens(회사 id → 직전 토큰, 이 함수가 갱신한다)의 직전 토큰을 그대로 넣는다. 폴더가 사라진 회사만 빠진다. (export: 회귀 테스트용) */
+export function collectClaimTokens(loaded, lastTokens, exists = (id) => existsSync(paths(id).root)) {
+  const out = []; const seen = new Set();
+  for (const [c, all] of loaded) {
+    const toks = [];
+    if (all.telegram.enabled && all.telegram.token) toks.push(all.telegram.token);
+    for (const bot of Object.values(all.telegram.agents ?? {})) if (bot?.token) toks.push(bot.token);
+    lastTokens.set(c.id, toks); seen.add(c.id); out.push(...toks);
+  }
+  for (const [id, toks] of [...lastTokens]) {
+    if (seen.has(id)) continue;
+    if (exists(id)) out.push(...toks); // 읽기 실패 — 직전 토큰 유지
+    else lastTokens.delete(id); // 회사가 사라졌다 — 해제
+  }
+  return out;
+}
+
 export function ensureGateway() {
   if (globalThis.__argoGateway) return;
   globalThis.__argoGateway = true;
@@ -1149,6 +1168,7 @@ export function ensureGateway() {
   // 푸시는 이벤트가 난 워커가 직접 보낸다(1회 발생 = 1회 발송, 충돌 없음). 리더 단일화는 폴러에만.
   onNotify(pushEvent);
   let wasLeader = false;
+  const lastTokens = new Map(); // 회사 id → 직전에 읽은 텔레그램 토큰 — 읽기 실패한 회사의 토큰을 '해제'로 보지 않게(아래 myTokens)
   const sync = async () => {
     const legacyMsgr = legacyMsgrBridgeEnabled(); // 0.1.115부터 기본 꺼짐(켜기 ARGO_MSGR_LEGACY=on). 꺼져 있으면 옛 메신저 자동 켜기·큐 드레인·브리지·알림 틱을 이 프로세스에서 돌리지 않는다
     const procLeader = lease.isLeader(); // 이 프로세스가 이 기기의 게이트웨이 주체인가(Next 멀티 워커 단일화)
@@ -1167,11 +1187,10 @@ export function ensureGateway() {
     // 감시는 종전대로 기기 리더만. 이 기기에 저장된 토큰 전부를 동기화 cycle에 등록해 30초마다 클레임을 갱신한다.
     // 등록은 **procLeader 게이트보다 앞**에 둔다 — 게이트웨이 주체(daemonLease)와 동기화 주체(holdSyncLock)가 다른
     // 프로세스에 갈리면, 주체가 아닌 쪽이 등록을 건너뛰어 아무도 클레임을 안 쓰는 창이 있었다(재검수 MEDIUM-B).
-    const myTokens = [];
-    for (const [, all] of loaded) {
-      if (all.telegram.enabled && all.telegram.token) myTokens.push(all.telegram.token);
-      for (const bot of Object.values(all.telegram.agents ?? {})) if (bot?.token) myTokens.push(bot.token);
-    }
+    // 읽기에 실패한 회사(connections.json을 못 읽음 — Windows에서 쓰는 순간 EBUSY·EPERM·부분 파일, company.json을 못 읽어 목록에서 빠짐)는
+    // 직전 토큰을 그대로 등록한다. '없음'으로 보면 클레임 해제(원격 Delete) 뒤 다음 등록에 다시 획득(Put)하는 왕복이 났다(2026-10-31 로그 수집 126%).
+    // 해제는 읽기에 성공했는데 토큰이 없을 때, 또는 회사 폴더가 사라졌을 때만이다.
+    const myTokens = collectClaimTokens(loaded, lastTokens);
     setClaimTokens(myTokens);
     if (!procLeader) { // 데몬 주체가 아님 — 폴러·워커 모두 내린다(이 기기의 리스 소유 프로세스가 맡는다)
       for (const [id, cur] of running) { cur.stop(); running.delete(id); }

@@ -923,7 +923,11 @@ const CLAIM_RENEW_SLACK_MS = 2_000;
     2026-10-13 로그 수집 과금). (export: 회귀 테스트용) */
 export const CLAIM_REWRITE_MS = 40_000;
 const CLAIM_NEVER = -Infinity; // renewedAt 센티널 '한 번도 안 돌았음/즉시 실행' — 0이면 작은 now를 주는 하네스에서 레이트리밋이 조용히 옛 동작(재검수 L-C)
-const claimState = (globalThis.__argoTgClaims ??= { tokens: new Set(), byHash: new Map(), renewedAt: CLAIM_NEVER, bootAt: Date.now(), removed: new Set() });
+const claimState = (globalThis.__argoTgClaims ??= { tokens: new Set(), byHash: new Map(), renewedAt: CLAIM_NEVER, bootAt: Date.now(), removed: new Map() });
+/** 해제 확정에 필요한 연속 '없음' 횟수 — 게이트웨이 등록(10초)에서 한 번 빠졌다 돌아온 토큰을 해제로 보면 다음 갱신이 원격 클레임을 지우고(Delete)
+    곧바로 다시 획득(Put·확인 GET)했다. 2026-10-31 로그 수집 126%: 한 계정의 .tg-claims 파일마다 약 1분에 한 번 Delete·Put 왕복. 두 번 연속(약 10~20초)
+    없을 때만 해제로 본다 — 진짜 해제는 종전처럼 다음 갱신에 지운다(TTL 120초보다 훨씬 짧다). */
+const CLAIM_REMOVE_CONFIRM = 2;
 const CLAIM_DIR = '.tg-claims';
 /** 클레임 상태를 기기 로컬 파일로도 남긴다 — 게이트웨이(daemonLease)와 동기화(holdSyncLock)가 다른 프로세스에 갈리면
     globalThis가 공유되지 않아 게이트웨이가 영원히 미판정(→ 90초 뒤 orphan 폴백 = 이중 폴링)이 되던 창(재검수 M-4)을 닫는다. */
@@ -944,8 +948,12 @@ export const claimDecision = (cur, me, now = Date.now(), ttl = TG_CLAIM_TTL_MS) 
 export function setClaimTokens(tokens) {
   const next = new Set([...tokens].filter(Boolean));
   const nextHashes = new Set([...next].map(tokenClaimHash));
-  for (const h of [...claimState.byHash.keys()]) { // 연결 해제된 토큰 — 상태를 버리고 원격 클레임도 다음 갱신에 지운다(재검수 L-3)
-    if (!nextHashes.has(h)) { claimState.byHash.delete(h); claimState.removed.add(h); }
+  for (const h of nextHashes) claimState.removed.delete(h); // 다시 들어온 토큰 — 해제 표시를 거둔다(지웠다 다시 쓰는 왕복 방지)
+  for (const h of [...claimState.byHash.keys()]) { // 연결 해제된 토큰 — CLAIM_REMOVE_CONFIRM번 연속 없으면 상태를 버리고 원격 클레임도 다음 갱신에 지운다(재검수 L-3)
+    if (nextHashes.has(h)) continue;
+    const n = (claimState.removed.get(h) ?? 0) + 1;
+    claimState.removed.set(h, n);
+    if (n >= CLAIM_REMOVE_CONFIRM) claimState.byHash.delete(h);
   }
   // 아직 판정 없는 토큰이 생겼으면(기동·신규 연결) 갱신 레이트리밋을 풀어 다음 cycle이 바로 클레임한다(재검수 M-2: 최대 30초 공백)
   if ([...nextHashes].some((h) => !claimState.byHash.has(h))) claimState.renewedAt = CLAIM_NEVER;
@@ -974,7 +982,7 @@ export function tokenOwnership(token) {
   return { mine: st.mine, holder: st.holder, pending: false };
 }
 export function _setTokenClaimForTest(token, state) { claimState.byHash.set(tokenClaimHash(token), state); }
-export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimSeen.clear(); claimListState.offUntil = -Infinity; claimState.tokens = new Set(); claimState.byHash.clear(); claimState.removed = new Set(); claimState.renewedAt = CLAIM_NEVER; claimState.bootAt = bootAt; try { unlinkSync(claimStateFile()); } catch { /* 없음 */ } }
+export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimSeen.clear(); claimListState.offUntil = -Infinity; claimState.tokens = new Set(); claimState.byHash.clear(); claimState.removed = new Map(); claimState.renewedAt = CLAIM_NEVER; claimState.bootAt = bootAt; try { unlinkSync(claimStateFile()); } catch { /* 없음 */ } }
 export const _claimStateForTest = () => Object.fromEntries(claimState.byHash);
 export const CLAIM_ARBITRATION_GRACE = CLAIM_ARBITRATION_GRACE_MS;
 /** 원격 클레임 1건 읽기(캐시버스터) — { doc, error }. 없음('Object not found')·손상(JSON 아님)은 doc null·error null이고,
@@ -1036,7 +1044,8 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
   if (claimState.tokens.size === 0 && claimState.removed.size === 0) return; // 등록 전(게이트웨이 sync 이전)에 레이트리밋을 소모하지 않는다(M-2)
   claimState.renewedAt = now;
   const me = await getDeviceId();
-  for (const h of [...claimState.removed]) { // 해제된 토큰의 원격 클레임 정리 — 옮겨 간 기기가 TTL(120s)을 기다리지 않게(L-3)
+  for (const [h, n] of [...claimState.removed]) { // 해제된 토큰의 원격 클레임 정리 — 옮겨 간 기기가 TTL(120s)을 기다리지 않게(L-3)
+    if (n < CLAIM_REMOVE_CONFIRM) continue; // 아직 한 번만 빠졌다 — 확정 전에는 지우지 않는다
     // 원격 클레임이 **내 것일 때만** 지운다 — 남이 보유 중인(또는 내 만료 뒤 남이 인수한) 클레임을 지우면 슬롯이 비어
     // 제3 기기가 획득 → 같은 토큰 이중 폴링(재검수 MEDIUM-A). 소유 확인·삭제 실패는 재시도하지 않는다: 상대는 TTL(120s)을
     // 기다리면 되고, 이 경로는 토큰 해제라는 드문 사건이다(L-B).
