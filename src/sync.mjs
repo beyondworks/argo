@@ -226,6 +226,16 @@ export const syncOn = () => (!!usableSyncCreds() || !!loadDeviceSession()) && pr
 /** 동기화가 꺼진 이유(꺼져 있을 때만 뜻이 있다) — 'env' = 환경변수 ARGO_SYNC=0(로그인해도 켜지지 않는다 — 2026-10-30 고객 C: 앱 사이드카가 부모 env를
     물려받은 것으로 추정), 'nosess' = 기기 세션·쓸 수 있는 서비스 자격 없음(로그아웃). 환경변수를 먼저 본다. (export: 회귀 테스트용) */
 export const syncOffReason = (env = process.env) => (env.ARGO_SYNC === '0' ? 'env' : 'nosess');
+/** 데스크톱 앱은 물려받은 ARGO_SYNC=0을 따르지 않는다(정책 A, 2026-10-31) — 앱 사이드카(Tauri가 ARGO_PARENT_PID를 넘긴다)는 부모 env를 그대로 물려받아,
+    셸에 남은 ARGO_SYNC=0 하나로 로그인해도 동기화가 꺼졌다(2026-10-30 고객 C). 앱은 로그인하지 않으면 동기화하지 않으니 끄는 스위치가 필요 없다.
+    상주·셀프호스트·dev·타르볼 CLI(ARGO_PARENT_PID 없음)는 종전대로 존중한다. 앱 공유 CLI는 src/cli/env.mjs applyCliEnv가 같은 일을 한다.
+    지웠으면 참 — 표시(globalThis)는 꼬리표 .e1로 나간다(Next 라우트 청크 사본도 같은 globalThis를 본다). (export: 회귀 테스트용) */
+export function ignoreInheritedSyncOff(env = process.env) {
+  if (env.ARGO_SYNC !== '0' || !(Number(env.ARGO_PARENT_PID) > 0)) return false;
+  delete env.ARGO_SYNC;
+  globalThis.__argoSyncEnvIgnored = true;
+  return true;
+}
 
 /** 회의록 파일과 충돌하는 크루 카드(agents/<slug>.md, 세척 후 slug === 'room-main' — slug.mjs) — 옛 버전 기기가 만든
     'Room Main' 크루는 이 기기에서 회의록 chats/room-main.json·회의 턴 마커를 덮는 파일 이름이 된다. 반입 문의 거절은
@@ -2391,18 +2401,19 @@ export function syncStatus() {
 /** 원격 진단 꼬리표(순수) — 앱이 이미 30분마다 보내는 최소 버전 확인 요청의 X-Client-Info 끝에 붙는다(src/app-gate.mjs). 요청 수는 늘지 않는다.
     고객에게 로그를 묻지 않고 운영 edge_logs에서 이 기기의 동기화가 어디서 멈췄는지 본다(2026-10-30 유건 지시). 계정·회사·경로·토큰은 싣지 않는다 —
     단계·오류 종류·잠금 대기(주인 앱 버전)·건너뛴 회사 수·쓰지 않는 서비스 자격 파일이 남았는지만. 형식: sync/<단계>.<오류>.<잠금>.o<주인없음>f<남의계정>.c<0|1> */
-export function syncDiagTag(held, { credsFileIgnored = false, takeover = null, watchdog = 0, claimError = false, role = null } = {}) {
+export function syncDiagTag(held, { credsFileIgnored = false, takeover = null, watchdog = 0, claimError = false, role = null, envIgnored = false } = {}) {
   const clean = (v) => String(v ?? '').replace(/[^A-Za-z0-9.-]/g, '').slice(0, 16) || '-';
   const lock = held?.lockWait ? `L${clean(held.lockVer)}` : '-';
   // 0.1.121 자가 복구(값이 있을 때만 덧붙인다): t<잠금 회수 이유 frozen|older>·w<사이클 감시 재시작 수>·k1(귀속 대기 다시 시도 실패)
   // 0.1.123: p<cli|app> — 이 확인 요청을 보낸 프로세스(앱 공유 CLI·앱 사이드카). 같은 데이터 폴더를 같이 써 확인 기록(.app-gate.json)을 먼저 쓴 쪽만 보낸다
-  const extra = `${takeover ? `.t${clean(takeover)}` : ''}${Number(watchdog) > 0 ? `.w${Number(watchdog)}` : ''}${claimError ? '.k1' : ''}${role === 'cli' || role === 'app' ? `.p${role}` : ''}`;
+  // 정책 A: e1 — 물려받은 ARGO_SYNC=0을 무시했다(ignoreInheritedSyncOff·applyCliEnv)
+  const extra = `${takeover ? `.t${clean(takeover)}` : ''}${Number(watchdog) > 0 ? `.w${Number(watchdog)}` : ''}${claimError ? '.k1' : ''}${role === 'cli' || role === 'app' ? `.p${role}` : ''}${envIgnored ? '.e1' : ''}`;
   return `sync/${clean(held?.phase)}.${clean(held?.errorCode)}.${lock}.o${Number(held?.noOwner) || 0}f${Number(held?.foreignOwner) || 0}.c${credsFileIgnored ? 1 : 0}${extra}`;
 }
 globalThis.__argoSyncDiagTag = () => {
   try {
     const held = syncHeldView(status, { on: syncOn(), offReason: syncOffReason(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder, cycleMs: CYCLE_MS });
-    return syncDiagTag(held, { credsFileIgnored: staleCredsSeen(), takeover: lockState.takeover?.reason, watchdog: status.watchdogRestarts, claimError: !!status.claimError, role: procRole() });
+    return syncDiagTag(held, { credsFileIgnored: staleCredsSeen(), takeover: lockState.takeover?.reason, watchdog: status.watchdogRestarts, claimError: !!status.claimError, role: procRole(), envIgnored: !!globalThis.__argoSyncEnvIgnored });
   } catch { return null; }
 };
 export const STALL_AFTER_MS = (cycleMs) => Math.max(20 * cycleMs, 3 * 60_000);

@@ -80,7 +80,12 @@ export function applyCliEnv({ repoRoot, env = process.env, platform = process.pl
   // 앱 CLI는 앱 서버가 없을 때만 동기화한다(0.1.123) — 종전 ARGO_SYNC=0은 앱을 켜지 않고 CLI로만 쓰는 사람의 회사를 영영 올리지 않았다(고객 C).
   // 루프는 대화형 세션만 띄운다(bin/argo.mjs interactive — 한 번 실행 명령은 ensureSync를 부르지 않는다). 사이클마다 앱 서버 표식을 보고 앱이 있으면 물러난다(sync.mjs appServerYield).
   // 리더(실행 담당)는 종전대로 맡지 않는다(대화형이 ARGO_NO_LEADER=1) — 앱이 리더 판정에서 밀리지 않는다.
-  if (isAppShared({ repoRoot, env, platform, execPath })) env.ARGO_SYNC_YIELD_TO_APP = '1';
+  // 정책 A(2026-10-31): 앱 공유 CLI도 데스크톱 앱처럼 물려받은 ARGO_SYNC=0을 따르지 않는다(sync.mjs ignoreInheritedSyncOff) — 셸에 남은 값 하나로 앱을 켜지 않은 PC의 회사가 올라가지 않았다(고객 C).
+  // 타르볼·저장소 CLI는 종전대로 존중한다. 무시했으면 꼬리표 .e1(같은 프로세스의 globalThis).
+  if (isAppShared({ repoRoot, env, platform, execPath })) {
+    env.ARGO_SYNC_YIELD_TO_APP = '1';
+    if (env.ARGO_SYNC === '0') { delete env.ARGO_SYNC; if (env === process.env) globalThis.__argoSyncEnvIgnored = true; }
+  }
   // 공개 설정 우선순위: 환경변수 > cli.json > 배포물에 구운 argo-public.json > 레포 .env.local(개발)
   if (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     const src = [cfg.supabase, readJson(join(repoRoot, 'bin', 'argo-public.json')), publicSupabaseFromDotenv(join(repoRoot, '.env.local'))]

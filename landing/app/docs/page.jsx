@@ -250,8 +250,8 @@ const GROUPS = [
         h: { ko: '14-1. 동기화와 자격 증명 — 무엇이 올라가고, 열쇠는 어디에', en: '14-1. Sync & credentials — what goes up, where the key lives' },
         body: [
           {
-            ko: '로그인하지 않으면 아무것도 컴퓨터 밖으로 나가지 않습니다. 동기화 전체는 환경변수 ARGO_SYNC=0으로 끌 수 있습니다.',
-            en: 'If you never sign in, nothing leaves your computer. Set the environment variable ARGO_SYNC=0 to disable sync entirely.',
+            ko: '로그인하지 않으면 아무것도 컴퓨터 밖으로 나가지 않습니다. 데스크톱 앱은 로그인하지 않으면 동기화하지 않습니다. 셀프호스트 서버에서는 환경변수 ARGO_SYNC=0으로 동기화 전체를 끌 수 있습니다(데스크톱 앱은 이 값을 따르지 않습니다).',
+            en: 'If you never sign in, nothing leaves your computer. The desktop app does not sync unless you sign in. On a self-hosted server, set the environment variable ARGO_SYNC=0 to disable sync entirely (the desktop app ignores it).',
           },
           {
             ko: '자격 증명은 클라우드로 가지 않습니다 — 러너 로그인 토큰·API 키(.secrets.json), 텔레그램·슬랙 봇 토큰(connections.json), MCP 환경변수(mcp.json) 세 파일은 호스티드 동기화에서 구조적으로 제외됩니다. 새로 저장되는 자격은 운영자를 포함해 본인 외에는 아무도 볼 수 없고, 새 기기에서는 러너·봇을 다시 연결하면 됩니다. 과거 버전에서 올라간 사본은 다음 동기화에 회수됩니다(무료 플랜은 클라우드 쓰기 제약으로 보류되고 Pro·체험이 되면 실행됩니다).',
