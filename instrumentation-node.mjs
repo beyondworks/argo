@@ -3,10 +3,14 @@
 import { setupNoDock } from './src/no-dock.mjs';
 import { ensureScheduler } from './src/scheduler.mjs';
 import { ensureGateway } from './src/gateway.mjs';
-import { ensureSync } from './src/sync.mjs';
+import { ensureSync, ignoreInheritedSyncOff } from './src/sync.mjs';
 import { WS_ROOT } from './src/workspace.mjs';
 import { writePresence, clearPresence } from './src/server-presence.mjs';
 import { installAgentPeerGuard } from './src/agent-peer.mjs';
+
+// 데스크톱 앱(사이드카)은 부모 env에서 물려받은 ARGO_SYNC=0을 따르지 않는다(정책 A, src/sync.mjs ignoreInheritedSyncOff) — 무엇보다 먼저:
+// 지운 뒤에 뜨는 자식(러너·MCP)도 물려받지 않고, 라우트 청크의 sync 사본도 호출 때 process.env를 읽어 같은 판정을 본다.
+if (ignoreInheritedSyncOff()) console.log('[argo] sync: 데스크톱 앱은 ARGO_SYNC=0을 따르지 않습니다(무시)');
 
 // 에이전트 프로세스의 로컬 API 직접 호출 차단 — 요청 상대가 이 서버의 자손(CLI 러너·Bash·curl·MCP)이면 403(src/agent-peer.mjs).
 // 스케줄러·게이트웨이보다 먼저 — 부팅 직후 도는 루틴 턴의 자손도 처음부터 덮는다.

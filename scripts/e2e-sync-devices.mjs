@@ -14,7 +14,7 @@
 //   --new  판정할 판(기본 HEAD). git ref면 임시 워크트리에 빌드, 폴더면 그 폴더의 .next/standalone을 쓴다(저장소 루트 — bin·src 포함).
 //   --old  옛 판(기본 v0.1.120) — S 칸의 회사 생성과 '살아 있는 옛 판' 프로세스.
 //   --cells core = K1·K3·S-custC(짧은 핵심), S = S 계열, K = K 계열, all(기본) = 전부.
-//   S-envOff(사이드카가 ARGO_SYNC=0을 물려받음)는 0.1.124+의 '꺼진 이유가 보인다'를 본다 — 그 전 판은 이 칸이 FAIL이다(꼬리표 sync/off.-).
+//   S-envOff(사이드카가 ARGO_SYNC=0을 물려받음)는 정책 A(2026-10-31)의 '물려받은 값을 무시하고 동기화한다'를 본다 — 그 전 판은 이 칸이 FAIL이다(꼬리표 sync/off.*).
 // 출력: <out>/<칸>.json(칸별 측정·판정), <out>/summary.json, 마지막 줄 요약 `e2e-sync-devices: N/M PASS …`. 하나라도 FAIL이면 exit 1.
 // 정리: 임시 폴더·빌드 워크트리·띄운 프로세스(프로세스 그룹)를 끝날 때(정상·예외·Ctrl+C) 지우고, 이 실행의 폴더를 가리키는 프로세스가 0개인지 확인한다.
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
@@ -218,8 +218,9 @@ async function runS(cell, NEW, OLD) {
 }
 
 /* ─── S-envOff — 앱 사이드카가 부모 env의 ARGO_SYNC=0을 물려받은 경우(2026-10-30 고객 C 재판정 추정) ───
-   이 칸은 '동기화가 된다'가 아니라 '꺼진 이유가 보인다'를 본다(물려받은 값을 무시할지는 정책 결정 대기): 30분 확인 요청 꼬리표 sync/off.env,
-   서버 진단 로그 한 줄, 설정 카드가 읽는 값(connections API의 sync.held.errorCode = env — 카드 문구 렌더는 시험이 잠근다), 저장소 요청 0. */
+   정책 A(2026-10-31): 데스크톱 앱은 물려받은 ARGO_SYNC=0을 따르지 않는다(src/sync.mjs ignoreInheritedSyncOff). 이 칸은 standalone 빌드(라우트 청크 사본 포함)에서
+   무시 로그 한 줄, 30분 확인 요청 꼬리표 .papp.e1(sync/off 아님), 설정 카드가 읽는 값(connections API sync.on·held.errorCode ≠ env),
+   그리고 S 칸과 같은 동기화 판정(업로드·노트북 파일 수·해시·로컬 삭제 0·동시 진행 ≤ 1)을 본다. */
 async function runEnvOff(cell, NEW) {
   const r = { cell };
   const F = await fake();
@@ -229,26 +230,28 @@ async function runEnvOff(cell, NEW) {
     await makeCompany(NEW, home, root);
     const before = eligible(root);
     const log = logFile(cell, 'main');
+    const tStart = Date.now();
     const srv = await app(NEW, { home, root, log, extra: { ARGO_SYNC: '0' } });
-    await sleep(20_000);
+    for (let t = 0; t < S_OBSERVE_MS && !(r.firstUploadMs ??= null); t += 1000) { await sleep(1000); if (F.objs().length > 0) r.firstUploadMs = Date.now() - tStart; }
     const base = `http://127.0.0.1:${srv.port}`, headers = { cookie: 'argo-device=1' };
     await fetch(`${base}/api/app-gate`, { headers }).catch(() => null); // 화면이 켤 때 부르는 것과 같다 — 이 요청이 30분 확인 요청(꼬리표)을 보낸다
     const conn = await fetch(`${base}/api/companies/${WS}/connections`, { headers }).then((x) => x.json()).catch((e) => ({ error: String(e) }));
-    await sleep(15_000);
+    while (Date.now() - tStart < S_OBSERVE_MS) await sleep(1000);
     r.sync = conn?.sync ? { on: conn.sync.on, held: conn.sync.held } : conn;
     r.tags = [...new Set(F.tags)];
-    r.storageHits = F.hits.filter((h) => h.k.includes('/storage/')).length;
+    r.objects = F.objs().length; r.maxInflightSameCompany = F.maxInflight;
     const mlog = readFileSync(log, 'utf8');
+    r.ignoredLogLines = (mlog.match(/\[argo\] sync: 데스크톱 앱은 ARGO_SYNC=0을 따르지 않습니다/g) ?? []).length;
     r.offLogLines = (mlog.match(/\[argo\] sync phase=off err=env/g) ?? []).length;
     await stop(srv);
     const after = eligible(root);
     r.mainFiles = Object.keys(after).length; r.localDeleted = Object.keys(before).filter((k) => !(k in after)).length;
+    Object.assign(r, await laptopCheck(NEW, F.url, cell, after));
     r.pass = {
-      offEnvTag: r.tags.some((t) => /^sync\/off\.env\./.test(t)),
-      cardValue: r.sync?.on === false && r.sync?.held?.errorCode === 'env',
-      offLogLine: r.offLogLines === 1,
-      noSyncRequests: r.storageHits === 0,
-      noLocalDelete: r.localDeleted === 0,
+      ...syncedPass(r),
+      ignoredLogLine: r.ignoredLogLines === 1 && r.offLogLines === 0,
+      tagE1: r.tags.some((t) => /\.papp\.e1$/.test(t)) && !r.tags.some((t) => /^sync\/off\./.test(t)),
+      cardValue: r.sync?.on === true && r.sync?.held?.errorCode !== 'env',
     };
   } finally { await F.close(); }
   return r;
