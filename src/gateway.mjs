@@ -1136,20 +1136,24 @@ export function queueWorkerOptions(wsId, qkey) {
   return {};
 }
 
+/** 읽기 실패한 회사의 직전 토큰을 유지하는 상한 — 한 번씩 실패하는 읽기(왕복의 원인)는 덮고, 계속 못 읽는 회사(폴러도 멈춘다)의 클레임이
+    무기한 남아 다른 기기가 그 봇을 넘겨받지 못하는 일은 막는다. */
+export const CLAIM_KEEP_ON_READ_FAIL_MS = 5 * 60_000;
 /** 이 기기의 텔레그램 토큰 집합(클레임 등록용) — loaded = 이번에 읽은 [회사, 연결]. 읽기에 실패한 회사(목록에 없는데 폴더는 있음)는
-    lastTokens(회사 id → 직전 토큰, 이 함수가 갱신한다)의 직전 토큰을 그대로 넣는다. 폴더가 사라진 회사만 빠진다. (export: 회귀 테스트용) */
-export function collectClaimTokens(loaded, lastTokens, exists = (id) => existsSync(paths(id).root)) {
+    lastTokens(회사 id → { toks, at }, 이 함수가 갱신한다)의 직전 토큰을 CLAIM_KEEP_ON_READ_FAIL_MS 동안 그대로 넣는다.
+    폴더가 사라졌거나 그보다 오래 못 읽은 회사는 빠진다. (export: 회귀 테스트용) */
+export function collectClaimTokens(loaded, lastTokens, exists = (id) => existsSync(paths(id).root), now = Date.now()) {
   const out = []; const seen = new Set();
   for (const [c, all] of loaded) {
     const toks = [];
     if (all.telegram.enabled && all.telegram.token) toks.push(all.telegram.token);
     for (const bot of Object.values(all.telegram.agents ?? {})) if (bot?.token) toks.push(bot.token);
-    lastTokens.set(c.id, toks); seen.add(c.id); out.push(...toks);
+    lastTokens.set(c.id, { toks, at: now }); seen.add(c.id); out.push(...toks);
   }
-  for (const [id, toks] of [...lastTokens]) {
+  for (const [id, last] of [...lastTokens]) {
     if (seen.has(id)) continue;
-    if (exists(id)) out.push(...toks); // 읽기 실패 — 직전 토큰 유지
-    else lastTokens.delete(id); // 회사가 사라졌다 — 해제
+    if (exists(id) && now - last.at < CLAIM_KEEP_ON_READ_FAIL_MS) out.push(...last.toks); // 읽기 실패 — 직전 토큰 유지
+    else lastTokens.delete(id); // 회사가 사라졌거나 오래 못 읽었다 — 해제
   }
   return out;
 }
@@ -1168,7 +1172,7 @@ export function ensureGateway() {
   // 푸시는 이벤트가 난 워커가 직접 보낸다(1회 발생 = 1회 발송, 충돌 없음). 리더 단일화는 폴러에만.
   onNotify(pushEvent);
   let wasLeader = false;
-  const lastTokens = new Map(); // 회사 id → 직전에 읽은 텔레그램 토큰 — 읽기 실패한 회사의 토큰을 '해제'로 보지 않게(아래 myTokens)
+  const lastTokens = new Map(); // 회사 id → { toks, at } 직전에 읽은 텔레그램 토큰 — 읽기 실패한 회사의 토큰을 '해제'로 보지 않게(아래 myTokens)
   const sync = async () => {
     const legacyMsgr = legacyMsgrBridgeEnabled(); // 0.1.115부터 기본 꺼짐(켜기 ARGO_MSGR_LEGACY=on). 꺼져 있으면 옛 메신저 자동 켜기·큐 드레인·브리지·알림 틱을 이 프로세스에서 돌리지 않는다
     const procLeader = lease.isLeader(); // 이 프로세스가 이 기기의 게이트웨이 주체인가(Next 멀티 워커 단일화)

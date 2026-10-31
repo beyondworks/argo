@@ -2,7 +2,7 @@
 // 원인: 게이트웨이(10초마다 토큰 등록)가 회사 연결·회사 파일을 한 번 읽지 못하면 그 토큰이 빠져 setClaimTokens가 '해제'로 표시했고,
 // 다음 등록에 토큰이 돌아와도 표시가 남아 다음 갱신(30초)이 원격 클레임을 지운 뒤(Delete) 곧바로 새로 획득(Put·확인 GET)했다.
 // 처방: ① 게이트웨이는 읽기 실패한 회사의 직전 토큰을 유지(collectClaimTokens) ② 다시 들어온 토큰은 해제 표시를 거두고, 두 번 연속 없을 때만 해제 확정.
-// 경우 표(PR 본문 · artifacts/tg-claims/case-table.md 추가 칸): F1 한 번 빠졌다 돌아옴 · F2 진짜 해제 · F3 연결 파일 읽기 실패 · F4 회사 폴더 삭제
+// 경우 표(PR 본문 · artifacts/tg-claims/case-table.md 추가 칸): F1 한 번 빠졌다 돌아옴 · F2 진짜 해제 · F3 연결 파일 읽기 실패 · F4 회사 폴더 삭제 · F5 목록 전체 실패 · F7 5분 넘게 못 읽음
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
@@ -14,7 +14,7 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-tgflap-'));
 delete process.env.ARGO_SYNC;
 await writeFile(join(process.env.ARGO_ROOT, '.device-session.json'), JSON.stringify({ url: 'https://fake.supabase.co', anonKey: 'fake-anon', refresh_token: 'fake-r', access_token: 'fake-a', user: { id: 'fake-uid' } }));
 const { setClaimTokens, renewTokenClaims, tokenOwnership, tokenClaimHash, _setSyncClientForTest, _resetTokenClaimsForTest } = await import('../src/sync.mjs');
-const { collectClaimTokens } = await import('../src/gateway.mjs');
+const { collectClaimTokens, CLAIM_KEEP_ON_READ_FAIL_MS } = await import('../src/gateway.mjs');
 
 /** 가짜 스토리지 — 요청 수를 센다(목록은 없음 → 토큰별 내려받기, 종전 경로). */
 function fakeStorage() {
@@ -77,5 +77,10 @@ test('F3·F4 — collectClaimTokens: 연결 파일을 못 읽은 회사는 직�
   assert.deepEqual(collectClaimTokens([[{ id: 'c1' }, conn('')], [{ id: 'c2' }, conn('t3')]], last, () => true), ['t3'], '읽기 성공 + 토큰 없음 = 해제');
   assert.deepEqual(collectClaimTokens([[{ id: 'c2' }, conn('t3')]], last, (id) => id !== 'c1'), ['t3'], 'F4 폴더가 사라진 회사는 빠진다');
   assert.equal(last.has('c1'), false);
-  assert.deepEqual(collectClaimTokens([], last, () => true), ['t3'], '회사 목록 전체를 못 읽어도(빈 목록) 직전 토큰 유지');
+  assert.deepEqual(collectClaimTokens([], last, () => true), ['t3'], 'F5 회사 목록 전체를 못 읽어도(빈 목록) 직전 토큰 유지');
+  const t0 = Date.now();
+  const l2 = new Map();
+  collectClaimTokens([[{ id: 'c9' }, conn('t9')]], l2, () => true, t0);
+  assert.deepEqual(collectClaimTokens([], l2, () => true, t0 + CLAIM_KEEP_ON_READ_FAIL_MS - 1), ['t9'], '상한 안 — 유지');
+  assert.deepEqual(collectClaimTokens([], l2, () => true, t0 + CLAIM_KEEP_ON_READ_FAIL_MS), [], 'F7 5분 넘게 못 읽으면 해제 — 클레임이 무기한 남아 다른 기기가 못 넘겨받는 일 방지');
 });
