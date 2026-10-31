@@ -765,6 +765,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   } else {
     leaseState.readFailSince = 0;
     leaseState.escapeBlocked = false;
+    leaseState.holderReadAt = Date.now(); // 리스를 읽었다 — 클레임 판정이 '리스 보유자를 안다'고 볼 근거(claimTtlFor)
     noteOnce('lease-read', '');
   }
   // 읽은 리스 글의 주인 — 리더가 아닌 기기가 "어느 기기가 실행 담당인가"를 보여 주는 재료(leaseCheck). 메모리만, 쓰기 없음.
@@ -882,7 +883,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   } catch { checkFailed = true; /* 재확인 실패 — 보수적으로 팔로워 */ }
   if (escaping && checkFailed) leaseState.escapeBlocked = true; // 자가 복구로 쓴 글도 읽지 못했다 — 읽기가 돌아올 때까지 다시 쓰지 않는다
   const iWon = winner && winner.token === token; // 내가 마지막 승자여야만 리더
-  if (winner?.deviceId) leaseState.holder = { deviceId: String(winner.deviceId), ts: Number(winner.ts) || 0 };
+  if (winner?.deviceId) { leaseState.holder = { deviceId: String(winner.deviceId), ts: Number(winner.ts) || 0 }; leaseState.holderReadAt = Date.now(); }
   if (winner?.deviceId && winner.deviceId !== me) notePeer(winner);
   if (iWon && preempt) {
     // 남의 새 리스를 가져왔다 — 앞 담당은 다음 리스 판정(CYCLE_MS 안)에 이 글을 읽고 물러나거나, 확인 기한이 지나 스스로 물러난다. 그때까지 담당을 시작하지 않는다
@@ -923,25 +924,38 @@ const CLAIM_RENEW_SLACK_MS = 2_000;
     2026-10-13 로그 수집 과금). (export: 회귀 테스트용) */
 export const CLAIM_REWRITE_MS = 40_000;
 /* ─── 혼자 쓰는 기기의 긴 클레임(2026-10-31 로그 수집 126% — 토큰 20개 계정 하나가 파일마다 약 1.8분에 한 번 다시 써 2시간에 약 1,320회, 한 기기·한 프로세스) ───
-   다른 기기를 14일 안에 본 적 없고(strictLease 아님) 확인된 리스 보유자인 기기는 클레임을 '리스에 묶인 긴 글'로 쓴다: { …, lease: true, ttl }.
-   다시 쓰기는 CLAIM_SOLO_REWRITE_MS마다, 판정(목록 1회)은 CLAIM_SOLO_RENEW_MS마다. 새 판 읽는 쪽은 그 글을 '글 주인이 지금 살아 있는 리스 보유자일 때만'
-   ts + ttl까지 유효로 본다(claimTtlFor — 자기 리스 판정이 이미 읽은 leaseState.holder라 추가 요청 0). 주인이 꺼지면 리스가 TTL(120초)에 만료되고, 그때부터 종전 TTL로
-   보아 넘겨받는다(넘김 지연이 종전과 같은 수준). 옛 판(0.1.122 이하)은 lease·ttl을 몰라 ts + 120초로 보고 오래된 글을 가져갈 수 있다 — 이 기기는 다음 판정(≤60초)의
-   목록에서 남의 새 글을 보고 물러난다(같은 토큰을 두 기기에 연결한 드문 경우의 겹침 ≤ 약 60초). 경우 표: PR 본문 S1~S11. */
+   다른 기기의 살아 있는 리스를 14일 안에 본 적 없고(strictLease 아님 — 기기 1대이거나, 따라가는 기기가 이 기기의 리스를 보고 쓰지 않아 이 기기가 다른 기기를 못 본 경우)
+   확인된 리스 보유자인 기기는 클레임을 '리스에 묶인 긴 글'로 쓴다: { …, lease: true, ttl }. 다시 쓰기는 CLAIM_SOLO_REWRITE_MS마다, 판정(목록 1회)은 CLAIM_SOLO_RENEW_MS마다.
+   · 쓰는 쪽: 긴 소유 상한(ttl)은 지금 혼자 모드일 때만(claimSoloMode — 리스 보유가 끊기면 즉시 종전 TTL로) 쓴다(PR #1197 검수 I-1: 리스가 끊긴 뒤에도 20분 동안 mine이라 남이 인수하면 겹쳤다).
+   · 읽는 쪽(새 판): 그 글을 '글 주인이 지금 살아 있는 리스 보유자일 때만' ts + ttl까지 유효로 본다(claimTtlFor — 자기 리스 판정이 이미 읽은 leaseState.holder라 추가 요청 0).
+     리스를 아직(또는 TTL 넘게) 못 읽었으면 긴 글을 존중한다 — 첫 리스 읽기 한 번 실패로 살아 있는 보유자의 토큰을 가져가지 않게.
+     주인이 꺼지면 리스가 TTL(120초)에 만료되고, 그때부터 종전 TTL로 보아 넘겨받는다(넘김 지연이 종전과 같은 수준).
+   · 옛 판(0.1.122 이하)은 lease·ttl을 몰라 ts + 120초로 보고 오래된 글을 가져갈 수 있다 — 이 기기는 다음 판정(≤60초)의 목록에서 남의 새 글을 보고 물러난다.
+   겹침·공백 실측: PR 본문 경우 표·시나리오 표. */
 export const CLAIM_SOLO_REWRITE_MS = 15 * 60_000;
 export const CLAIM_SOLO_TTL_MS = 20 * 60_000;
 export const CLAIM_SOLO_RENEW_MS = 60_000;
 /** 원격 클레임 글의 유효 기간(순수) — lease 글은 주인이 지금 살아 있는 리스 보유자(leaseHolder = 마지막으로 읽은 리스 글의 주인·시각)일 때만 그 ttl(상한 CLAIM_SOLO_TTL_MS),
-    아니면 TG_CLAIM_TTL_MS. 리스를 못 읽은 쪽(leaseHolder 없음)도 종전 TTL — 어느 기기도 받지 않는 것보다 넘겨받는 쪽이 낫다. (export: 회귀 테스트용) */
-export function claimTtlFor(cur, leaseHolder, now = Date.now()) {
-  if (cur?.lease === true && Number(cur.ttl) > 0 && leaseHolder?.deviceId && leaseHolder.deviceId === cur.deviceId && now - Number(leaseHolder.ts) < LEASE_TTL_MS) {
-    return Math.min(Number(cur.ttl), CLAIM_SOLO_TTL_MS);
-  }
-  return TG_CLAIM_TTL_MS;
+    아니면 TG_CLAIM_TTL_MS. leaseKnown = 이 기기가 리스를 TTL 안에 읽었는가 — 모르면 lease 글의 ttl을 존중한다(검수 I-1: 첫 리스 읽기 실패로 살아 있는 보유자의 토큰을
+    바로 가져갔다. 주인이 정말 꺼졌어도 ts + ttl(상한 20분)에는 넘겨받는다). (export: 회귀 테스트용) */
+export function claimTtlFor(cur, leaseHolder, now = Date.now(), { leaseKnown = true } = {}) {
+  if (cur?.lease !== true || !(Number(cur.ttl) > 0)) return TG_CLAIM_TTL_MS;
+  const long = Math.min(Number(cur.ttl), CLAIM_SOLO_TTL_MS);
+  if (!leaseKnown) return long;
+  return leaseHolder?.deviceId && leaseHolder.deviceId === cur.deviceId && now - Number(leaseHolder.ts) < LEASE_TTL_MS ? long : TG_CLAIM_TTL_MS;
 }
+const leaseKnownNow = (now = Date.now()) => now - (Number(leaseState.holderReadAt) || -Infinity) < LEASE_TTL_MS;
 /** 이 기기가 혼자 모드로 클레임을 쓰는가 — 다른 기기를 14일 안에 본 적 없고(strictLease 아님) 내 리스 글이 TTL 안인 확인된 보유자. 추가 요청 0. */
 function claimSoloMode(now = Date.now()) {
   return !strictLease() && !!leaseState.leader && leaseState.ownedAt > 0 && now < leaseState.ownedAt + LEASE_TTL_MS - LEASE_CONFIRM_MARGIN_MS;
+}
+/** 내 클레임 상태 st의 소유 기간 — 긴 글(st.ttl > TTL)은 지금 혼자 모드일 때만 그 ttl, 아니면 TG_CLAIM_TTL_MS(검수 I-1). 클레임을 돌린 적 없는 프로세스(상태 파일로만 판정)는
+    쓴 프로세스가 남긴 혼자 모드 기한(st.soloUntil = 그 판정 때 내 리스 글 만료 − 여유)으로 본다. */
+function ownClaimTtl(st, now = Date.now()) {
+  const t = Number(st?.ttl) || TG_CLAIM_TTL_MS;
+  if (t <= TG_CLAIM_TTL_MS) return t;
+  const solo = claimState.renewedAt === CLAIM_NEVER ? now < (Number(st.soloUntil) || 0) : claimSoloMode(now);
+  return solo ? t : TG_CLAIM_TTL_MS;
 }
 const CLAIM_NEVER = -Infinity; // renewedAt 센티널 '한 번도 안 돌았음/즉시 실행' — 0이면 작은 now를 주는 하네스에서 레이트리밋이 조용히 옛 동작(재검수 L-C)
 const claimState = (globalThis.__argoTgClaims ??= { tokens: new Set(), byHash: new Map(), renewedAt: CLAIM_NEVER, bootAt: Date.now(), removed: new Map() });
@@ -999,12 +1013,12 @@ export function tokenOwnership(token) {
   // 판정이 늦어지면(읽기 30초 시간 초과·토큰이 많아 판정이 길어짐) 만료를 본 다른 기기가 가져가는데, 그동안 이 기기가 계속 폴링하면 같은 토큰을
   // 두 기기가 받는다(텔레그램 409 — 2026-10-13 검수 1). 상한을 넘기면 다음 판정까지 '판정 중'으로 물러난다: 겹침 대신 잠깐 공백.
   // ownedAt = 내 글을 쓴 시각(그 글의 ts와 같다 — 획득·갱신·갱신 생략 모두).
-  // 혼자 모드의 긴 글(st.ttl)은 그 ttl로 — 종전 글은 TG_CLAIM_TTL_MS.
-  if (st.mine && !(Number(st.ownedAt) > 0 && Date.now() < Number(st.ownedAt) + (Number(st.ttl) || TG_CLAIM_TTL_MS) - LEASE_CONFIRM_MARGIN_MS)) return { mine: false, holder: null, pending: true };
+  // 혼자 모드의 긴 글은 지금 혼자 모드일 때만 그 ttl로(ownClaimTtl) — 종전 글·혼자 모드가 끝난 뒤는 TG_CLAIM_TTL_MS.
+  if (st.mine && !(Number(st.ownedAt) > 0 && Date.now() < Number(st.ownedAt) + ownClaimTtl(st) - LEASE_CONFIRM_MARGIN_MS)) return { mine: false, holder: null, pending: true };
   return { mine: st.mine, holder: st.holder, pending: false };
 }
 export function _setTokenClaimForTest(token, state) { claimState.byHash.set(tokenClaimHash(token), state); }
-export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimSeen.clear(); claimListState.offUntil = -Infinity; claimState.tokens = new Set(); claimState.byHash.clear(); claimState.removed = new Map(); claimState.renewedAt = CLAIM_NEVER; claimState.bootAt = bootAt; try { unlinkSync(claimStateFile()); } catch { /* 없음 */ } }
+export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimSeen.clear(); claimReleaseTries.clear(); claimListState.offUntil = -Infinity; claimState.tokens = new Set(); claimState.byHash.clear(); claimState.removed = new Map(); claimState.renewedAt = CLAIM_NEVER; claimState.bootAt = bootAt; try { unlinkSync(claimStateFile()); } catch { /* 없음 */ } }
 export const _claimStateForTest = () => Object.fromEntries(claimState.byHash);
 export const CLAIM_ARBITRATION_GRACE = CLAIM_ARBITRATION_GRACE_MS;
 /** 원격 클레임 1건 읽기(캐시버스터) — { doc, error }. 없음('Object not found')·손상(JSON 아님)은 doc null·error null이고,
@@ -1060,11 +1074,15 @@ function rememberClaim(hash, doc, eTag) { if (doc && eTag) claimSeen.set(hash, {
 /** 토큰별 읽기 실패 시작 시각·마지막 자가 복구 시각 — TTL 넘게 한 번도 못 읽으면 '없음'으로 보고 한 번 써 본다(리스의 자가 복구와 같은 규칙:
     읽을 수 없는 클레임 객체가 그 토큰을 영영 막지 않게, TTL에 한 번만). 메모리만. */
 const claimReadFail = (globalThis.__argoTgClaimReadFail ??= new Map());
+/** 해제 청소를 다시 하는 횟수(토큰 지문 → 시도 수) — 판정마다 한 번(혼자 모드 60초, 종전 30초)이라 10번이면 약 5~10분. 메모리만. */
+const claimReleaseTries = (globalThis.__argoTgClaimReleaseTries ??= new Map());
+const CLAIM_RELEASE_TRIES = 10;
 /** 토큰별 클레임 갱신 — write-후-재확인(리스와 같은 CAS 근사). 판정 불가(쓰기 실패)면 보유 중이던 것만 TTL 내 유지. (export: 배선·행동 테스트용) */
 export async function renewTokenClaims(owner, { now = Date.now(), force = false } = {}) {
   const solo = claimSoloMode(now);
   if (!force && now - claimState.renewedAt < (solo ? CLAIM_SOLO_RENEW_MS : CLAIM_RENEW_MS) - CLAIM_RENEW_SLACK_MS) return;
   const myTtl = solo ? CLAIM_SOLO_TTL_MS : TG_CLAIM_TTL_MS;
+  const soloUntil = solo ? leaseState.ownedAt + LEASE_TTL_MS - LEASE_CONFIRM_MARGIN_MS : 0; // 상태 파일로만 판정하는 프로세스용(ownClaimTtl)
   if (claimState.tokens.size === 0 && claimState.removed.size === 0) return; // 등록 전(게이트웨이 sync 이전)에 레이트리밋을 소모하지 않는다(M-2)
   claimState.renewedAt = now;
   const me = await getDeviceId();
@@ -1073,10 +1091,18 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
     // 원격 클레임이 **내 것일 때만** 지운다 — 남이 보유 중인(또는 내 만료 뒤 남이 인수한) 클레임을 지우면 슬롯이 비어
     // 제3 기기가 획득 → 같은 토큰 이중 폴링(재검수 MEDIUM-A). 소유 확인·삭제 실패는 재시도하지 않는다: 상대는 TTL(120s)을
     // 기다리면 되고, 이 경로는 토큰 해제라는 드문 사건이다(L-B).
+    // 해제 표시는 끝났을 때만 거둔다 — 지웠음을 확인했거나, 원격이 없거나 남의 글일 때. 읽기·삭제가 실패하면 다음 판정에 다시 한다(PR #1197 검수 I-2: 긴 글은 옮겨 간 기기가
+    // 최대 20분 존중하므로, 한 번 실패를 그대로 두면 그동안 아무도 받지 않았다). 다시 하기는 CLAIM_RELEASE_TRIES번까지(그 뒤는 종전처럼 ttl 만료를 기다린다).
     const key = skey(owner, CLAIM_DIR, `${h}.json`);
-    const { doc: cur } = await readRemoteClaim(key); // 읽지 못하면 지우지 않는다(내 것인지 모른다)
-    if (cur?.deviceId === me) await client().storage.from(BUCKET).remove([key]).catch(() => {});
-    claimState.removed.delete(h); claimSeen.delete(h);
+    const { doc: cur, error: readErr } = await readRemoteClaim(key); // 읽지 못하면 지우지 않는다(내 것인지 모른다)
+    let done = !readErr && cur?.deviceId !== me;
+    if (!readErr && cur?.deviceId === me) {
+      const { error: rmErr } = await client().storage.from(BUCKET).remove([key]).catch((e) => ({ error: e }));
+      done = !rmErr;
+    }
+    const tries = (claimReleaseTries.get(h) ?? 0) + 1;
+    if (!done && tries < CLAIM_RELEASE_TRIES) { claimReleaseTries.set(h, tries); continue; }
+    claimReleaseTries.delete(h); claimState.removed.delete(h); claimSeen.delete(h);
   }
   const listing = claimState.tokens.size ? await listRemoteClaims(owner, now) : null; // 판정당 1회(위 '클레임 목록' 주석) — null이면 토큰별 내려받기
   for (const token of claimState.tokens) {
@@ -1095,15 +1121,15 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
       const rf = claimReadFail.get(hash) ?? { since: now, escapeAt: -Infinity };
       claimReadFail.set(hash, rf);
       if (!(now - rf.since >= TG_CLAIM_TTL_MS && now - rf.escapeAt >= TG_CLAIM_TTL_MS)) {
-        const keep = !!(prev?.mine && prev.ownedAt > 0 && now - prev.ownedAt < (Number(prev.ttl) || TG_CLAIM_TTL_MS));
-        claimState.byHash.set(hash, keep ? { ...prev, ts: now } : { mine: false, holder: prev?.mine ? null : (prev?.holder ?? null), ts: now, ownedAt: 0 });
+        const keep = !!(prev?.mine && prev.ownedAt > 0 && now - prev.ownedAt < ownClaimTtl(prev, now));
+        claimState.byHash.set(hash, keep ? { ...prev, ts: now, soloUntil } : { mine: false, holder: prev?.mine ? null : (prev?.holder ?? null), ts: now, ownedAt: 0 });
         noteOnce(`tg-claim-read:${hash}`, `[argo] 텔레그램 토큰 클레임 읽기 실패(${hash.slice(0, 6)}): ${String(readErr.message || readErr).slice(0, 80)} — ${keep ? '보유 유지(쓰기 없음)' : '이번 판정 보류(쓰기 없음)'}`);
         continue;
       }
       rf.escapeAt = now;
       console.warn(`[argo] 텔레그램 토큰 클레임을 ${Math.round(TG_CLAIM_TTL_MS / 1000)}초 넘게 읽지 못함 — 없음으로 보고 한 번 써 본다(${hash.slice(0, 6)})`);
     } else if (claimReadFail.has(hash)) { claimReadFail.delete(hash); noteOnce(`tg-claim-read:${hash}`, ''); }
-    if (claimDecision(cur, me, now, claimTtlFor(cur, leaseState.holder, now)) === 'other') {
+    if (claimDecision(cur, me, now, claimTtlFor(cur, leaseState.holder, now, { leaseKnown: leaseKnownNow(now) })) === 'other') {
       if (prev?.mine) console.log(`[argo] 텔레그램 토큰 클레임 양보 → ${deviceLabel(cur.deviceId)} (${hash.slice(0, 6)})`);
       claimState.byHash.set(hash, { mine: false, holder: cur.deviceId, ts: now });
       continue;
@@ -1113,7 +1139,7 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
     // 혼자 모드: 내 긴 글(lease)이면 CLAIM_SOLO_REWRITE_MS 동안 건너뛴다. 종전 글이면 한 번 긴 글로 다시 쓴다. 혼자 모드가 아니면 종전 규칙(긴 글도 40초 뒤 종전 글로 바꾼다).
     const curLease = cur?.lease === true;
     if (prev?.mine && cur?.deviceId === me && (!solo || curLease) && now - Number(cur.ts) < (solo ? CLAIM_SOLO_REWRITE_MS : CLAIM_REWRITE_MS) && now - Number(cur.ts) >= 0) {
-      claimState.byHash.set(hash, { mine: true, holder: me, ts: now, ownedAt: Number(cur.ts), ttl: solo && curLease ? Math.min(Number(cur.ttl) || TG_CLAIM_TTL_MS, CLAIM_SOLO_TTL_MS) : TG_CLAIM_TTL_MS });
+      claimState.byHash.set(hash, { mine: true, holder: me, ts: now, ownedAt: Number(cur.ts), ttl: solo && curLease ? Math.min(Number(cur.ttl) || TG_CLAIM_TTL_MS, CLAIM_SOLO_TTL_MS) : TG_CLAIM_TTL_MS, soloUntil });
       continue;
     }
     const nonce = randomUUID();
@@ -1123,13 +1149,13 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
     );
     rememberClaim(hash, upErr ? null : mine, upErr ? null : bodyEtag(body)); // 다음 목록의 eTag가 이 본문의 MD5면 내 글 그대로 — 내려받지 않는다(남이 덮으면 eTag가 달라 내려받는다)
     if (upErr) { // 판정 불가 — 이미 확인된 보유자이고 TTL 내면 유지, 아니면 미보유
-      const keep = !!(prev?.mine && prev.ownedAt > 0 && now - prev.ownedAt < (Number(prev.ttl) || TG_CLAIM_TTL_MS));
-      claimState.byHash.set(hash, { mine: keep, holder: keep ? me : null, ts: now, ownedAt: keep ? prev.ownedAt : 0, ttl: keep ? prev.ttl : undefined });
+      const keep = !!(prev?.mine && prev.ownedAt > 0 && now - prev.ownedAt < ownClaimTtl(prev, now));
+      claimState.byHash.set(hash, { mine: keep, holder: keep ? me : null, ts: now, ownedAt: keep ? prev.ownedAt : 0, ttl: keep ? prev.ttl : undefined, soloUntil });
       continue;
     }
     // 내가 이미 확인된 보유자였고 원격도 내 것이면 재확인 생략(갱신) — 신규 획득만 800ms 뒤 승자 확인.
     // ownedAt은 갱신 시각으로 새로 찍는다(재검수 M-1: 최초 획득 시각에 고정하면 120초 뒤 일시 쓰기 실패 1회에 강등됐다)
-    if (prev?.mine && cur?.deviceId === me) { claimState.byHash.set(hash, { mine: true, holder: me, ts: now, ownedAt: now, ttl: myTtl }); continue; }
+    if (prev?.mine && cur?.deviceId === me) { claimState.byHash.set(hash, { mine: true, holder: me, ts: now, ownedAt: now, ttl: myTtl, soloUntil }); continue; }
     await new Promise((r) => setTimeout(r, 800));
     let winner = null;
     try {
@@ -1138,7 +1164,7 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
     } catch { /* 재확인 실패 — 보수적으로 미보유 */ }
     const iWon = !!winner && winner.nonce === nonce;
     if (iWon && !prev?.mine) console.log(`[argo] 텔레그램 토큰 클레임 획득 (${hash.slice(0, 6)})`);
-    claimState.byHash.set(hash, { mine: iWon, holder: iWon ? me : (winner?.deviceId ?? null), ts: now, ownedAt: iWon ? now : 0, ttl: iWon ? myTtl : undefined });
+    claimState.byHash.set(hash, { mine: iWon, holder: iWon ? me : (winner?.deviceId ?? null), ts: now, ownedAt: iWon ? now : 0, ttl: iWon ? myTtl : undefined, soloUntil });
   }
   await persistClaimState();
 }

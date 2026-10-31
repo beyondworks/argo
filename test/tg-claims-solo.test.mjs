@@ -97,7 +97,7 @@ async function judgeOthersSoloDoc({ leaseHolderAgeMs }) {
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const t0 = Date.now(); mock.timers.enable({ apis: ['Date'], now: t0 });
   f.set(KEY('shared'), { deviceId: 'A-PC-deadbeef', nonce: 'a', ts: t0 - 10 * 60_000, lease: true, ttl: CLAIM_SOLO_TTL_MS }); // 10분 전에 쓴 긴 글
-  Object.assign(lease(), { leader: false, ownedAt: 0, holder: { deviceId: 'A-PC-deadbeef', ts: t0 - leaseHolderAgeMs }, peers: { [ACCT]: { at: t0, normals: [] } } });
+  Object.assign(lease(), { leader: false, ownedAt: 0, holder: { deviceId: 'A-PC-deadbeef', ts: t0 - leaseHolderAgeMs }, holderReadAt: t0, peers: { [ACCT]: { at: t0, normals: [] } } });
   setClaimTokens(['shared']);
   await renewTokenClaims(OWNER, { now: t0 });
   return { f, own: tokenOwnership('shared') };
@@ -163,14 +163,24 @@ test('S6·S10 — 혼자 모드에서 다른 기기를 보게 되면 종전 규�
   assert.equal(f.n.put, puts + 1, '15분 안에는 다시 쓰지 않는다');
 });
 
-test('S9 — 혼자 모드 보유자의 소유 시각 상한은 내 글 ts + 20분 − 4초(판정이 멈춰도 무기한 mine이 아니다)', async () => {
+test('S9 — 혼자 모드 보유자의 소유 시각 상한: 리스를 계속 보유하면 내 글 ts + 20분 − 4초, 리스 보유가 끊기면 종전 116초(검수 I-1)', async () => {
   _resetTokenClaimsForTest(); globalThis.__argoTgClaimList?.clear();
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const t0 = Date.now(); mock.timers.enable({ apis: ['Date'], now: t0 });
   holdLease(); setClaimTokens(['cap']);
   await renewTokenClaims(OWNER, { now: t0 });
-  mock.timers.tick(CLAIM_SOLO_TTL_MS - 4_000 - 1);
-  assert.equal(tokenOwnership('cap').mine, true);
+  mock.timers.tick(CLAIM_SOLO_TTL_MS - 4_000 - 1); holdLease();
+  assert.equal(tokenOwnership('cap').mine, true, '리스 보유 중 — 긴 상한');
   mock.timers.tick(1);
-  assert.deepEqual(tokenOwnership('cap'), { mine: false, holder: null, pending: true });
+  assert.deepEqual(tokenOwnership('cap'), { mine: false, holder: null, pending: true }, '판정이 멈춰도 무기한 mine이 아니다');
+  mock.timers.reset();
+  // 리스 보유가 끊김(리스 타이머 멈춤 — ownedAt이 갱신되지 않음) → 내 글 ts + 116초에 물러난다(남은 ts + 120초에 인수한다)
+  _resetTokenClaimsForTest(); globalThis.__argoTgClaimList?.clear();
+  const t1 = Date.now(); mock.timers.enable({ apis: ['Date'], now: t1 });
+  holdLease(); setClaimTokens(['cap2']);
+  await renewTokenClaims(OWNER, { now: t1 });
+  mock.timers.tick(TG_CLAIM_TTL_MS - 4_000 - 1);
+  assert.equal(tokenOwnership('cap2').mine, true);
+  mock.timers.tick(1);
+  assert.deepEqual(tokenOwnership('cap2'), { mine: false, holder: null, pending: true }, '리스가 끊긴 혼자 모드 보유자는 종전 상한');
 });
