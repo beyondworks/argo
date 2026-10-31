@@ -229,9 +229,12 @@ export const syncOffReason = (env = process.env) => (env.ARGO_SYNC === '0' ? 'en
 /** 데스크톱 앱은 물려받은 ARGO_SYNC=0을 따르지 않는다(정책 A, 2026-10-31) — 앱 사이드카(Tauri가 ARGO_PARENT_PID를 넘긴다)는 부모 env를 그대로 물려받아,
     셸에 남은 ARGO_SYNC=0 하나로 로그인해도 동기화가 꺼졌다(2026-10-30 고객 C). 앱은 로그인하지 않으면 동기화하지 않으니 끄는 스위치가 필요 없다.
     상주·셀프호스트·dev·타르볼 CLI(ARGO_PARENT_PID 없음)는 종전대로 존중한다. 앱 공유 CLI는 src/cli/env.mjs applyCliEnv가 같은 일을 한다.
+    사이드카 자신(Tauri 앱의 직계 자식 — ARGO_PARENT_PID = 내 ppid)일 때만 지운다. ARGO_PARENT_PID는 러너 자손 전체가 물려받으므로(scrubServerSecrets가 남긴다)
+    크루 Bash가 ARGO_SYNC=0으로 직접 띄운 dev·셀프호스트 서버까지 무시하면 안 된다(PR #1196 검수 I1). tauri-plugin-shell은 node를 중간 셸 없이 직접 띄운다(맥·Windows).
     지웠으면 참 — 표시(globalThis)는 꼬리표 .e1로 나간다(Next 라우트 청크 사본도 같은 globalThis를 본다). (export: 회귀 테스트용) */
-export function ignoreInheritedSyncOff(env = process.env) {
-  if (env.ARGO_SYNC !== '0' || !(Number(env.ARGO_PARENT_PID) > 0)) return false;
+export function ignoreInheritedSyncOff(env = process.env, ppid = process.ppid) {
+  const parent = Number(env.ARGO_PARENT_PID);
+  if (env.ARGO_SYNC !== '0' || !(parent > 0) || parent !== Number(ppid)) return false;
   delete env.ARGO_SYNC;
   globalThis.__argoSyncEnvIgnored = true;
   return true;

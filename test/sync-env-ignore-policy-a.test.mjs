@@ -13,21 +13,25 @@ import { childEnv, srcUrl, seedRoot } from './helpers/sync-child.mjs';
 import { ignoreInheritedSyncOff, syncDiagTag, syncHeldView } from '../src/sync.mjs';
 import { applyCliEnv } from '../src/cli/env.mjs';
 
+const RUNNERS_SHARED = new URL('../src/runners/shared.mjs', import.meta.url).href;
+
 const fakes = [];
 after(async () => { for (const f of fakes) await f.close(); });
 
-test('ignoreInheritedSyncOff — 사이드카(ARGO_PARENT_PID)에서 ARGO_SYNC=0일 때만 지운다(경우 표 P1·P3·P8)', () => {
+test('ignoreInheritedSyncOff — 사이드카 자신(ARGO_PARENT_PID = 내 ppid)에서 ARGO_SYNC=0일 때만 지운다(경우 표 P1·P3·P8·P11)', () => {
   const prev = globalThis.__argoSyncEnvIgnored;
   try {
     const side = { ARGO_PARENT_PID: '4242', ARGO_SYNC: '0' };
-    assert.equal(ignoreInheritedSyncOff(side), true); assert.equal('ARGO_SYNC' in side, false, 'P1 지운다');
+    assert.equal(ignoreInheritedSyncOff(side, 4242), true); assert.equal('ARGO_SYNC' in side, false, 'P1 지운다');
     assert.equal(globalThis.__argoSyncEnvIgnored, true, '꼬리표 표시');
     for (const env of [{ ARGO_SYNC: '0' }, { ARGO_PARENT_PID: '', ARGO_SYNC: '0' }, { ARGO_PARENT_PID: 'x', ARGO_SYNC: '0' }]) {
-      assert.equal(ignoreInheritedSyncOff(env), false, `P3 상주·셀프호스트 ${JSON.stringify(env)}`); assert.equal(env.ARGO_SYNC, '0');
+      assert.equal(ignoreInheritedSyncOff(env, 4242), false, `P3 상주·셀프호스트 ${JSON.stringify(env)}`); assert.equal(env.ARGO_SYNC, '0');
     }
+    const desc = { ARGO_PARENT_PID: '4242', ARGO_SYNC: '0' };
+    assert.equal(ignoreInheritedSyncOff(desc, 5151), false, 'P11 사이드카의 자손(부모가 Tauri가 아님)이 직접 준 값은 존중'); assert.equal(desc.ARGO_SYNC, '0');
     for (const v of ['1', '', undefined]) {
       const env = { ARGO_PARENT_PID: '4242', ...(v === undefined ? {} : { ARGO_SYNC: v }) };
-      assert.equal(ignoreInheritedSyncOff(env), false, `P8 ARGO_SYNC=${v}`); assert.equal(env.ARGO_SYNC, v);
+      assert.equal(ignoreInheritedSyncOff(env, 4242), false, `P8 ARGO_SYNC=${v}`); assert.equal(env.ARGO_SYNC, v);
     }
   } finally { globalThis.__argoSyncEnvIgnored = prev; }
 });
@@ -50,6 +54,9 @@ test('applyCliEnv — 앱 공유 CLI는 물려받은 ARGO_SYNC=0을 지우고, �
   const own = { HOME: join(base, 'h'), ARGO_CLI_HOME: join(base, 'c3'), ARGO_CLI_APP: '1', ARGO_ROOT: join(base, 'mine'), ARGO_SYNC: '0' };
   applyCliEnv({ repoRoot: base, env: own, platform: 'darwin', execPath: '/usr/bin/node' });
   assert.equal(own.ARGO_SYNC, '0', '앱 폴더를 같이 쓰지 않으면 앱 공유가 아니다');
+  const desc = { HOME: join(base, 'h'), ARGO_CLI_HOME: join(base, 'c4'), ARGO_CLI_APP: '1', ARGO_PARENT_PID: '4242', ARGO_SYNC: '0' };
+  applyCliEnv({ repoRoot: base, env: desc, platform: 'darwin', execPath: '/usr/bin/node' });
+  assert.equal(desc.ARGO_SYNC, '0', 'P12 앱이 띄운 자손(크루 Bash의 argo)이 직접 준 값은 존중 — 사이드카는 자기 env에서 이미 지웠다');
 });
 
 /* ─── 실제 기동(instrumentation-node.mjs) ─── */
@@ -103,4 +110,42 @@ test('사이드카, 로그인 없음 — ARGO_SYNC는 지우지만 세션이 없
   const root = await mkdtemp(join(tmpdir(), 'argo-policyA-nosess-')); mkdirSync(root, { recursive: true });
   const { r } = await boot(root, { ARGO_PARENT_PID: String(process.pid) });
   assert.equal(r.envSync, null); assert.equal(r.on, false); assert.equal(r.held.errorCode, 'nosess');
+});
+
+test('사이드카의 자손(크루 Bash가 띄운 dev·셀프호스트 서버)이 ARGO_SYNC=0을 직접 주면 존중 — 무시 로그 없음, 꺼짐, 저장소 요청 0(경우 표 P11, PR #1196 검수 I1)', async () => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
+  const rootA = await mkdtemp(join(tmpdir(), 'argo-policyA-descA-')); mkdirSync(rootA, { recursive: true });
+  const rootB = await mkdtemp(join(tmpdir(), 'argo-policyA-descB-'));
+  seedRoot(rootB, { url: fake.url, wsId: 'co-d' });
+  // A = 사이드카(ARGO_PARENT_PID = 이 시험 프로세스 = A의 ppid). A는 기동한 뒤 러너 env(scrubServerSecrets)에 ARGO_SYNC=0을 직접 넣어 B(서버)를 띄운다.
+  const bBody = `globalThis.__argoRunnerProbe = { ts: Date.now(), ok: true };
+await import(${JSON.stringify(new URL('../instrumentation-node.mjs', import.meta.url).href)});
+await new Promise((r) => setTimeout(r, 2500));
+const sync = await import(${JSON.stringify(srcUrl('sync.mjs'))});
+const s = sync.syncStatus();
+process.stdout.write('\\n@@' + JSON.stringify({ on: s.on, held: s.held, envSync: process.env.ARGO_SYNC ?? null, inherited: process.env.ARGO_PARENT_PID ?? null }) + '\\n');
+process.exit(0);`;
+  const aBody = `
+await import(${JSON.stringify(new URL('../instrumentation-node.mjs', import.meta.url).href)});
+const { scrubServerSecrets } = await import(${JSON.stringify(RUNNERS_SHARED)});
+const { spawnSync } = await import('node:child_process');
+const env = { ...scrubServerSecrets(process.env, 'claude'), ARGO_ROOT: ${JSON.stringify(rootB)}, HOME: ${JSON.stringify(rootB)}, ARGO_SYNC: '0' };
+const r = spawnSync(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(bBody)}], { env, encoding: 'utf8', timeout: 50_000 });
+const line = (r.stdout || '').split('\\n').find((l) => l.startsWith('@@'));
+process.stdout.write('\\nBLOG ' + JSON.stringify(r.stdout + r.stderr) + '\\n');
+process.stdout.write('\\n' + (line ?? '@@null') + '\\n');
+process.exit(0);`;
+  const { r, out } = await new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, ['--input-type=module', '-e', aBody], { env: childEnv(rootA, { ARGO_AGENT_LINK: '0', ARGO_SYNC: '0', NODE_TEST_CONTEXT: '', ARGO_PARENT_PID: String(process.pid) }), stdio: ['ignore', 'pipe', 'pipe'] });
+    let o = '';
+    p.stdout.on('data', (c) => { o += c; }); p.stderr.on('data', (c) => { o += c; });
+    const t = setTimeout(() => { p.kill('SIGKILL'); reject(new Error(`timeout\n${o.slice(-2000)}`)); }, 60_000);
+    p.on('exit', () => { clearTimeout(t); const line = o.split('\n').filter((l) => l.startsWith('@@')).at(-1); if (!line || line === '@@null') return reject(new Error(`no result\n${o.slice(-2000)}`)); resolve({ r: JSON.parse(line.slice(2)), out: o }); });
+  });
+  const bLog = JSON.parse(out.split('\n').find((l) => l.startsWith('BLOG ')).slice(5));
+  assert.equal(out.split('\n').filter((l) => l.startsWith(IGNORED_LOG)).length, 1, 'A(사이드카)는 무시한다');
+  assert.equal(r.inherited, String(process.pid), 'B는 ARGO_PARENT_PID를 물려받았다(재현 조건)');
+  assert.equal(bLog.includes(IGNORED_LOG), false, 'B는 무시 로그를 남기지 않는다');
+  assert.equal(r.envSync, '0'); assert.equal(r.on, false); assert.equal(r.held.errorCode, 'env');
+  assert.equal(fake.hits.filter((h) => h.k.includes('/storage/')).length, 0, '저장소 요청 0');
 });

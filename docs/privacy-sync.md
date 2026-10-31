@@ -18,7 +18,7 @@ credential sync is offered as a choice, because there "the operator" is you. Clo
 (operator-provisioned instances that run your agents for you) are a delegation model still in
 design — not covered by this guarantee. The desktop app syncs nothing unless you sign in; on a
 self-hosted server or the server CLI you can also disable all sync with `ARGO_SYNC=0` (the desktop
-app and its bundled `argo` command ignore that variable).
+app, and an `argo` command that shares the app's data folder, ignore that variable).
 
 ## 자격 증명 (러너 로그인 열쇠) — 호스티드에서는 클라우드로 가지 않습니다
 
@@ -113,4 +113,4 @@ Argo Messenger(팀 메신저)의 조직·채널·메시지·첨부·결재 카�
 
 - **로그인하지 않기** — 처음부터 전부 로컬 전용입니다. 데스크톱 앱은 로그인하지 않으면 동기화하지 않습니다.
 - **동기화 전체 끄기(셀프호스트·서버 전용)** — 환경변수 `ARGO_SYNC=0`. 그 서버는 아무것도 올리고 내리지 않습니다.
-  데스크톱 앱과 앱에 든 `argo` 명령은 이 값을 따르지 않습니다(셸에 남은 값 하나로 로그인한 앱의 동기화가 꺼지는 일을 막으려는 것입니다).
+  데스크톱 앱과, 앱 데이터 폴더를 같이 쓰는 `argo` 명령은 이 값을 따르지 않습니다(셸에 남은 값 하나로 로그인한 앱의 동기화가 꺼지는 일을 막으려는 것입니다).

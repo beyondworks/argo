@@ -81,10 +81,11 @@ export function applyCliEnv({ repoRoot, env = process.env, platform = process.pl
   // 루프는 대화형 세션만 띄운다(bin/argo.mjs interactive — 한 번 실행 명령은 ensureSync를 부르지 않는다). 사이클마다 앱 서버 표식을 보고 앱이 있으면 물러난다(sync.mjs appServerYield).
   // 리더(실행 담당)는 종전대로 맡지 않는다(대화형이 ARGO_NO_LEADER=1) — 앱이 리더 판정에서 밀리지 않는다.
   // 정책 A(2026-10-31): 앱 공유 CLI도 데스크톱 앱처럼 물려받은 ARGO_SYNC=0을 따르지 않는다(sync.mjs ignoreInheritedSyncOff) — 셸에 남은 값 하나로 앱을 켜지 않은 PC의 회사가 올라가지 않았다(고객 C).
-  // 타르볼·저장소 CLI는 종전대로 존중한다. 무시했으면 꼬리표 .e1(같은 프로세스의 globalThis).
+  // 타르볼·저장소 CLI는 종전대로 존중한다. 앱이 띄운 자손(크루 Bash 등 — ARGO_PARENT_PID를 물려받는다)이 준 값도 존중한다: 사이드카가 자기 env에서
+  // 이미 지웠으니 자손에게 남은 ARGO_SYNC=0은 누군가 직접 준 것이다(PR #1196 검수 I1). 무시했으면 꼬리표 .e1(같은 프로세스의 globalThis).
   if (isAppShared({ repoRoot, env, platform, execPath })) {
     env.ARGO_SYNC_YIELD_TO_APP = '1';
-    if (env.ARGO_SYNC === '0') { delete env.ARGO_SYNC; if (env === process.env) globalThis.__argoSyncEnvIgnored = true; }
+    if (env.ARGO_SYNC === '0' && !env.ARGO_PARENT_PID) { delete env.ARGO_SYNC; if (env === process.env) globalThis.__argoSyncEnvIgnored = true; }
   }
   // 공개 설정 우선순위: 환경변수 > cli.json > 배포물에 구운 argo-public.json > 레포 .env.local(개발)
   if (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
