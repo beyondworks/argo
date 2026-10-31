@@ -223,6 +223,9 @@ export const LEASE_RENEW_MS = LEASE_TTL_MS / 2;
 // 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선하되,
 // 호스티드 클라이언트에선 serviceCredsAllowed()가 서비스 모드를 금지해 세션이 쓰인다(ensureClient 참조).
 export const syncOn = () => (!!usableSyncCreds() || !!loadDeviceSession()) && process.env.ARGO_SYNC !== '0';
+/** 동기화가 꺼진 이유(꺼져 있을 때만 뜻이 있다) — 'env' = 환경변수 ARGO_SYNC=0(로그인해도 켜지지 않는다 — 2026-10-30 고객 C: 앱 사이드카가 부모 env를
+    물려받은 것으로 추정), 'nosess' = 기기 세션·쓸 수 있는 서비스 자격 없음(로그아웃). 환경변수를 먼저 본다. (export: 회귀 테스트용) */
+export const syncOffReason = (env = process.env) => (env.ARGO_SYNC === '0' ? 'env' : 'nosess');
 
 /** 회의록 파일과 충돌하는 크루 카드(agents/<slug>.md, 세척 후 slug === 'room-main' — slug.mjs) — 옛 버전 기기가 만든
     'Room Main' 크루는 이 기기에서 회의록 chats/room-main.json·회의 턴 마커를 덮는 파일 이름이 된다. 반입 문의 거절은
@@ -2373,7 +2376,7 @@ export function syncStatus() {
   // 주인 없는 회사(no-owner)는 화면에 싣지 않는다 — 동기화한 적도 클라우드 사본도 없다(설정 화면은 companies[ws] 존재를 '동기화한 적 있음'으로 읽는다).
   const companies = Object.fromEntries(Object.entries(status.companies).filter(([, c]) => c?.skipped !== 'no-owner'));
   const on = syncOn();
-  const held = syncHeldView(status, { on, loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder, cycleMs: CYCLE_MS });
+  const held = syncHeldView(status, { on, offReason: syncOffReason(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder, cycleMs: CYCLE_MS });
   return { ...status, on, leader: isCloudLeader(), companies, quota: quotaStatus(), held };
 }
 /** 동기화가 회사를 건너뛴 이유 요약(순수, 설정 '기기 간 동기화' 카드용) — 회사 수와 상태만 싣는다(회사 id·이름 없음: 같은 기기의 다른 계정 화면에도 실린다).
@@ -2398,12 +2401,12 @@ export function syncDiagTag(held, { credsFileIgnored = false, takeover = null, w
 }
 globalThis.__argoSyncDiagTag = () => {
   try {
-    const held = syncHeldView(status, { on: syncOn(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder, cycleMs: CYCLE_MS });
+    const held = syncHeldView(status, { on: syncOn(), offReason: syncOffReason(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder, cycleMs: CYCLE_MS });
     return syncDiagTag(held, { credsFileIgnored: staleCredsSeen(), takeover: lockState.takeover?.reason, watchdog: status.watchdogRestarts, claimError: !!status.claimError, role: procRole() });
   } catch { return null; }
 };
 export const STALL_AFTER_MS = (cycleMs) => Math.max(20 * cycleMs, 3 * 60_000);
-export function syncHeldView(st, { now = Date.now(), on, loopStarted, lockElsewhere = false, lockHolder = null, cycleMs = CYCLE_MS } = {}) {
+export function syncHeldView(st, { now = Date.now(), on, loopStarted, lockElsewhere = false, lockHolder = null, cycleMs = CYCLE_MS, offReason = '' } = {}) {
   const count = (kind) => (on ? Object.values(st?.companies ?? {}).filter((c) => c?.skipped === kind && Number(c.ts) >= (Number(st?.scanAt) || 0)).length : 0);
   const idle = on && loopStarted && !st?.cycling && Number(st?.cycleEndAt) > 0 ? now - Number(st.cycleEndAt) : 0;
   return {
@@ -2416,7 +2419,7 @@ export function syncHeldView(st, { now = Date.now(), on, loopStarted, lockElsewh
     // 진단(2026-10-28 PR #1183 검수 요청) — 지금 루프 단계·마지막 사이클 끝 시각·마지막 오류 종류·잠금 주인(pid·앱 버전). 개인 정보·토큰 없음.
     phase: !on ? 'off' : !loopStarted ? 'not-started' : (st?.phase ?? 'starting'),
     lastCycleAt: Number(st?.cycleEndAt) || null,
-    errorCode: on ? (st?.errorCode ?? '') : '',
+    errorCode: on ? (st?.errorCode ?? '') : (offReason || ''), // 꺼졌으면 이유(0.1.124): env = ARGO_SYNC=0, nosess = 기기 세션·서비스 자격 없음 — 꼬리표 sync/off.env|nosess
     lockPid: on && lockElsewhere ? (lockHolder?.pid ?? null) : null,
     lockVer: on && lockElsewhere ? (lockHolder?.ver ?? null) : null,
   };
@@ -2675,7 +2678,7 @@ function setPhase(phase, errorCode = '') { status.phase = phase; status.errorCod
     토큰·계정 id·이메일·회사 id·경로는 싣지 않는다(개수와 상태만). */
 const SYNC_LOG_EVERY_MS = 60 * 60_000;
 function logSyncPhase(now = Date.now()) {
-  const h = syncHeldView(status, { now, on: syncOn(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder });
+  const h = syncHeldView(status, { now, on: syncOn(), offReason: syncOffReason(), loopStarted: !!globalThis.__argoSync, lockElsewhere: lockState.elsewhere, lockHolder: lockState.holder });
   const line = `[argo] sync phase=${h.phase} err=${h.errorCode || '-'} plan=${status.plan ?? '-'} lock=${h.lockWait ? `pid:${h.lockPid ?? '?'}/v${h.lockVer ?? '?'}` : '-'} noOwner=${h.noOwner} foreign=${h.foreignOwner} free=${h.freePlan} ver=${APP_VERSION ?? '-'}`;
   const key = line;
   const last = (globalThis.__argoSyncPhaseLog ??= { key: '', at: 0 });
@@ -3023,7 +3026,11 @@ function releaseOwnSyncLockSync() {
 }
 
 export function ensureSync() {
-  if (!syncOn()) { watchForCreds(); return; }
+  if (!syncOn()) {
+    // 환경변수로 꺼짐 — 감시도 하지 않으니(watchForCreds) 진단 로그에 한 줄만 남긴다(프로세스당 한 번). 꼬리표는 sync/off.env
+    if (process.env.ARGO_SYNC === '0' && !globalThis.__argoSyncOffLogged) { globalThis.__argoSyncOffLogged = true; console.log(`[argo] sync phase=off err=env ver=${APP_VERSION ?? '-'}`); }
+    watchForCreds(); return;
+  }
   if (globalThis.__argoSync) return;
   globalThis.__argoSync = true;
   if (process.env.ARGO_SYNC_YIELD_TO_APP === '1') process.once('exit', releaseOwnSyncLockSync); // 앱 공유 CLI가 끝나면 내 잠금을 놓는다(앱이 기다리지 않게)

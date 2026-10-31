@@ -278,7 +278,7 @@ async function login() {
   if (appShared) { // 앱의 로그인 경로(app/api/device/login)와 같은 이어짐 — 로컬(게스트)로 쓰던 회사·계정 자격을 이 계정으로 귀속한다(주인 없는 회사가 목록에서 빠지지 않게, 검토 M-c)
     try {
       const { guestModeOn } = await import('../src/gueststate.mjs');
-      if (guestModeOn()) { const { claimLocalToAccount } = await import('../src/accountclaim.mjs'); await claimLocalToAccount(user.id); }
+      if (guestModeOn()) { const { claimOrDefer } = await import('../src/accountclaim.mjs'); const r = await claimOrDefer(user.id); if (r?.error) console.error(T.failed(String(r.error).slice(0, 300))); } // 앱 로그인 경로와 같은 claimOrDefer — 실패하면 대기 표지(같은 uid로 동기화가 10분 뒤 다시)
     } catch (e) { console.error(T.failed(String(e?.message || e).slice(0, 300))); }
   }
   return user;
