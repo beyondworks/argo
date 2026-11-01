@@ -123,7 +123,7 @@ test('② setClaimTokens — 새 토큰이 생기면 갱신 레이트리밋을 �
   setClaimTokens(['tokH', 'tokI']); // 새 토큰 등장 → renewedAt 리셋
   await renewTokenClaims('owner1');
   assert.equal(tokenOwnership('tokI').mine, true, '새 토큰이 30초를 기다리지 않고 바로 클레임됐다');
-  setClaimTokens(['tokI']); // tokH 해제
+  setClaimTokens(['tokI']); setClaimTokens(['tokI']); // tokH 해제 — 두 번 연속 없음일 때만 확정(게이트웨이는 10초마다 등록한다, 2026-10-31 Delete·Put 왕복)
   await renewTokenClaims('owner1', { force: true });
   assert.ok(fs_.removed.includes(keyOf('owner1', 'tokH')), '해제된 토큰의 원격 클레임 제거');
   assert.equal(tokenOwnership('tokH').pending, true, '해제된 토큰 상태 폐기');
@@ -164,7 +164,7 @@ test('② 해제 청소는 원격 클레임이 내 것일 때만 지운다 — �
   setClaimTokens(['tokK', 'tokL']);
   await renewTokenClaims('owner1', { force: true }); // tokK 양보, tokL 획득
   assert.equal(tokenOwnership('tokK').mine, false); assert.equal(tokenOwnership('tokL').mine, true);
-  setClaimTokens([]); // 둘 다 해제
+  setClaimTokens([]); setClaimTokens([]); // 둘 다 해제(두 번 연속 없음)
   await renewTokenClaims('owner1', { force: true });
   assert.ok(!fs_.removed.includes(keyOf('owner1', 'tokK')), '남의 살아 있는 클레임은 지우지 않는다');
   assert.ok(fs_.store.has(keyOf('owner1', 'tokK')), '남의 클레임 잔존');
@@ -176,7 +176,7 @@ test('② 해제 청소는 원격 클레임이 내 것일 때만 지운다 — �
   setClaimTokens(['tokM']); await renewTokenClaims('owner1', { force: true });
   assert.equal(JSON.parse(fs2.store.get(keyOf('owner1', 'tokM'))).deviceId, me);
   fs2.store.set(keyOf('owner1', 'tokM'), JSON.stringify({ deviceId: 'Other-9abcdef0', nonce: 'z', ts: Date.now() })); // 남이 인수
-  setClaimTokens([]); await renewTokenClaims('owner1', { force: true });
+  setClaimTokens([]); setClaimTokens([]); await renewTokenClaims('owner1', { force: true });
   assert.ok(fs2.store.has(keyOf('owner1', 'tokM')), '남이 인수한 클레임 보존');
 });
 

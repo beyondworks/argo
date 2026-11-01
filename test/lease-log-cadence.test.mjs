@@ -126,9 +126,12 @@ test('리스 만료 경계 — 쉬는 보유자의 글은 다른 기기가 보�
 const { setClaimTokens, renewTokenClaims, tokenOwnership, tokenClaimHash, _resetTokenClaimsForTest, CLAIM_REWRITE_MS, TG_CLAIM_TTL_MS } = sync;
 const CLAIM_KEY = (owner, tok) => `${owner}/.tg-claims/${tokenClaimHash(tok)}.json`;
 const claimReadFailReset = () => globalThis.__argoTgClaimReadFail?.clear();
+/** 아래 클레임 시험은 종전 규칙(판정 30초·다시 쓰기 40초·TTL 120초)을 잠근다 — 다른 기기를 본 적 있는 계정(엄격 판정)이라 혼자 모드가 아니다.
+    혼자 쓰는 기기의 긴 클레임(2026-10-31)은 test/tg-claims-solo.test.mjs. */
+const classicClaims = () => { const l = lease() ?? (globalThis.__argoSyncLease = {}); l.peers = { [ACCT]: { at: Date.now(), normals: [] } }; l.peersSavedAt = { [ACCT]: Date.now() }; };
 
 test('쉬는 클레임 보유자(토큰 5개) — 10분 동안 토큰마다 읽기는 30초, 쓰기는 약 60초에 한 번(다시 쓰기 40초 + 30초 판정), 글 나이는 판정 직전에도 75초 안, 소유는 끊기지 않는다', async () => {
-  _resetTokenClaimsForTest();
+  _resetTokenClaimsForTest(); classicClaims();
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'owner-claims'; const toks = ['c1', 'c2', 'c3', 'c4', 'c5'];
   setClaimTokens(toks);
@@ -158,7 +161,7 @@ test('쉬는 클레임 보유자(토큰 5개) — 10분 동안 토큰마다 읽�
 /* ── 검수 1(2026-10-13) — 클레임 소유의 시각 상한, 같은 토큰 두 기기 + 판정 하나가 30초 걸림 ── */
 
 test('클레임 소유 시각 상한 — 내 글 ts + TTL − 4초(116초)까지만 mine, 넘으면 판정 중(pending)으로 물러난다', async () => {
-  _resetTokenClaimsForTest(); claimReadFailReset();
+  _resetTokenClaimsForTest(); classicClaims(); claimReadFailReset();
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const t0 = Date.now();
   mock.timers.enable({ apis: ['Date'], now: t0 });
@@ -174,7 +177,7 @@ test('클레임 소유 시각 상한 — 내 글 ts + TTL − 4초(116초)까지
 /** 같은 토큰을 가진 두 기기 — A가 보유자, B는 A의 글이 만료(TTL)되는 순간 가져간다(claimDecision). A의 판정 간격 gaps(ms)대로 시계를 넘기며
     1초마다 "A가 폴링(mine) && B가 가져갈 수 있음(A 글 만료)"인 순간을 센다. 판정 하나가 30초 걸리면 그 간격이 30초 늘어난다. */
 async function twoDevices(gaps) {
-  _resetTokenClaimsForTest(); claimReadFailReset();
+  _resetTokenClaimsForTest(); classicClaims(); claimReadFailReset();
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'owner-two'; const tok = 'same-token';
   const t0 = Date.now(); mock.timers.enable({ apis: ['Date'], now: t0 });
@@ -225,7 +228,7 @@ const READ_ERRORS = [
 
 for (const err of READ_ERRORS) {
   test(`클레임 읽기 오류(${err.message ?? err.throw.message}) — 남의 살아 있는 클레임을 덮어쓰지 않고, 미보유로 보류한다`, async () => {
-    _resetTokenClaimsForTest(); claimReadFailReset();
+    _resetTokenClaimsForTest(); classicClaims(); claimReadFailReset();
     const f = fakeStore(); _setSyncClientForTest(f.client);
     const owner = 'owner-claim-err'; const now = Date.now();
     f.set(CLAIM_KEY(owner, 'x1'), { deviceId: 'Other-PC-deadbeef', nonce: 'n', ts: now - 10_000 });
@@ -242,7 +245,7 @@ for (const err of READ_ERRORS) {
 }
 
 test('클레임 읽기 오류 — 확인된 보유자는 내 글이 TTL 안이면 쓰지 않고 소유를 유지한다', async () => {
-  _resetTokenClaimsForTest(); claimReadFailReset();
+  _resetTokenClaimsForTest(); classicClaims(); claimReadFailReset();
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'owner-claim-keep'; let now = Date.now();
   setClaimTokens(['k1']);
@@ -261,7 +264,7 @@ test('클레임 읽기 오류 — 확인된 보유자는 내 글이 TTL 안이�
 });
 
 test('클레임 읽기 오류가 TTL 넘게 이어지면 TTL에 한 번만 써 본다 — 읽을 수 없는 객체가 토큰을 영영 막지 않게', async () => {
-  _resetTokenClaimsForTest(); claimReadFailReset();
+  _resetTokenClaimsForTest(); classicClaims(); claimReadFailReset();
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'owner-claim-escape'; let now = Date.now();
   setClaimTokens(['e1']);
@@ -317,7 +320,7 @@ test('잠들었다 깨면 기다리던 판정을 바로 끝낸다 — 깸 하나
 });
 
 test('클레임 판정 박자 — 리스 판정이 15초(조금 이른 14.99초)마다 와도 클레임 판정은 30초마다 돈다(30·45초 번갈아 아님)', async () => {
-  _resetTokenClaimsForTest(); claimReadFailReset();
+  _resetTokenClaimsForTest(); classicClaims(); claimReadFailReset();
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'owner-beat'; const tok = 'beat-token';
   setClaimTokens([tok]);
