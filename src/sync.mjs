@@ -1129,7 +1129,9 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
       rf.escapeAt = now;
       console.warn(`[argo] 텔레그램 토큰 클레임을 ${Math.round(TG_CLAIM_TTL_MS / 1000)}초 넘게 읽지 못함 — 없음으로 보고 한 번 써 본다(${hash.slice(0, 6)})`);
     } else if (claimReadFail.has(hash)) { claimReadFail.delete(hash); noteOnce(`tg-claim-read:${hash}`, ''); }
-    if (claimDecision(cur, me, now, claimTtlFor(cur, leaseState.holder, now, { leaseKnown: leaseKnownNow(now) })) === 'other') {
+    // 보유자 판정 시각은 리스를 마지막으로 읽은 시각이다 — 지금 시각과 비교하면 리스 GET만 오래 실패할 때 낡은 holder.ts로 살아 있는 A를 '보유자 아님'으로 봐
+    // A의 긴 글을 120초 TTL로 가져갔다(두 기기 겹침, #1197 재검수 I-A). 리스를 TTL 안에 못 읽었으면 leaseKnown이 거짓이라 긴 글을 존중한다.
+    if (claimDecision(cur, me, now, claimTtlFor(cur, leaseState.holder, Number(leaseState.holderReadAt) || now, { leaseKnown: leaseKnownNow(now) })) === 'other') {
       if (prev?.mine) console.log(`[argo] 텔레그램 토큰 클레임 양보 → ${deviceLabel(cur.deviceId)} (${hash.slice(0, 6)})`);
       claimState.byHash.set(hash, { mine: false, holder: cur.deviceId, ts: now });
       continue;

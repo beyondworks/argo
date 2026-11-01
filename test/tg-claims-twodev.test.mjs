@@ -63,3 +63,11 @@ test('첫 리스 읽기 실패 — 새 판 B는 살아 있는 혼자 모드 보�
   const c = await run('tg-bfirst.mjs', { TMPDIR: tmp, A_DOC: 'classic' });
   assert.equal(c.claimNowBy, 'A', '종전 글(70초 전)도 그대로 존중');
 });
+
+test('리스 GET만 오래 실패 — 새 판 B가 살아 있는 혼자 모드 보유자 A의 긴 글을 가져가지 않는다(낡은 holder.ts는 읽은 시각 기준, #1197 재검수 I-A)', async () => {
+  for (const sec of ['70', '100']) {
+    const r = await run('tg-bstale.mjs', { TMPDIR: tmp, STALE_SEC: sec });
+    assert.equal(r.claimNowBy, 'A', `리스 GET ${sec}초 실패 뒤 B가 A의 긴 글을 가져갔다 — 두 기기 겹침`);
+    assert.equal(r.bOwnership.mine, false, JSON.stringify(r.bOwnership));
+  }
+});
