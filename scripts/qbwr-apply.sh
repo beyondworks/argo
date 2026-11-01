@@ -4,7 +4,7 @@
 #       bash scripts/qbwr-apply.sh run [버전]      남은 파일을 차례로 적용(버전을 주면 그 버전까지). 실패한 파일에서 멈춘다
 #       bash scripts/qbwr-apply.sh buckets         Storage 버킷 msgr·companies(비공개)가 없으면 만든다(운영은 대시보드로 만들어 마이그레이션에 없다)
 # 운영 적용(scripts/msgr-live-apply.sh, 맥 one 전용)과 다른 점: 대상이 qbwr일 때만 돈다(scripts/qbwr-env.sh 검문, 아니면 exit 5).
-# qbwr는 운영 데이터가 없는 시험 프로젝트라 main 병합 여부를 따지지 않고 이 체크아웃의 파일을 쓴다(messenger-v2 시험).
+# qbwr는 운영 데이터가 없는 시험 프로젝트라 main 병합 여부를 따지지 않고 이 체크아웃의 파일을 쓴다(메신저 기능 브랜치 시험).
 # 각 파일과 기록(supabase_migrations.schema_migrations)은 한 트랜잭션이다. 기록된 버전은 다시 적용하지 않는다.
 set -euo pipefail
 cd "$(dirname "$0")/.."

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 게이트 A(CLAUDE.md 회귀 게이트 3) — 새 코드 + 배포본 시험을 임시 워크트리에서 돌리고, 배포본 코드 + 배포본 시험(기준선)의 실패와 비교한다.
 # 사용: bash scripts/gate-a.sh <배포본 ref> <새 코드 ref> <결과 폴더>
-#   예: bash scripts/gate-a.sh origin/main origin/messenger-v2 /tmp/gate-a
+#   예: bash scripts/gate-a.sh v0.1.120 origin/main /tmp/gate-a
 # 두 워크트리:
 #   base = 배포본 코드 + 배포본 시험(그대로)
 #   new  = 새 코드 + 배포본 시험(test/·apps/messenger/test를 배포본 것으로 바꾼다 — 새 코드의 새 시험은 쓰지 않는다)
