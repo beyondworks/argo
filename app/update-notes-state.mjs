@@ -66,6 +66,9 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.122': Object.freeze(['updates.note.syncUnstuck']),
   // 0.1.123 — syncUnstuck(같은 문구 재사용 — i18n 공용 파일을 건드리지 않으려고): 앱 창을 닫고 터미널(argo)만 쓰는 PC에서도 기기 간 동기화가 돎(#1192)
   '0.1.123': Object.freeze(['updates.note.syncUnstuck']),
+  // 0.1.124 — 0.1.123은 공개하지 않음(범프 뒤 #1195·#1196·#1197이 들어와 번호를 올림). syncUnstuck(같은 문구 재사용 — i18n 공용 파일을 건드리지 않으려고): 0.1.123의 앱을 닫고 터미널(argo)만 쓰는 PC 동기화(#1192)
+  //   + 셸에 남은 ARGO_SYNC=0 때문에 데스크톱 앱의 동기화가 시작되지 않던 것(정책 A #1196, 꺼진 이유 표시 #1195). #1197(텔레그램 클레임 다시 쓰기 비용)은 사용자 화면 변화가 없어 안내하지 않음
+  '0.1.124': Object.freeze(['updates.note.syncUnstuck']),
 });
 
 export function stableVersion(value) {
