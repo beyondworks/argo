@@ -6,14 +6,15 @@ import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const SRC = process.env.SRC || new URL('../..', import.meta.url).pathname; const SCEN = process.env.SCEN;
+const SRC = process.env.SRC || fileURLToPath(new URL('../..', import.meta.url)); const SCEN = process.env.SCEN;
 const root = mkdtempSync(join(tmpdir(), 'rv1197-'));
 process.env.ARGO_ROOT = root; process.env.ARGO_SYNC = '1';
 for (const k of ['ARGO_PREFER_LEADER', 'ARGO_NO_LEADER', 'ARGO_STANDBY_LEADER', 'ARGO_SYNC_CYCLE_MS']) delete process.env[k];
 writeFileSync(join(root, '.device-session.json'), JSON.stringify({ url: 'https://example.invalid', anonKey: 'anon', access_token: 'a.b.c', refresh_token: 'r', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: 'u-rv', email: '' } }), { mode: 0o600 });
-const sync = await import(join(SRC, 'src/sync.mjs'));
-const { getDeviceId } = await import(join(SRC, 'src/workspace.mjs'));
+const sync = await import(pathToFileURL(join(SRC, 'src/sync.mjs')).href);
+const { getDeviceId } = await import(pathToFileURL(join(SRC, 'src/workspace.mjs')).href);
 const A = await getDeviceId();
 const B = 'B-Server-0badf00d';
 const OWNER = 'owner-rv'; const TOK = 'shared-token';

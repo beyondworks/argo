@@ -7,8 +7,9 @@ import { spawn } from 'node:child_process';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const helper = (name) => new URL(`./helpers/${name}`, import.meta.url).pathname;
+const helper = (name) => fileURLToPath(new URL(`./helpers/${name}`, import.meta.url)); // pathname은 Windows에서 /D:/… 꼴이라 쓰지 않는다
 function run(file, env) {
   return new Promise((resolve, reject) => {
     const p = spawn(process.execPath, [helper(file)], { env: { ...process.env, ARGO_SYNC_CYCLE_MS: '', NODE_TEST_CONTEXT: '', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
