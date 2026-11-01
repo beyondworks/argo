@@ -109,6 +109,20 @@ test('S3 — 새 판 B는 A의 리스가 살아 있으면 A의 긴 글(10분 전
   assert.deepEqual({ mine: own.mine, holder: own.holder }, { mine: false, holder: 'A-PC-deadbeef' });
 });
 
+test('S3d — B가 리스를 잠깐 못 읽는 동안(마지막으로 읽은 순간 A의 리스는 살아 있었음) A의 긴 글을 가져가지 않는다(재검수 I-A)', async () => {
+  _resetTokenClaimsForTest(); globalThis.__argoTgClaimList?.clear();
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const t0 = Date.now(); mock.timers.enable({ apis: ['Date'], now: t0 });
+  f.set(KEY('shared'), { deviceId: 'A-PC-deadbeef', nonce: 'a', ts: t0 - 5 * 60_000, lease: true, ttl: CLAIM_SOLO_TTL_MS });
+  // 60초 전에 읽은 A의 리스 글은 그때 70초 된 살아 있는 글(지금 시각으로는 130초 — 만료처럼 보인다). 그 뒤 B의 리스 읽기는 실패 중.
+  Object.assign(lease(), { leader: false, ownedAt: 0, holder: { deviceId: 'A-PC-deadbeef', ts: t0 - 130_000 }, holderReadAt: t0 - 60_000, readFailSince: t0 - 50_000, peers: { [ACCT]: { at: t0, normals: [] } } });
+  setClaimTokens(['shared']);
+  await renewTokenClaims(OWNER, { now: t0 });
+  assert.equal(f.n.put, 0, '살아 있던 A의 글을 덮지 않는다');
+  assert.equal(tokenOwnership('shared').mine, false);
+  assert.equal(f.get(KEY('shared')).deviceId, 'A-PC-deadbeef');
+});
+
 test('S4 — A가 꺼져 리스가 만료(120초)되면 B는 A의 긴 글을 종전 TTL로 보고 넘겨받는다', async () => {
   const { f, own } = await judgeOthersSoloDoc({ leaseHolderAgeMs: LEASE_TTL_MS + 1_000 });
   assert.equal(f.n.put, 1, '넘겨받기 쓰기');

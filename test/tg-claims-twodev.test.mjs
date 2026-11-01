@@ -57,6 +57,12 @@ test('move — 토큰을 다른 기기로 옮길 때 해제 청소가 한 번 �
   assert.ok(r0.gapSec != null && r0.gapSec <= 90, `${r0.gapSec}초`);
 });
 
+test('bLeaseFail — B의 리스 읽기만 70초 실패해도(A는 살아 있음) B가 A의 긴 글을 가져가지 않는다: 겹침 0초(재검수 I-A — 지금 시각 식이면 이 위상에서 59초, 검수 재현 26초)', async () => {
+  const r = await scen('bLeaseFail');
+  assert.equal(r.overlapStateSec, 0, r.events.join('\n'));
+  assert.ok(!r.events.some((e) => e.includes('B 클레임 획득')), r.events.join('\n'));
+});
+
 test('첫 리스 읽기 실패 — 새 판 B는 살아 있는 혼자 모드 보유자 A의 긴 글을 가져가지 않는다(리스를 모르면 긴 글 존중)', async () => {
   const r = await run('tg-bfirst.mjs', { TMPDIR: tmp });
   assert.equal(r.claimNowBy, 'A'); assert.equal(r.bOwnership.mine, false);

@@ -1,6 +1,6 @@
 // 두 기기 텔레그램 클레임 하네스(PR #1197 엄격 검수의 하네스를 그대로 옮김) — 기기 A는 실제 코드(renewLease + renewTokenClaims = leaseTick의 두 줄, leaseReadInterval 박자),
 // 기기 B는 새 판 판정식(claimTtlFor + claimDecision, 없으면 base의 120초)을 같은 가짜 저장소에 적용한다. 'A mine && B mine'인 초(겹침)와 넘겨받기까지 걸린 초(공백)를 잰다.
-// 사용: SCEN=<preempt|stall|sleep|netA|move> [SRC=<저장소 루트>] node test/helpers/tg-twodev.mjs — 결과는 '@@' 뒤 JSON 한 줄(test/tg-claims-twodev.test.mjs).
+// 사용: SCEN=<preempt|stall|sleep|netA|move|bLeaseFail> [SRC=<저장소 루트>] node test/helpers/tg-twodev.mjs — 결과는 '@@' 뒤 JSON 한 줄(test/tg-claims-twodev.test.mjs).
 import { mock } from 'node:test';
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -41,8 +41,9 @@ const T = () => Math.round((Date.now() - t0) / 1000);
 sync.setClaimTokens([TOK]);
 
 // B(새 판 판정식) — 클레임 판정 30초, 다시 쓰기 40초(엄격 판정 = 종전 규칙). holderB = B가 마지막으로 읽은 리스 글의 주인.
-const B_ = { mine: false, holder: null, lastJudge: -Infinity, wroteAt: 0 };
-const ttlFor = (cur, holder, now) => (typeof sync.claimTtlFor === 'function' ? sync.claimTtlFor(cur, holder, now) : sync.TG_CLAIM_TTL_MS);
+const B_ = { mine: false, holder: null, readAt: null, lastJudge: -Infinity, wroteAt: 0 };
+// renewTokenClaims와 같은 식 — 보유자가 살아 있었는지는 B가 리스를 읽은 순간(readAt) 기준, 리스를 TTL 넘게 못 읽었으면 leaseKnown 거짓(PR #1197 재검수 I-A)
+const ttlFor = (cur, holder, now) => (typeof sync.claimTtlFor === 'function' ? sync.claimTtlFor(cur, holder, B_.readAt ?? now, { leaseKnown: B_.readAt != null && now - B_.readAt < sync.LEASE_TTL_MS }) : sync.TG_CLAIM_TTL_MS);
 function bJudge(now) {
   if (now - B_.lastJudge < 30_000) return;
   B_.lastJudge = now;
@@ -79,10 +80,10 @@ log(`A 클레임 글: lease=${docA?.lease} ttl=${docA?.ttl} 나이=${Math.round(
 
 if (SCEN === 'preempt') {
   // B = argo run(우선 역할)이 처음 켜져 A의 살아 있는 리스를 가져온다(쓰기 → 800ms 확인 → holder=B, 22초 뒤 담당). B는 60초마다 리스를 다시 쓴다.
-  let bLeaseAt = Date.now(); set(LK, { deviceId: B, token: 'tb', ts: bLeaseAt, preferred: true }); B_.holder = { deviceId: B, ts: bLeaseAt };
+  let bLeaseAt = Date.now(); set(LK, { deviceId: B, token: 'tb', ts: bLeaseAt, preferred: true }); B_.readAt = Date.now(); B_.holder = { deviceId: B, ts: bLeaseAt };
   log('B(우선 역할) 리스 가져옴');
   for (let i = 0; i < 300; i++) {
-    if (Date.now() - bLeaseAt >= 60_000) { bLeaseAt = Date.now(); set(LK, { deviceId: B, token: 'tb', ts: bLeaseAt, preferred: true }); B_.holder = { deviceId: B, ts: bLeaseAt }; }
+    if (Date.now() - bLeaseAt >= 60_000) { bLeaseAt = Date.now(); set(LK, { deviceId: B, token: 'tb', ts: bLeaseAt, preferred: true }); B_.readAt = Date.now(); B_.holder = { deviceId: B, ts: bLeaseAt }; }
     bJudge(Date.now());
     await second();
   }
@@ -94,9 +95,20 @@ if (SCEN === 'preempt') {
     // B(일반, 엄격 판정): 30초마다 리스를 읽고, 만료면 가져온다(쓰기·확인 → holder=B).
     if (i % 30 === 0) {
       const l = get(LK);
-      if (l && Date.now() - l.ts < sync.LEASE_TTL_MS && l.deviceId !== B) B_.holder = { deviceId: l.deviceId, ts: l.ts };
-      else { set(LK, { deviceId: B, token: 'tb', ts: Date.now() }); if (B_.holder?.deviceId !== B) log('B 리스 가져옴(A 리스 만료)'); B_.holder = { deviceId: B, ts: Date.now() }; }
+      if (l && Date.now() - l.ts < sync.LEASE_TTL_MS && l.deviceId !== B) { B_.readAt = Date.now(); B_.holder = { deviceId: l.deviceId, ts: l.ts }; }
+      else { set(LK, { deviceId: B, token: 'tb', ts: Date.now() }); if (B_.holder?.deviceId !== B) log('B 리스 가져옴(A 리스 만료)'); B_.readAt = Date.now(); B_.holder = { deviceId: B, ts: Date.now() }; }
     }
+    bJudge(Date.now());
+    await second();
+  }
+} else if (SCEN === 'bLeaseFail') {
+  // A는 정상(혼자 모드 보유자, 리스·클레임 판정이 돈다). B는 30초마다 리스를 읽는데 FAIL_FROM부터 FAIL_SEC초 동안 B의 리스 읽기만 실패한다(클레임 읽기·쓰기는 됨) — 재검수 I-A.
+  // 기본 위상: 지금 시각 식이면 59초 겹친다(B가 t=630에 읽은 A의 리스 글이 t=690쯤 120초를 넘긴다)
+  const F0 = Number(process.env.FAIL_FROM ?? 655); const F1 = F0 + Number(process.env.FAIL_SEC ?? 70);
+  log(`B 리스 읽기 실패 구간 t=${F0}~${F1}`);
+  for (let i = 0; i < 900; i++) {
+    const t = T();
+    if (i % 30 === 0 && !(t >= F0 && t < F1)) { const l = get(LK); B_.readAt = Date.now(); B_.holder = l ? { deviceId: l.deviceId, ts: l.ts } : null; }
     bJudge(Date.now());
     await second();
   }
@@ -108,7 +120,7 @@ if (SCEN === 'preempt') {
   const tMove = Date.now(); let gotAt = null;
   for (let i = 0; i < 1500; i++) {
     if (i % 10 === 0) sync.setClaimTokens([]); // 게이트웨이 10초 등록
-    if (i % 30 === 0) { const l = get(LK); B_.holder = l ? { deviceId: l.deviceId, ts: l.ts } : null; }
+    if (i % 30 === 0) { const l = get(LK); B_.readAt = Date.now(); B_.holder = l ? { deviceId: l.deviceId, ts: l.ts } : null; }
     bJudge(Date.now());
     if (B_.mine && gotAt == null) gotAt = Date.now();
     await second();
@@ -121,8 +133,8 @@ if (SCEN === 'preempt') {
   for (let i = 0; i < 480; i++) {
     if (i % 30 === 0) {
       const l = get(LK);
-      if (l && Date.now() - l.ts < sync.LEASE_TTL_MS && l.deviceId !== B) B_.holder = { deviceId: l.deviceId, ts: l.ts };
-      else { set(LK, { deviceId: B, token: 'tb', ts: Date.now() }); if (B_.holder?.deviceId !== B) log('B 리스 가져옴(A 리스 만료)'); B_.holder = { deviceId: B, ts: Date.now() }; }
+      if (l && Date.now() - l.ts < sync.LEASE_TTL_MS && l.deviceId !== B) { B_.readAt = Date.now(); B_.holder = { deviceId: l.deviceId, ts: l.ts }; }
+      else { set(LK, { deviceId: B, token: 'tb', ts: Date.now() }); if (B_.holder?.deviceId !== B) log('B 리스 가져옴(A 리스 만료)'); B_.readAt = Date.now(); B_.holder = { deviceId: B, ts: Date.now() }; }
     }
     bJudge(Date.now());
     await second();
