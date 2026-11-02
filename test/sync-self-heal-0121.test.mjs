@@ -79,7 +79,11 @@ test('옛 판 사이드카(ver 없는 잠금, 살아 있는 pid, ts 갱신)가 �
   const lockFile = join(root, '.sync-process.lock');
   // 옛 판(0.1.116~0.1.120) holdSyncLock을 그대로 흉내 낸다 — 남이 살아 있고 ts가 120초 안이면 기다리고, 아니면 ver 없이 자기 잠금을 쓴다.
   const old = { writes: 0, writesAfterYield: 0, yielded: false };
+  const waitMs = LOCK_TAKEOVER_WAIT_MS + 6_000;
+  // 자식은 시작 뒤 waitMs를 잔 다음 끝난다. 이 시각까지는 자식이 반드시 살아 있으므로 여기까지만 흉내 낸다 — 자식이 끝나 잠금을 놓은 뒤의 쓰기는 핑퐁이 아니다(맥 러너에서 2 !== 0으로 가끔 실패).
+  const deadline = Date.now() + waitMs;
   const oldTick = () => {
+    if (Date.now() >= deadline) return;
     let cur = null;
     try { cur = JSON.parse(readFileSync(lockFile, 'utf8')); } catch { /* 없음 */ }
     if (cur && cur.pid !== process.pid && Date.now() - cur.ts < 120_000) {
@@ -93,7 +97,7 @@ test('옛 판 사이드카(ver 없는 잠금, 살아 있는 pid, ts 갱신)가 �
   const t0 = Date.now();
   let r;
   try {
-    r = await runChild({ root, env: { ARGO_SYNC_CYCLE_MS: '300' }, waitMs: LOCK_TAKEOVER_WAIT_MS + 6_000 });
+    r = await runChild({ root, env: { ARGO_SYNC_CYCLE_MS: '300' }, waitMs });
   } finally { clearInterval(iv); }
   assert.match(r.out, /\[argo\] sync lock takeover reason=older pid=\d+ ver=-/, '회수 사유를 로그 한 줄로 남긴다');
   assert.equal(old.yielded, true, '옛 판은 새 판의 잠금(살아 있는 pid·신선한 ts)을 보고 물러났다');

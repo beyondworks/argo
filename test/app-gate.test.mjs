@@ -22,6 +22,8 @@ const mkRoot = async () => {
 /** 가짜 확인 클라이언트 — 서버 함수 답을 정하고 부른 횟수를 센다 */
 const gateClient = (answer) => { const calls = []; const mk = (url, key, opts) => ({ rpc: async (name, args) => { calls.push({ name, args, auth: opts?.global?.headers?.Authorization }); return answer(); } }); mk.calls = calls; return mk; };
 const settle = () => new Promise((r) => setTimeout(r, 20));
+/** 서버 확인의 판정 파일이 써질 때까지 기다린다 — 고정 20ms는 느린 러너(macos-15-intel)에서 파일 쓰기보다 먼저 끝났다(0.1.124 릴리스 빌드). */
+const gateWritten = async (root) => { const f = join(root, G.APP_GATE_FILE); for (let i = 0; i < 500 && !existsSync(f); i++) await new Promise((r) => setTimeout(r, 10)); await settle(); };
 beforeEach(() => G._resetAppGateForTest());
 
 test('비교(순수): 낮은 버전만 막는다 — 같은 버전(경계)·높은 버전·최소 버전 없음·이 앱 버전 미상은 막지 않는다', () => {
@@ -41,7 +43,7 @@ test('최소 버전 미만이면 기기 세션이 없다(동기화·메신저·�
   const mk = gateClient(() => ({ data: '0.1.107', error: null }));
   const first = await getFreshDeviceSession({ root, _gateClient: mk, _version: '0.1.106' });
   assert.ok(first, '처음 확인 전에는 막지 않는다(판정 파일 없음)');
-  await settle();
+  await gateWritten(root);
   assert.equal(mk.calls.length, 1, '서버에 한 번 묻는다');
   assert.equal(mk.calls[0].name, 'argo_min_app_version'); assert.deepEqual(mk.calls[0].args, { p_app: 'desktop' });
   assert.equal(mk.calls[0].auth, 'Bearer at', '기기 세션의 접속 토큰으로');

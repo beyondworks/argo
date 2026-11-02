@@ -1,0 +1,31 @@
+# 공증 자격 점검(수동) — 맥 빌드 50분을 돌리지 않고 APPLE_ID·APPLE_PASSWORD·APPLE_TEAM_ID가 애플에 통하는지 1분 안에 본다(0.1.124에서 401이 연달아 난 뒤 추가).
+# 값은 출력하지 않는다. 모양 검사와 통과 여부만 남긴다. 아무것도 올리거나 바꾸지 않는다(history 조회만).
+name: Notary credentials check
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - name: Check shape and login
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          yn() { if "$@"; then echo yes; else echo NO; fi; }
+          echo "APPLE_ID is an email, no spaces:        $(yn bash -c '[[ "$APPLE_ID" =~ ^[^[:space:]]+@[^[:space:]]+\.[^[:space:]]+$ ]]')"
+          echo "APPLE_PASSWORD is xxxx-xxxx-xxxx-xxxx:  $(yn bash -c '[[ "$APPLE_PASSWORD" =~ ^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$ ]]')"
+          echo "APPLE_TEAM_ID is 10 chars:              $(yn bash -c '[[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]')"
+          echo "Signing identity is this team:          $(yn bash -c '[[ "$APPLE_SIGNING_IDENTITY" == *"($APPLE_TEAM_ID)"* ]]')"
+          if out="$(xcrun notarytool history --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json 2>&1)"; then
+            echo "Notary login: OK"
+          else
+            echo "Notary login: FAILED"
+            printf '%s\n' "$out" | grep -oE 'HTTP status code: [0-9]+' | head -1
+            exit 1
+          fi
