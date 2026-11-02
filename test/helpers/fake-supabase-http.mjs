@@ -22,7 +22,7 @@ export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUpl
       const json = (status, obj) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
       // 장애 주입(선택) — api.fault(req, path)가 { status, body }를 주면 그 응답, 'reset'이면 연결을 끊는다(클라이언트는 fetch failed),
       // 'hang'이면 답하지 않는다(클라이언트 30초 시간 초과), 숫자면 그만큼(ms) 늦게 종전처럼 답한다(느린 회선·긴 동기화 주기). 안 주면 종전 그대로.
-      const fault = api.fault?.(req, path);
+      const fault = api.fault?.(req, path, body);
       if (fault === 'reset') { req.socket.destroy(); return; }
       if (fault === 'hang') return;
       if (typeof fault === 'number') await new Promise((r) => setTimeout(r, fault));
