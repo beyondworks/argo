@@ -276,15 +276,15 @@ test('클레임 읽기 오류가 TTL 넘게 이어지면 TTL에 한 번만 써 �
   assert.equal(tokenOwnership('e1').mine, false, '확인 읽기도 실패 — 보수적으로 미보유');
 });
 
-/* ── L1: 단일 기기 보유자의 리스 읽기 간격 — 15초(넘겨받기 대기 22초보다 7초 짧게), 깨면 바로 ── */
+/* ── L1: 단일 기기 보유자의 리스 읽기 간격 — 18초(넘겨받기 대기 22초보다 4초 짧게, 2026-11-02 15초에서 늘림 — test/lease-solo-read-cadence), 깨면 바로 ── */
 
 const { leaseReadInterval, waitLeaseTick, LEASE_SOLO_READ_MS, HANDOVER_WAIT_MS } = sync;
 
-test('읽기 간격 — 단일 기기의 확인된 보유자만 15초, 엄격 판정·예비·미보유·넘겨받는 중·읽기 실패 중은 8초', () => {
+test('읽기 간격 — 단일 기기의 확인된 보유자만 18초, 엄격 판정·예비·미보유·넘겨받는 중·읽기 실패 중은 8초', () => {
   const f = fakeStore(); _setSyncClientForTest(f.client);
-  assert.equal(LEASE_SOLO_READ_MS, 15_000);
-  assert.ok(LEASE_SOLO_READ_MS <= HANDOVER_WAIT_MS - 7_000, '옛 버전의 넘겨받는 기기도 담당을 시작하기 전에 이 보유자가 남의 글을 읽는다');
-  holder(f, 'owner-iv'); assert.equal(leaseReadInterval(), 15_000, '단일 기기 보유자');
+  assert.equal(LEASE_SOLO_READ_MS, 18_000);
+  assert.ok(LEASE_SOLO_READ_MS <= HANDOVER_WAIT_MS - 4_000, '옛 버전의 넘겨받는 기기도 담당을 시작하기 전에 이 보유자가 남의 글을 읽는다');
+  holder(f, 'owner-iv'); assert.equal(leaseReadInterval(), 18_000, '단일 기기 보유자');
   holder(f, 'owner-iv', { sawPeer: true }); assert.equal(leaseReadInterval(), 8_000, '다른 기기를 본 계정(엄격 판정 — 확인 기한 18초)');
   holder(f, 'owner-iv'); process.env.ARGO_STANDBY_LEADER = '1';
   try { assert.equal(leaseReadInterval(), 8_000, '예비 기기'); } finally { delete process.env.ARGO_STANDBY_LEADER; }
@@ -294,14 +294,14 @@ test('읽기 간격 — 단일 기기의 확인된 보유자만 15초, 엄격 �
   holder(f, 'owner-iv'); lease().readFailSince = Date.now(); assert.equal(leaseReadInterval(), 8_000, '읽기 실패 중');
 });
 
-test('쉬는 단일 기기 보유자 — 10분 동안 리스 읽기 40번(예전 75번)·쓰기 10번 이하, 담당은 끊기지 않는다', async () => {
+test('쉬는 단일 기기 보유자 — 10분 동안 리스 읽기 34번(15초일 때 40번, 8초일 때 75번)·쓰기 10번 이하, 담당은 끊기지 않는다', async () => {
   mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'owner-solo-loop'; holder(f, owner);
   const each = []; let el = 0;
   while (el < 10 * 60_000) { const step = leaseReadInterval(); el += step; mock.timers.tick(step); awakeNow(null); await renewLease(owner, { runnerUsable: true }); each.push(isCloudLeader()); }
   const gets = f.calls.byKey.get(`GET ${LEASE_KEY(owner)}`); const puts = f.calls.byKey.get(`PUT ${LEASE_KEY(owner)}`) || 0;
-  assert.equal(gets, 40, `읽기 ${gets}번`);
+  assert.equal(gets, 34, `읽기 ${gets}번`);
   assert.ok(puts >= 8 && puts <= 10, `쓰기 ${puts}번`);
   assert.deepEqual(each.filter((x) => !x), []);
 });

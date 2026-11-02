@@ -87,7 +87,7 @@ test('간격 표 — 엄격 판정의 담당 아닌 기기만 30초, 담당·넘
   asFollower(f, 'o-iv'); process.env.ARGO_STANDBY_LEADER = '1'; assert.equal(leaseReadInterval(), 30_000, '예비 기기의 담당 아님');
   asHolder(f, 'o-iv'); assert.equal(leaseReadInterval(), 8_000, '예비 기기의 담당');
   delete process.env.ARGO_STANDBY_LEADER;
-  asHolder(f, 'o-iv', { sawPeer: false }); assert.equal(leaseReadInterval(), LEASE_SOLO_READ_MS, '단일 기기 담당 15초(종전)');
+  asHolder(f, 'o-iv', { sawPeer: false }); assert.equal(leaseReadInterval(), LEASE_SOLO_READ_MS, '단일 기기 담당 18초');
   asFollower(f, 'o-iv', { sawPeer: false }); assert.equal(leaseReadInterval(), 8_000, '단일 기기 판정의 담당 아님(종전)');
 });
 
