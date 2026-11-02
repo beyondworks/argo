@@ -37,10 +37,10 @@ test('netA — A만 Supabase가 실패(텔레그램은 됨)해도 겹침 0초', 
   assert.equal(r.overlapStateSec, 0, r.events.join('\n'));
 });
 
-test('preempt — 우선 역할 기기가 A의 살아 있는 리스를 가져가면 겹침은 A의 다음 리스 읽기(혼자 보유자 15초)까지만', async () => {
+test('preempt — 우선 역할 기기가 A의 살아 있는 리스를 가져가면 겹침은 A의 다음 리스 읽기(혼자 보유자 18초)까지만', async () => {
   const r = await scen('preempt');
   console.log(`[tg-twodev] preempt 겹침 ${r.overlapStateSec}초`);
-  assert.ok(r.overlapStateSec <= 15, `${r.overlapStateSec}초\n${r.events.join('\n')}`);
+  assert.ok(r.overlapStateSec <= 18, `${r.overlapStateSec}초\n${r.events.join('\n')}`);
 });
 
 test('sleep — A가 잠든 사이 B가 인수하면, 깬 직후 첫 판정 전 A는 mine이 아니다(판정 중)', async () => {

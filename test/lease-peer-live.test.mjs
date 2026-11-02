@@ -1,8 +1,8 @@
 // '다른 기기를 본 적 있음' 표지(.lease-peer.json — 켜지면 14일 동안 엄격 판정)는 살아 있는(TTL 안) 남의 리스 글을 볼 때만 켠다(2026-10-17).
 // 결함: renewLease가 읽은 글의 deviceId가 내 것과 다르면 글이 살아 있는지 보기 전에 표지를 켰다. 기기 신원(.device-id)이 바뀌면(재설치·데이터 폴더 초기화·새 맥)
-// 저장소에 남은 옛 신원의 만료 글을 첫 판정에서 읽어, 혼자 쓰는데도 14일 동안 엄격 판정이 되어 담당이 리스를 15초 대신 8초마다 읽었다(운영 24시간: 단일 기기 8초 무리가
+// 저장소에 남은 옛 신원의 만료 글을 첫 판정에서 읽어, 혼자 쓰는데도 14일 동안 엄격 판정이 되어 담당이 리스를 18초(당시 15초) 대신 8초마다 읽었다(운영 24시간: 단일 기기 8초 무리가
 // 리스 GET의 약 37% — 경로는 ①옛 앱·②표지·③프로세스 둘 중 하나, 경우 표 6-1). 만료된 글은 지금 함께 돌고 있는 기기의 증거가 아니다.
-// 엄격 판정 여부는 leaseReadInterval()로 본다 — 확인된 담당이면 단일 기기 15초, 엄격 판정 8초(이 수정 전후 같은 규칙).
+// 엄격 판정 여부는 leaseReadInterval()로 본다 — 확인된 담당이면 단일 기기 18초, 엄격 판정 8초(이 수정 전후 같은 규칙).
 import { test, mock, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
@@ -60,14 +60,14 @@ const fresh = (peers = {}) => {
 const strictNow = () => leaseReadInterval() !== LEASE_SOLO_READ_MS; // 확인된 담당일 때만 의미 있다
 afterEach(() => { mock.timers.reset(); delete process.env.ARGO_STANDBY_LEADER; });
 
-test('재설치 뒤 첫 판정 — 옛 신원의 만료된 리스 글을 봐도 다른 기기 표지를 켜지 않는다: 담당이 되고 단일 기기 15초로 읽는다', async () => {
+test('재설치 뒤 첫 판정 — 옛 신원의 만료된 리스 글을 봐도 다른 기기 표지를 켜지 않는다: 담당이 되고 단일 기기 18초로 읽는다', async () => {
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'o-reinstall'; fresh();
   f.set(KEY(owner), { deviceId: OLD, token: 'old', ts: Date.now() - LEASE_TTL_MS - 5 * 60_000 }); // 재설치 전 신원의 글 — 5분 전에 만료
   await renewLease(owner, { runnerUsable: true });
   assert.equal(lease().leader && lease().ownedAt > 0, true, '만료 글이라 바로 가져와 담당');
   assert.equal(f.get(KEY(owner)).deviceId, ME);
-  assert.equal(leaseReadInterval(), LEASE_SOLO_READ_MS, '혼자 쓰는 기기 — 15초(전에는 표지가 켜져 14일 동안 8초)');
+  assert.equal(leaseReadInterval(), LEASE_SOLO_READ_MS, '혼자 쓰는 기기 — 18초(전에는 표지가 켜져 14일 동안 8초)');
   assert.ok(!(lease().peers?.[ACCT]?.at > 0), '다른 기기 표지(엄격 판정)는 켜지 않는다');
   assert.ok(lease().peers?.[ACCT]?.weakAt > 0, '만료 글은 약한 표지로만 남긴다(기동·세션 실패 기본값용 — P9-b)');
   for (let i = 0; i < 50 && !existsSync(PEER_FILE); i++) await new Promise((r) => setTimeout(r, 10));
@@ -120,7 +120,7 @@ test('14일 경계 — 이미 켜진 표지는 본 시각부터 14일 동안 유
     f.set(KEY(owner), { deviceId: ME, token: 'mine', ts: Date.now() - LEASE_TTL_MS - 1 });
     await renewLease(owner, { runnerUsable: true });
     assert.equal(lease().ownedAt > 0, true);
-    assert.equal(strictNow(), strict, `표지를 본 지 ${Math.round(ago / DAY * 10) / 10}일 → ${strict ? '엄격(8초)' : '단일(15초)'}`);
+    assert.equal(strictNow(), strict, `표지를 본 지 ${Math.round(ago / DAY * 10) / 10}일 → ${strict ? '엄격(8초)' : '단일(18초)'}`);
   }
 });
 
@@ -168,7 +168,7 @@ test('P9-b (나) 첫 리스 읽기가 걸린 채 기동 — 기동 대기 5초�
   assert.equal(isCloudLeader(), false, '걸린 읽기가 끝나기 전 최대 30초 동안 A와 함께 담당이 되지 않는다');
 });
 
-test('P9-b 약한 표지는 읽기 간격·확인 기한에 쓰지 않는다 — 혼자 쓰는 재설치 기기는 담당이 되면 15초, 내 글 만료 전까지 담당(단일 판정)', async () => {
+test('P9-b 약한 표지는 읽기 간격·확인 기한에 쓰지 않는다 — 혼자 쓰는 재설치 기기는 담당이 되면 18초, 내 글 만료 전까지 담당(단일 판정)', async () => {
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'o-p9b-solo'; fresh();
   f.set(KEY(owner), { deviceId: OLD, token: 'old', ts: Date.now() - LEASE_TTL_MS - 60_000 });
