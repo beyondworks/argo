@@ -46,8 +46,11 @@ async function runCell(c) {
 
 const table = (r) => Object.entries(r.perMin).sort((a, b) => b[1] - a[1]).map(([k, v]) => `  ${k}: ${v}/분 (${r.counts[k]}건)`).join('\n');
 
+// 인텔 맥 러너(릴리스 빌드에만 있음)에서는 네 칸 모두 자식이 170초 안에 끝나지 않았다(0.1.124 run 41459100863). 요청 수는 CPU와 무관한 값이고 PR CI의 macos-15·windows가 같은 코드를 재므로 여기서는 건너뛴다.
+const skip = process.platform === 'darwin' && process.arch === 'x64' ? '인텔 맥 러너는 너무 느림 — macos-15·windows CI가 잰다' : false;
+
 for (const c of BUDGET) {
-  test(`유휴 요청 예산 — ${c.name}: 기기당 분당 ${c.max}건 이하`, { timeout: 180_000 }, async () => {
+  test(`유휴 요청 예산 — ${c.name}: 기기당 분당 ${c.max}건 이하`, { timeout: 180_000, skip }, async () => {
     const r = await runCell(c);
     const detail = `\n실측 합계 ${r.total}/분(상한 ${c.max}), ${r.windowMin}분 창, 경로별:\n${table(r)}\n단계 ${r.phase}, 오류 ${JSON.stringify(r.lastError)}, 멈춤 ${r.stalls}`;
     console.log(`[idle-budget] ${c.name}:${detail}`);
