@@ -6,6 +6,8 @@ import { activeTurnCount } from '../../../src/turn-abort.mjs';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  // 호스팅 테넌트 워커는 데스크톱 셸이 없다 — 로그인 없이 다른 회사의 실행 수가 보이지 않게 닫는다(검수 사소 1)
+  if (process.env.ARGO_TENANT_OWNER?.trim()) return new Response(null, { status: 404 });
   const turns = activeTurnCount();
   return Response.json({ busy: turns > 0, turns }, { headers: { 'cache-control': 'no-store' } });
 }

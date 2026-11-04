@@ -24,6 +24,18 @@ use crate::diag_log;
 
 /// 웹뷰가 잡은 설치가 이보다 오래 풀리지 않으면 버려진 것으로 본다(내려받는 중 화면을 새로 고친 경우 등).
 const WEBVIEW_CLAIM_STALE: Duration = Duration::from_secs(60 * 60);
+/// 셸 내려받기 한 번의 상한(플러그인 기본은 시간 제한 없음) — 걸린 연결이 잠금을 쥐고 버튼 설치까지 막지 않게(검수 중요 2).
+const AUTO_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// 셸 잠금도 이보다 오래면 버려진 것으로 본다 — 내려받기 상한보다 조금 길게.
+const AUTO_CLAIM_STALE: Duration = Duration::from_secs(35 * 60);
+
+fn stale(h: Holder, at: Instant) -> bool {
+    match h {
+        Holder::Webview => at.elapsed() >= WEBVIEW_CLAIM_STALE,
+        Holder::Auto => at.elapsed() >= AUTO_CLAIM_STALE,
+        Holder::Installed => false,
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Holder { Auto, Webview, Installed }
@@ -38,8 +50,7 @@ pub fn set_server_port(port: u16) {
 
 fn claim(who: Holder) -> bool {
     let mut c = CLAIM.lock().unwrap_or_else(|e| e.into_inner());
-    let stale = matches!(*c, Some((Holder::Webview, at)) if at.elapsed() >= WEBVIEW_CLAIM_STALE);
-    if c.is_none() || stale {
+    if c.is_none() || matches!(*c, Some((h, at)) if stale(h, at)) {
         *c = Some((who, Instant::now()));
         true
     } else {
@@ -56,11 +67,7 @@ fn release(who: Holder) {
 
 fn held_by_other(me: Holder) -> bool {
     let c = CLAIM.lock().unwrap_or_else(|e| e.into_inner());
-    match *c {
-        Some((Holder::Webview, at)) => me != Holder::Webview && at.elapsed() < WEBVIEW_CLAIM_STALE,
-        Some((h, _)) => h != me,
-        None => false,
-    }
+    matches!(*c, Some((h, at)) if h != me && !stale(h, at))
 }
 
 /// 웹뷰가 설치를 시작하기 전에 잡는다 — false면 셸이 내려받거나 설치하는 중(웹뷰는 잠시 뒤 다시 잡는다).
@@ -78,7 +85,12 @@ pub fn update_install_release() {
 #[cfg(all(desktop, any(target_os = "macos", target_os = "windows")))]
 #[derive(Default)]
 struct State {
-    ready: Option<(Update, Vec<u8>, Instant)>,
+    /// 받아 둔 판과 그 파일(서명 검증 끝).
+    ready: Option<(Update, Vec<u8>)>,
+    /// 이 버전을 처음 받아 둔 시각 — 다시 확인해도 같은 버전이면 이어 쓴다(창 사용 중 24시간 상한이 6시간마다 0으로 돌아가지 않게, 검수 중요 1).
+    ready_since: Option<(String, Instant)>,
+    /// 마지막으로 새 판을 확인한 시각.
+    checked_at: Option<Instant>,
     unknown_since: Option<Instant>,
 }
 
@@ -131,38 +143,58 @@ fn round(app: &AppHandle, st: &mut State) -> Duration {
     if matches!(*CLAIM.lock().unwrap_or_else(|e| e.into_inner()), Some((Holder::Installed, _))) {
         return policy::CHECK_EVERY;
     }
-    // 받아 둔 판이 오래됐으면 버리고 다시 확인한다(그사이 더 새 판이 나왔을 수 있다)
-    if st.ready.as_ref().is_some_and(|(_, _, at)| at.elapsed() >= policy::CHECK_EVERY) {
-        st.ready = None;
-    }
-    if st.ready.is_none() {
-        let update = match app.updater().map_err(|e| e.to_string()).and_then(|u| tauri::async_runtime::block_on(u.check()).map_err(|e| e.to_string())) {
-            Ok(Some(u)) => u,
-            Ok(None) => return policy::CHECK_EVERY,
+    // 새 판 확인 — 받아 둔 판이 없거나, 마지막 확인에서 CHECK_EVERY가 지났을 때만. 같은 버전이면 받아 둔 파일을 그대로 쓴다.
+    if st.ready.is_none() || st.checked_at.map_or(true, |at| at.elapsed() >= policy::CHECK_EVERY) {
+        let found = app
+            .updater_builder()
+            .timeout(AUTO_DOWNLOAD_TIMEOUT)
+            .build()
+            .map_err(|e| e.to_string())
+            .and_then(|u| tauri::async_runtime::block_on(u.check()).map_err(|e| e.to_string()));
+        let update = match found {
+            Ok(Some(u)) => Some(u),
+            Ok(None) => {
+                st.ready = None; // 공개판이 내려갔으면(되돌림) 받아 둔 것도 버린다
+                st.checked_at = Some(Instant::now());
+                return policy::CHECK_EVERY;
+            }
             Err(e) => {
                 log(&format!("check failed: {e}"));
-                return policy::CHECK_EVERY;
+                if st.ready.is_none() {
+                    return policy::CHECK_EVERY;
+                }
+                // 확인만 실패(오프라인) — 이미 받아 둔 판으로 아래 판단을 이어간다
+                None
             }
         };
-        if !claim(Holder::Auto) {
-            log("webview is installing — will look again");
-            return policy::RETRY_DEFERRED;
-        }
-        let bytes = tauri::async_runtime::block_on(update.download(|_, _| {}, || {}));
-        release(Holder::Auto);
-        match bytes {
-            Ok(b) => {
-                log(&format!("downloaded {} ({} bytes, signature verified)", update.version, b.len()));
-                st.ready = Some((update, b, Instant::now()));
+        st.checked_at = Some(Instant::now());
+        let changed = update.filter(|u| !st.ready.as_ref().is_some_and(|(r, _)| r.version == u.version));
+        if let Some(update) = changed {
+            st.ready = None;
+            if !claim(Holder::Auto) {
+                log("webview is installing — will look again");
+                return policy::RETRY_DEFERRED;
             }
-            Err(e) => {
-                // 서명 실패·네트워크 오류 — 설치하지 않고 다음 확인 때 처음부터
-                log(&format!("download failed ({}): {e}", update.version));
-                return policy::CHECK_EVERY;
+            let bytes = tauri::async_runtime::block_on(update.download(|_, _| {}, || {}));
+            release(Holder::Auto);
+            match bytes {
+                Ok(b) => {
+                    log(&format!("downloaded {} ({} bytes, signature verified)", update.version, b.len()));
+                    if !st.ready_since.as_ref().is_some_and(|(v, _)| *v == update.version) {
+                        st.ready_since = Some((update.version.clone(), Instant::now()));
+                    }
+                    st.ready = Some((update, b));
+                }
+                Err(e) => {
+                    // 서명 실패·네트워크 오류·시간 초과 — 설치하지 않고 다음 확인 때 처음부터
+                    log(&format!("download failed ({}): {e}", update.version));
+                    st.checked_at = None;
+                    return policy::CHECK_EVERY;
+                }
             }
         }
     }
-    let waiting = st.ready.as_ref().map(|(_, _, at)| at.elapsed()).unwrap_or_default();
+    let waiting = st.ready_since.as_ref().map(|(_, at)| at.elapsed()).unwrap_or_default();
     let work = policy::probe_work(Some(SERVER_PORT.load(Ordering::SeqCst)).filter(|p| *p != 0));
     let unknown_for = if work == Work::Unknown {
         st.unknown_since.get_or_insert_with(Instant::now).elapsed()
@@ -190,7 +222,7 @@ fn install(app: &AppHandle, st: &mut State) -> Duration {
     if !claim(Holder::Auto) {
         return policy::RETRY_DEFERRED;
     }
-    let Some((update, bytes, _)) = st.ready.take() else {
+    let Some((update, bytes)) = st.ready.take() else {
         release(Holder::Auto);
         return policy::CHECK_EVERY;
     };

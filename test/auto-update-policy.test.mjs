@@ -52,6 +52,8 @@ test('desktop shell wires the auto update without bypassing the decision', async
   assert.match(glue, /blocks_auto_install\(\)/, '맥 설치 위치 문제를 판단에 넣는다');
   assert.match(glue, /policy::probe_work\(/, '작업 중 여부를 서버에 묻는다');
   assert.doesNotMatch(glue, /download_and_install/, '받기와 설치를 나눠 받아 둔 채 작업이 끝나기를 기다린다');
+  assert.match(glue, /\.updater_builder\(\)\s*\.timeout\(AUTO_DOWNLOAD_TIMEOUT\)/, '셸 내려받기에는 시간 상한이 있다(걸린 연결이 잠금을 쥐지 않게)');
+  assert.match(glue, /let waiting = st\.ready_since/, '창 사용 중 상한은 같은 버전을 처음 받은 시각부터 센다');
 });
 
 test('the sidecar answers the busy question from the process-wide turn registry', async () => {
@@ -71,6 +73,10 @@ test('the sidecar answers the busy question from the process-wide turn registry'
   const res = await route.GET();
   assert.equal(res.headers.get('access-control-allow-origin'), null, '다른 사이트가 읽지 못하게 CORS를 열지 않는다');
   assert.equal(res.headers.get('cache-control'), 'no-store');
+  const prev = process.env.ARGO_TENANT_OWNER;
+  process.env.ARGO_TENANT_OWNER = 'tenant-owner';
+  try { assert.equal((await route.GET()).status, 404, '호스팅 테넌트 워커에서는 닫는다'); }
+  finally { if (prev === undefined) delete process.env.ARGO_TENANT_OWNER; else process.env.ARGO_TENANT_OWNER = prev; }
 });
 
 test('the busy route is reachable without a session cookie (the shell has none)', async () => {
