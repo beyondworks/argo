@@ -15,6 +15,10 @@ use boot_port::{can_bind, is_same_version_argo, probe_port, tcp_open, Boot, Boot
 mod no_dock;
 mod update_notes;
 mod update_location;
+// 셸 자동 업데이트 — 판단(순수, rustc로 따로 시험)과 실행(확인·내려받기·설치·재시작, 웹뷰와 같은 설치 잠금)
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+mod auto_update_policy;
+mod auto_update;
 mod diag_log;
 
 // 부트 화면(public/index.html)에 실시간 상태를 알린다 — 실패도 화면에 보이게(무한 대기 방지).
@@ -127,7 +131,7 @@ async fn open_diagnostic_logs(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![save_download, read_update_notes_version, acknowledge_update_notes_version, update_location::update_location, open_diagnostic_logs])
+        .invoke_handler(tauri::generate_handler![save_download, read_update_notes_version, acknowledge_update_notes_version, update_location::update_location, open_diagnostic_logs, auto_update::update_install_claim, auto_update::update_install_release])
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("file-nav-guard")
                 .on_navigation(|_webview, url| !is_file_route_nav(url))
@@ -162,6 +166,8 @@ pub fn run() {
             {
                 app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
                 app.handle().plugin(tauri_plugin_process::init())?; // 설치 후 relaunch
+                // 사람 손 없이 새 판 설치 — 작업이 없을 때만(auto_update_policy::decide). ARGO_AUTO_UPDATE=0 또는 ~/.argo/auto-update-off로 끈다.
+                auto_update::start(app.handle().clone());
             }
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -219,6 +225,7 @@ pub fn run() {
 fn start_boot(handle: &tauri::AppHandle, boot: Boot) {
     let plan = match boot {
         Boot::Adopt(p) => {
+            auto_update::set_server_port(p);
             boot_status(handle, "started", "server already running", Some(p));
             return;
         }
@@ -266,6 +273,7 @@ fn spawn_sidecar(handle: tauri::AppHandle, plan: SpawnPlan, port: u16) {
         let mut port = port;
         loop {
             tried.push(port);
+            auto_update::set_server_port(port); // 자동 업데이트가 작업 중 여부를 묻는 곳 — 즉사 폴백으로 포트가 바뀌어도 따라간다
             let sidecar = match handle.shell().sidecar("node") {
                 Ok(c) => c,
                 Err(e) => {

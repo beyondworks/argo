@@ -16,6 +16,19 @@ pub struct UpdateLocation {
     same_volume: Option<bool>,
 }
 
+impl UpdateLocation {
+    /// 셸 자동 설치(auto_update.rs)를 하지 않을 자리인가 — 판정은 auto_update_policy::location_blocks(화면 판정 + 관리자 암호 자리).
+    pub fn blocks_auto_install(&self) -> bool {
+        crate::auto_update_policy::location_blocks(
+            self.platform == "macos",
+            self.path.is_some(),
+            self.translocated,
+            [self.bundle_errno, self.parent_errno],
+            self.same_volume,
+        )
+    }
+}
+
 #[tauri::command]
 pub fn update_location() -> UpdateLocation {
     #[cfg(target_os = "macos")]

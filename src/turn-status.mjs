@@ -1,9 +1,9 @@
 // 턴 진행 단계 — "작성중" 한 마디로 뭉개지 않는다(Hermes 교훈: 지연과 먹통을 구분 못 하면 신뢰 붕괴).
 // chat이 단계를 파일로 남기고, 크루 화면이 폴링해 보여준다.
-import { rm } from 'node:fs/promises';
+import { rm, readdir } from 'node:fs/promises';
 import { sanitizeFileSlug } from './slug.mjs';
 import { join } from 'node:path';
-import { paths } from './workspace.mjs';
+import { paths, WS_ROOT } from './workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 import { maskSecrets } from './secret-mask.mjs';
 
@@ -161,4 +161,23 @@ export async function getTurnStatus(wsId, slug) {
   } catch {
     return null;
   }
+}
+
+/** 이 데이터 폴더(모든 회사)에서 신선한(120초 안 — getTurnStatus·고아 스위퍼와 같은 창) 턴 상태 파일 수. 실행 등록부는 프로세스마다 따로라,
+    같은 폴더를 쓰는 다른 프로세스(앱과 같이 쓰는 argo CLI — ARGO_CLI_APP=1)의 턴은 이 파일로만 보인다. 앱 셸 자동 업데이트가 재시작 전에 묻는다
+    (app/api/app-busy). 읽기만 한다 — 쓰기 0. 회사 폴더 수 × 대화 폴더 한 번 읽기. */
+export async function freshTurnStatusCount({ root = WS_ROOT, now = Date.now() } = {}) {
+  let n = 0;
+  const companies = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const c of companies) {
+    if (!c.isDirectory() || c.name.startsWith('.')) continue;
+    const chats = join(root, c.name, 'chats'); // paths(wsId).chats와 같은 자리(root를 시험이 바꿀 수 있게 직접 잇는다)
+    const files = await readdir(chats).catch(() => []);
+    for (const f of files) {
+      if (!f.endsWith('.status.json')) continue;
+      const s = await readJsonLenient(join(chats, f), null);
+      if (s?.ts && now - s.ts < 120_000) n += 1;
+    }
+  }
+  return n;
 }
