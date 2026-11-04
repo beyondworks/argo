@@ -20,8 +20,8 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 
-function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {}, location = async () => MAC_OK } = {}) {
-  let active, cursor, checks = 0, downloads = 0, relaunches = 0;
+function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {}, location = async () => MAC_OK, claim = async () => true } = {}) {
+  let active, cursor, checks = 0, downloads = 0, relaunches = 0, claims = 0, releases = 0;
   const order = []; // 재시작 모듈 불러오기와 내려받기 시작 순서
   let checkImpl;
   let download = deferred();
@@ -63,14 +63,21 @@ function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {}, 
   const processModule = { relaunch: () => { relaunches++; return relaunch(); } };
   Object.defineProperty(imports, '@tauri-apps/plugin-process', { enumerable: true, get() { order.push('process-import'); return processModule; } });
   // update_location은 @tauri-apps/api/core를 거치지 않고 내부 invoke로 부른다(재시작 조각을 공개본과 같게 유지 — use-app-update.js 참고)
-  const tauriInternals = { invoke: (cmd) => { assert.equal(cmd, 'update_location'); return location(); } };
+  // 설치 잠금(update_install_claim·release)은 앱 셸(src-tauri/src/auto_update.rs) 한 곳에 있다 — 셸 자동 업데이트와 두 번 설치하지 않게
+  const tauriInternals = { invoke: (cmd) => {
+    if (cmd === 'update_location') return location();
+    if (cmd === 'update_install_claim') { claims++; return claim(); }
+    if (cmd === 'update_install_release') { releases++; return Promise.resolve(); }
+    assert.fail(`unexpected native command ${cmd}`);
+  } };
   const module = { exports: {} };
-  const load = new Function('require', 'module', 'exports', 'window', 'navigator', 'process', 'setInterval', 'clearInterval', 'fetch', code);
+  const load = new Function('require', 'module', 'exports', 'window', 'navigator', 'process', 'setInterval', 'clearInterval', 'fetch', 'setTimeout', code);
   load(id => { assert.ok(Object.hasOwn(imports, id), `Unexpected real dependency: ${id}`); return imports[id]; },
     module, module.exports, { __TAURI_INTERNALS__: tauriInternals }, { userAgent: 'fixture Tauri' },
     { env: { NEXT_PUBLIC_APP_VERSION: '0.0.1' } },
     callback => { intervals.add(callback); return callback; }, callback => intervals.delete(callback),
-    () => { throw new Error('Unexpected real fetch'); });
+    () => { throw new Error('Unexpected real fetch'); },
+    callback => setImmediate(callback)); // 잠금 재시도 간격(3초)을 시험에서는 바로 넘긴다
   const render = instance => {
     active = instance; cursor = 0; instance.effects = [];
     instance.result = module.exports.useAppUpdate();
@@ -83,7 +90,7 @@ function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {}, 
     render,
     unmount(instance) { for (const cell of instance.slots) cell.cleanup?.(); instances.delete(instance); },
     close() { for (const instance of [...instances]) this.unmount(instance); assert.equal(intervals.size, 0); },
-    counts: () => ({ checks, downloads, relaunches }),
+    counts: () => ({ checks, downloads, relaunches, claims, releases }),
     order: () => [...order],
     setCheck(fn) { checkImpl = fn; },
     nextDownload() { download = deferred(); return download; },
@@ -295,4 +302,53 @@ test('admin-owned location: reported, but install is still attempted (macOS may 
   // 암호 창을 취소하면 업데이터는 errno 없이 이 문구만 준다 — 이유가 빠지면 카드에 "설치하지 못했어요"만 남는다
   assert.equal(f.render(hook).phase, 'error');
   assert.deepEqual(f.render(hook).installError, { reason: 'needs_admin', raw: 'Failed to move the new app into place' });
+});
+
+// 셸 자동 업데이트(2026-11-04)와 같은 때 두 번 설치하지 않는다 — 잠금은 셸 한 곳(update_install_claim)이다.
+test('shell auto-update holds the install: the badge waits, then installs once the shell lets go', async t => {
+  let answers = [false, false, true];
+  const f = fixture({ claim: async () => answers.shift() ?? true }); t.after(() => f.close());
+  const hook = f.mount(); await flush();
+  const install = hook.result.install();
+  assert.equal(f.render(hook).phase, 'installing', '기다리는 동안에도 설치 중으로 보인다');
+  for (let i = 0; i < 10 && f.counts().downloads === 0; i++) await flush();
+  assert.equal(f.counts().claims, 3);
+  assert.equal(f.counts().downloads, 1, '셸이 놓은 뒤에만 내려받는다');
+  f.resolveDownload(); await install;
+  assert.equal(f.render(hook).phase, 'ready');
+  assert.equal(f.counts().releases, 0, '설치했으면 놓지 않는다 — 셸이 같은 판을 다시 설치하지 않게');
+});
+
+test('shell never lets go: the badge gives up with an error and downloads nothing', async t => {
+  const f = fixture({ claim: async () => false }); t.after(() => f.close());
+  const hook = f.mount(); await flush();
+  assert.equal(await hook.result.install(), false);
+  assert.equal(f.counts().downloads, 0);
+  assert.equal(f.counts().claims, 400);
+  assert.equal(f.render(hook).phase, 'error');
+  assert.equal(f.render(hook).installError.raw, 'automatic update in progress');
+});
+
+test('old shell without the claim command installs as before', async t => {
+  const f = fixture({ claim: async () => { throw new Error('command update_install_claim not found'); } }); t.after(() => f.close());
+  const hook = f.mount(); await flush();
+  const install = hook.result.install(); await flush(); f.resolveDownload(); await install;
+  assert.equal(f.counts().downloads, 1);
+  assert.equal(f.render(hook).phase, 'ready');
+});
+
+test('a failed download releases the claim; a failed relaunch keeps it', async t => {
+  for (const failsAt of ['download', 'relaunch']) {
+    await t.test(failsAt, async () => {
+      const f = fixture({ relaunch: async () => { if (failsAt === 'relaunch') throw new Error('fixture relaunch failed'); } });
+      try {
+        const hook = f.mount(); await flush();
+        const install = hook.result.install(); await flush();
+        if (failsAt === 'download') f.rejectDownload(); else f.resolveDownload();
+        await install; await flush();
+        assert.equal(f.counts().claims, 1);
+        assert.equal(f.counts().releases, failsAt === 'download' ? 1 : 0);
+      } finally { f.close(); }
+    });
+  }
 });

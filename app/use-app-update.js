@@ -30,6 +30,20 @@ const publishInstallError = (error) => {
   for (const notify of installErrorListeners) notify(error);
 };
 
+// 앱 셸의 자동 업데이트(src-tauri/src/auto_update.rs)와 같은 때 두 번 설치하지 않도록 설치 잠금은 셸 한 곳에 있다.
+// 셸이 내려받거나 설치하는 중이면 잡기가 false다 — 잠시 뒤 다시 잡는다(셸이 설치하면 앱이 다시 시작되고, 미루면 놓는다).
+// 이 명령이 없는 옛 셸(같은 버전 상주 서버에 붙은 옛 앱)은 거절되므로 잠금 없이 예전처럼 설치한다.
+// @tauri-apps/api/core를 불러오지 않고 내부 invoke를 쓴다(update_location과 같은 이유 — 재시작 조각을 공개본과 같게 유지).
+const CLAIM_RETRY_MS = 3000;
+const CLAIM_MAX_TRIES = 400; // 20분 — 셸이 큰 묶음을 느린 망에서 받는 동안
+const claimInstall = async () => {
+  try { return (await window.__TAURI_INTERNALS__.invoke('update_install_claim')) !== false; }
+  catch { return true; }
+};
+const releaseInstall = () => {
+  Promise.resolve().then(() => window.__TAURI_INTERNALS__.invoke('update_install_release')).catch(() => {});
+};
+
 // 데스크톱 셸 판별 — Tauri 런타임이면 자가 업데이트 경로가 존재한다.
 // export — 설정의 시스템 권한 카드 등이 재사용(판별 로직 복사본 증식 방지, 분리 검수 L2).
 export const inTauri = () => typeof window !== 'undefined'
@@ -96,6 +110,16 @@ export function useAppUpdate() {
     publishInstallError(null);
     publishInstallPhase('installing');
     const message = (e) => String(e?.message ?? e ?? '').slice(0, 300);
+    let claimed = false;
+    for (let i = 0; i < CLAIM_MAX_TRIES && !claimed; i++) {
+      claimed = await claimInstall();
+      if (!claimed) await new Promise((r) => setTimeout(r, CLAIM_RETRY_MS));
+    }
+    if (!claimed) {
+      publishInstallError({ reason: null, raw: 'automatic update in progress' });
+      publishInstallPhase('error');
+      return false;
+    }
     let processPlugin;
     try {
       // 재시작 모듈은 내려받기 전에 불러 둔다. 본체 화면은 앱 묶음 안 서버가 주므로, 설치로 묶음이 새 버전으로 바뀐 뒤에는
@@ -105,6 +129,7 @@ export function useAppUpdate() {
       processPlugin = await import('@tauri-apps/plugin-process');
       await updRef.current.downloadAndInstall();
     } catch (e) {
+      releaseInstall(); // 설치하지 못했다 — 셸 자동 업데이트가 다음 확인 때 다시 시도할 수 있게
       const raw = message(e);
       publishInstallError({ reason: updateErrorReason(raw), raw });
       publishInstallPhase('error');

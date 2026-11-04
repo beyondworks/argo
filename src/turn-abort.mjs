@@ -101,6 +101,14 @@ export async function withTurnControl(wsId, slug, inherited, run, { source = 'ch
   } finally { registration.release(); }
 }
 
+/** 이 프로세스에서 도는 실행(모든 회사·크루·출처 — 채팅·메신저·텔레그램·루틴·회의실이 모두 registerTurn을 거친다) 수.
+    앱 셸의 자동 업데이트가 "지금 설치(재시작)하면 끊길 일이 있는가"를 묻는 근거다(app/api/app-busy, src-tauri/src/auto_update_policy.rs). */
+export function activeTurnCount() {
+  let n = 0;
+  for (const entries of active.values()) n += entries.size;
+  return n;
+}
+
 /** 이 프로세스에서 이 크루의 실행(어떤 출처든)이 하나라도 도는 중인가. */
 export function crewBusy(wsId, slug) {
   return (active.get(`${wsId}:${slug}`)?.size ?? 0) > 0;
