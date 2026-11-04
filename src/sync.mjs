@@ -215,10 +215,13 @@ export function _walkCacheForTest() { return walkCache; }
 const LOCK_STALE_MS = Math.max(CYCLE_MS * 3, 120_000);
 export const LOCK_FUTURE_SLACK_MS = 60_000; // 잠금 시각이 이만큼 넘게 미래면 시계가 앞서 있던 때의 잔존 — 회수한다(holdSyncLock)
 export const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다 (export: 회귀 테스트용)
-/** 확인된 보유자의 다시 쓰기 간격 — TTL의 1/2(60초). 다른 기기는 글의 ts + TTL까지 살아 있는 리스로 보므로, 다시 쓰기가 한 번 실패해도
-    다음 판정에서 다시 쓸 여유가 남는다. 30초(TTL/4)이던 것을 로그 수집 과금(2026-10-13: 리스 쓰기 한 번 = edge POST + storage POST·Put·AdminDelete)
-    때문에 늘렸다(DB 위생 규칙 2: 신선도 기한의 1/2~1/4). (export: 회귀 테스트용) */
-export const LEASE_RENEW_MS = LEASE_TTL_MS / 2;
+/** 확인된 보유자의 다시 쓰기 간격 — TTL의 2/3(80초). 다른 기기는 글의 ts + TTL까지 살아 있는 리스로 보므로, 다시 쓰기가 한 번 실패해도
+    다음 판정에서 다시 쓸 여유가 남는다(80초 + 판정 간격(8·15초) + 다음 판정 < 내 글 만료 116초). 30초(TTL/4)이던 것을 로그 수집 과금(2026-10-13: 리스 쓰기 한 번 =
+    edge POST + storage POST·Put·AdminDelete) 때문에 60초(TTL/2)로, 2026-11-03 운영 로그(리스 하루 약 12.5만 줄 중 쓰기 34%)로 80초로 늘렸다.
+    대가: 다른 기기가 보는 글 나이 상한이 약 64~75초 → 약 88~95초로 늘어, 두 기기 시계 차이 여유가 약 45~55초 → 약 25~32초로 준다(그보다 크면 다른 기기가
+    만료로 보고 가져가 이 보유자가 다음 읽기(8·15초)에 물러날 때까지 함께 담당 — test/lease-strict-recent-peer). TTL·넘겨받기 대기·확인 기한은 옛 판에도 박혀 있어
+    그대로 둔다. 90초는 시계 여유가 10~20초라 쓰지 않는다. (export: 회귀 테스트용) */
+export const LEASE_RENEW_MS = Math.round(LEASE_TTL_MS * 2 / 3);
 
 // 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선하되,
 // 호스티드 클라이언트에선 serviceCredsAllowed()가 서비스 모드를 금지해 세션이 쓰인다(ensureClient 참조).
@@ -591,13 +594,20 @@ function observeAwake(now = Date.now()) {
 }
 
 /** 다른 기기를 본 적 있음 표지 — 계정마다 { at: 마지막으로 다른 기기의 리스 글을 본 시각, normals: 본 적 있는 일반·우선 기기 id }. 최근 14일 안에 다른 기기를 본
-    계정이면 엄격 판정을 쓴다(아래 isCloudLeader). 파일로 남기는 이유: 세션이 끊긴 채 기동한 맥은 리스를 못 읽어 다른 기기가 있는지 모른다 — 기동 기본값으로 VPS와
+    계정이면 기동·세션 실패 기본값으로 담당이 아니고(아래 isCloudLeader·leaseUnreadable), 최근 6시간(PEER_STRICT_MS) 안에 봤으면 엄격 판정(확인 기한·8초 읽기)을 쓴다. 파일로 남기는 이유: 세션이 끊긴 채 기동한 맥은 리스를 못 읽어 다른 기기가 있는지 모른다 — 기동 기본값으로 VPS와
     겹쳤다(D 3차 검수 MEDIUM-3). 14일: 두 번째 기기를 없앤 뒤에도 표지가 영원히 남아 세션이 끊기면 아무도 실행하지 않던 것(D 4차 검수 MEDIUM-B). 계정별: 다른
     계정으로 로그인하면 그 계정은 본 적 없는 단일 기기다. 기기 로컬 파일이고(동기화 대상 아님, 크루 셸 방어 WS_DOT_FILES) 다른 기기를 볼 때마다 쓰지 않는다 —
-    하루에 한 번 또는 처음 보는 일반 기기가 생길 때만. */
+    한 시간에 한 번(PEER_TOUCH_SAVE_MS, 약한 표지는 하루) 또는 처음 보는 일반 기기가 생길 때만. */
 const PEER_FILE = () => join(WS_ROOT, '.lease-peer.json');
 const PEER_FRESH_MS = 14 * 86_400_000;
 const PEER_SAVE_MS = 86_400_000;
+/** 엄격 판정(확인 기한 18초·8초 읽기)을 켜는 표지 나이 — 살아 있는 다른 기기의 리스 글을 이 시간 안에 봤을 때만(2026-11-03 운영 로그: 기기가 하나뿐인 계정이 14일 표지 때문에
+    8초로 읽어 하루 약 9.4천 줄). 지나면 단일 기기 규칙(15초 읽기, 내 글 만료 전까지 담당)으로 돌아가고, 다른 기기의 살아 있는 글을 다시 보는 판정부터 바로 엄격 판정이다.
+    대가(검수 판정 대상): 6시간 넘게 다른 기기를 못 본 보유자의 리스 GET이 계속 실패하는 동안 더 높은 역할의 기기가 돌아와 가져가면, 엄격 판정이면 확인 기한(18초)에
+    물러났을 것을 내 글 만료(ts + TTL − 4초)까지 담당으로 남아 최대 약 90초 함께 담당이 된다(지금 단일 기기와 같은 모양 — test/lease-strict-recent-peer). (export: 회귀 테스트용) */
+export const PEER_STRICT_MS = 6 * 3_600_000;
+/** 표지 시각을 파일에 다시 쓰는 간격 — 다시 켜진 뒤에도 6시간 판정이 맞게 한 시간에 한 번(기기 로컬 파일 하나, 요청 0). 약한 표지는 14일 판정뿐이라 하루 그대로. */
+const PEER_TOUCH_SAVE_MS = 3_600_000;
 const PEER_NORMALS_MAX = 8;
 if (!leaseState.peers) {
   try {
@@ -620,7 +630,7 @@ function notePeer(doc, now = Date.now()) {
   e.at = now;
   let fresh = false;
   if (docRank(doc) >= ROLE_RANK.normal && !e.normals.includes(String(doc.deviceId))) { e.normals = [...e.normals, String(doc.deviceId)].slice(-PEER_NORMALS_MAX); fresh = true; }
-  if (fresh || now - ((leaseState.peersSavedAt ??= {})[acct] || 0) >= PEER_SAVE_MS) {
+  if (fresh || now - ((leaseState.peersSavedAt ??= {})[acct] || 0) >= PEER_TOUCH_SAVE_MS) {
     leaseState.peersSavedAt[acct] = now;
     writeJsonAtomic(PEER_FILE(), { v: 2, accounts: leaseState.peers }).catch(() => {});
   }
@@ -642,8 +652,15 @@ function noteWeakPeer(now = Date.now()) {
     writeJsonAtomic(PEER_FILE(), { v: 2, accounts: leaseState.peers }).catch(() => {});
   }
 }
-/** 엄격 판정을 쓰는가 — 예비 기기(늘 다른 기기와 함께 쓴다)이거나 이 계정이 최근 14일 안에 다른 기기를 본 기기. */
-const strictLease = () => leaseRole() === 'standby' || !!peerSeen();
+/** 엄격 판정을 쓰는가 — 예비 기기(늘 다른 기기와 함께 쓴다)이거나 이 계정이 최근 6시간(PEER_STRICT_MS) 안에 살아 있는 다른 기기를 본 기기. */
+const strictLease = (now = Date.now()) => {
+  if (leaseRole() === 'standby') return true;
+  const e = peerSeen(now);
+  return !!(e && now - (Number(e.at) || 0) < PEER_STRICT_MS);
+};
+/** 14일 표지 — 예비 기기이거나 이 계정이 최근 14일 안에 살아 있는 다른 기기를 본 기기. 기동·세션 실패 기본값(담당 아님)과 텔레그램 혼자 모드 판정은 이것으로 본다
+    (엄격 판정을 6시간으로 줄이기 전과 같다). */
+const peerMarked = (now = Date.now()) => leaseRole() === 'standby' || !!peerSeen(now);
 /** 단일 기기의 기동 대기 — 첫 리스 판정이 끝날 때까지(성공이든 실패든, 보통 1초 안) 담당이 아니다. 그 판정이 다른 기기의 리스를 보면 엄격 판정으로 넘어가
     맥 앱이 켜지는 순간 VPS와 겹치지 않는다(D 1차 검수). 세션 실패면 배포본처럼 담당이고, 읽기 오류면 담당이 아니다(leaseUnreadable — 1초 뒤 한 번 더 읽는다).
     판정이 걸려도(30초 시간 초과) 이 시간 뒤에는 담당이다(걸린 읽기가 오류로 끝나면 그때 내려놓는다). */
@@ -666,7 +683,8 @@ export const shouldYieldAcquire = (runnerUsable, yieldSince, now = Date.now()) =
       지나 스스로 물러난다 — 넘겨받는 쪽이 대기(HANDOVER_WAIT_MS)를 마칠 때 앞 담당은 이미 아니다.
     · 단일 기기(다른 기기를 본 적 없음): 배포본처럼 표시(leader)를 따른다. 리스를 못 읽어도 표시를 바꾸지 않는다. 다만
       - 보유자는 내 리스 글이 만료되기 전(마지막 쓰기 + TTL − 여유)까지만이다 — 갱신하지 못하면(세션 끊김·네트워크) 만료 뒤 다른 기기가 가져간다. 맥 우선·서버 예비에서
-        맥은 서버가 한 번 맡기 전까지 서버의 글을 본 적이 없어 단일 기기로 판정된다. 리스 판정은 동기화와 따로 돌고 보유자는 60초(LEASE_RENEW_MS)마다 다시 쓰므로 긴 동기화로 꺼지지 않는다.
+        맥은 서버가 한 번 맡기 전까지 서버의 글을 본 적이 없어 단일 기기로 판정된다. 리스 판정은 동기화와 따로 돌고 보유자는 80초(LEASE_RENEW_MS)마다 다시 쓰므로 긴 동기화로 꺼지지 않는다.
+      - 다른 기기를 14일 안에 봤지만 6시간(PEER_STRICT_MS) 안에는 못 봤으면 단일 기기 규칙이되, 확인된 담당(ownedAt > 0)만이다(기동·세션 실패 기본값은 아님).
       - 기동 첫 리스 판정이 끝나기 전(최대 SOLO_BOOT_WAIT_MS)과, 잠들었다 깬 뒤 리스를 다시 확인하기 전은 아니다 — 그 사이 다른 기기가 처음으로 맡았을 수 있다
         (맥 앱이 켜지는 순간·깬 직후 첫 스케줄러 틱이 낡은 표시로 루틴을 다시 돌리지 않게).
     · 동기화 꺼짐(기기 세션 없음·ARGO_SYNC=0) = 단일 기기라 담당 — 예비 기기만 아니다(맥이 담당인지 알 수 없다). */
@@ -674,8 +692,9 @@ export function isCloudLeader(now = Date.now()) {
   // 확정 무료 = 이 기기에서만(planIsFreeLocal) — 클라우드 리스를 쓰지 않으므로 동기화 off와 같은 판정(무료 플랜은 기기 1대).
   if (!syncOn() || planIsFreeLocal()) return leaseRole() !== 'standby';
   if (!leaseState.leader) return false;
-  if (strictLease()) return now < (leaseState.validUntil || 0);
-  if (!(leaseState.ownedAt > 0) && weakPeerSeen(now)) return false; // 약한 표지: 확인된 담당만(기동·세션 실패 기본값은 배포본의 엄격 판정처럼 아님 — P9-b)
+  if (strictLease(now)) return now < (leaseState.validUntil || 0);
+  // 14일 표지·약한 표지: 확인된 담당만(기동·세션 실패 기본값은 배포본의 엄격 판정처럼 아님 — P9-b, 6시간 넘은 14일 표지도 같다)
+  if (!(leaseState.ownedAt > 0) && (peerMarked(now) || weakPeerSeen(now))) return false;
   observeAwake();
   if ((awake.wokeAt || 0) > (leaseState.checkedAt || 0)) return false;
   if (leaseState.ownedAt > 0) return now < leaseState.ownedAt + LEASE_TTL_MS - LEASE_CONFIRM_MARGIN_MS;
@@ -717,7 +736,7 @@ function dropLease() {
     처음 만나는 맥이 리스를 못 읽은 채 기동 기본값으로 VPS와 함께 담당이던 것(D 4차 검수 MEDIUM-A: GET만 실패 128.7초, 첫 읽기 500에 7.8초). */
 function leaseUnreadable(line) {
   const strict = strictLease();
-  const keep = (!strict && !line && !weakPeerSeen()) || holdsLeaseOnWriteFailure(leaseState); // 약한 표지면 세션 실패 예외도 없다(P9-b — 배포본의 엄격 판정과 같다)
+  const keep = (!strict && !line && !weakPeerSeen() && !peerMarked()) || holdsLeaseOnWriteFailure(leaseState); // 14일 표지·약한 표지면 세션 실패 예외도 없다(P9-b — 배포본의 엄격 판정과 같다)
   if (line) noteOnce('lease-read', `[argo] ${line} — ${keep ? (strict ? '보유 리스: 확인 기한 안에서만 리더 유지(쓰기 없음)' : '보유 리스: 내 글 만료 전까지 리더 유지(쓰기 없음)') : '이번 판정 보류(담당 아님·쓰기 없음)'}`);
   if (!keep) { leaseState.leader = false; leaseState.ownedAt = 0; leaseState.validUntil = 0; }
   leaseState.checkedAt = Date.now();
@@ -809,7 +828,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 넘겨받기 확인 — 남의 새 리스를 가져오며 쓴 내 글이 HANDOVER_WAIT_MS 동안 그대로면, 앞 담당은 그 사이 이 글을 읽고 물러났거나 확인 기한이 지나 스스로 담당을 놓았다.
   // 이제 담당을 시작한다. 그 시간이 지나기 전에는 읽기만 하고 쓰지도 담당하지도 않는다(nudge로 주기가 빨라져도 대기가 줄지 않게 — HANDOVER_WAIT_MS 주석).
   // 내 글(토큰)이 그대로일 때만이다 — 같은 기기 id라도 다른 토큰이면(재시작 경쟁의 다른 프로세스) 넘겨받은 것으로 치지 않고 아래 획득을 다시 거친다.
-  // 다시 쓰지 않는다(쓰기 합계 1 — DB 위생). 보유 시각은 그 글을 쓴 시각이다: 60초 갱신 규칙(LEASE_RENEW_MS)의 기준.
+  // 다시 쓰지 않는다(쓰기 합계 1 — DB 위생). 보유 시각은 그 글을 쓴 시각이다: 80초 갱신 규칙(LEASE_RENEW_MS)의 기준.
   if (live && cur.deviceId === me && leaseState.pending && cur.token === leaseState.pending.token) {
     if (Date.now() - leaseState.pending.ts < HANDOVER_WAIT_MS) { leaseState.checkedAt = Date.now(); return; }
     leaseState.token = leaseState.pending.token;
@@ -828,7 +847,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 기기의 잔존 리스가 fresh해도 "갱신"이 아니라 양보 판정을 1회 거친다 — 앱 재시작·재부팅으로 러너 없는
   // 리더가 원상복구되던 우회 차단. 진짜 보유 프로세스(ownedAt>0)의 갱신은 막지 않는다(교대 요동 방지).
   const acquiring = !(live && cur?.deviceId === me && leaseState.ownedAt > 0);
-  // 확인된 보유자가 LEASE_RENEW_MS(60초) 안에 썼으면 다시 쓰지 않는다 — 읽기는 매 판정 해서 다른 기기의 탈취·경합은 그대로 안다(검수 #689 M2).
+  // 확인된 보유자가 LEASE_RENEW_MS(80초) 안에 썼으면 다시 쓰지 않는다 — 읽기는 매 판정 해서 다른 기기의 탈취·경합은 그대로 안다(검수 #689 M2).
   // 동기화 주기(8초)마다 업서트하던 것이 storage.objects에 죽은 행을 쌓았다(2026-09-23 DB 점검: 기기 25대 × 분당 7.5회).
   if (!acquiring && leaseState.leader && Date.now() - leaseState.ownedAt < LEASE_RENEW_MS) { leaseState.checkedAt = Date.now(); return; }
   if (acquiring && shouldYieldAcquire(runnerUsable, leaseState.yieldSince)) {
@@ -924,7 +943,7 @@ const CLAIM_RENEW_SLACK_MS = 2_000;
     2026-10-13 로그 수집 과금). (export: 회귀 테스트용) */
 export const CLAIM_REWRITE_MS = 40_000;
 /* ─── 혼자 쓰는 기기의 긴 클레임(2026-10-31 로그 수집 126% — 토큰 20개 계정 하나가 파일마다 약 1.8분에 한 번 다시 써 2시간에 약 1,320회, 한 기기·한 프로세스) ───
-   다른 기기의 살아 있는 리스를 14일 안에 본 적 없고(strictLease 아님 — 기기 1대이거나, 따라가는 기기가 이 기기의 리스를 보고 쓰지 않아 이 기기가 다른 기기를 못 본 경우)
+   다른 기기의 살아 있는 리스를 14일 안에 본 적 없고(peerMarked 아님 — 기기 1대이거나, 따라가는 기기가 이 기기의 리스를 보고 쓰지 않아 이 기기가 다른 기기를 못 본 경우)
    확인된 리스 보유자인 기기는 클레임을 '리스에 묶인 긴 글'로 쓴다: { …, lease: true, ttl }. 다시 쓰기는 CLAIM_SOLO_REWRITE_MS마다, 판정(목록 1회)은 CLAIM_SOLO_RENEW_MS마다.
    · 쓰는 쪽: 긴 소유 상한(ttl)은 지금 혼자 모드일 때만(claimSoloMode — 리스 보유가 끊기면 즉시 종전 TTL로) 쓴다(PR #1197 검수 I-1: 리스가 끊긴 뒤에도 20분 동안 mine이라 남이 인수하면 겹쳤다).
    · 읽는 쪽(새 판): 그 글을 '글 주인이 지금 살아 있는 리스 보유자일 때만' ts + ttl까지 유효로 본다(claimTtlFor — 자기 리스 판정이 이미 읽은 leaseState.holder라 추가 요청 0).
@@ -945,9 +964,9 @@ export function claimTtlFor(cur, leaseHolder, now = Date.now(), { leaseKnown = t
   return leaseHolder?.deviceId && leaseHolder.deviceId === cur.deviceId && now - Number(leaseHolder.ts) < LEASE_TTL_MS ? long : TG_CLAIM_TTL_MS;
 }
 const leaseKnownNow = (now = Date.now()) => now - (Number(leaseState.holderReadAt) || -Infinity) < LEASE_TTL_MS;
-/** 이 기기가 혼자 모드로 클레임을 쓰는가 — 다른 기기를 14일 안에 본 적 없고(strictLease 아님) 내 리스 글이 TTL 안인 확인된 보유자. 추가 요청 0. */
+/** 이 기기가 혼자 모드로 클레임을 쓰는가 — 다른 기기를 14일 안에 본 적 없고(peerMarked 아님 — 엄격 판정의 6시간 기준과 따로 둔다) 내 리스 글이 TTL 안인 확인된 보유자. 추가 요청 0. */
 function claimSoloMode(now = Date.now()) {
-  return !strictLease() && !!leaseState.leader && leaseState.ownedAt > 0 && now < leaseState.ownedAt + LEASE_TTL_MS - LEASE_CONFIRM_MARGIN_MS;
+  return !peerMarked(now) && !!leaseState.leader && leaseState.ownedAt > 0 && now < leaseState.ownedAt + LEASE_TTL_MS - LEASE_CONFIRM_MARGIN_MS;
 }
 /** 내 클레임 상태 st의 소유 기간 — 긴 글(st.ttl > TTL)은 지금 혼자 모드일 때만 그 ttl, 아니면 TG_CLAIM_TTL_MS(검수 I-1). 클레임을 돌린 적 없는 프로세스(상태 파일로만 판정)는
     쓴 프로세스가 남긴 혼자 모드 기한(st.soloUntil = 그 판정 때 내 리스 글 만료 − 여유)으로 본다. */
@@ -2690,7 +2709,7 @@ async function leaseTick() {
     한 주기(8초) 늦어지지 않게(D 4차 검수: 약 9.5초). 요청은 기동 때 한 번만 1건 늘어난다. */
 const BOOT_RETRY_MS = 1_000;
 /** 단일 기기 보유자의 리스 읽기 간격(2026-10-13 로그 수집 과금 — 리스 읽기 한 번 = edge GET + storage GET 로그 2줄, 계정 64곳 중 61곳이 기기 한 대).
-    다른 기기를 본 적 없는 계정(엄격 판정 아님)의 확인된 보유자만 CYCLE_MS(8초) 대신 이 간격으로 읽는다. 엄격 판정(다른 기기를 본 계정·예비 기기)은
+    엄격 판정이 아닌 계정(다른 기기를 6시간 안에 못 봄)의 확인된 보유자만 CYCLE_MS(8초) 대신 이 간격으로 읽는다. 엄격 판정(다른 기기를 6시간 안에 본 계정·예비 기기)은
     확인 기한(LEASE_CONFIRM_VALID_MS) 때문에 그대로 CYCLE_MS다. 상한은 넘겨받기 대기(HANDOVER_WAIT_MS)보다 LEASE_SOLO_SLACK_MS 짧게:
     더 높은 역할의 기기(argo run 우선)가 이 보유자의 리스를 가져갈 때, 그 기기는 옛 버전이어도 HANDOVER_WAIT_MS를 기다린 뒤 담당을 시작하므로
     이 보유자는 그 안에 남의 글을 읽고 물러난다(겹침 0). 운영 값 15초(22초 − 7초). 짧은 주기 시험(ARGO_SYNC_CYCLE_MS)에서도 같은 관계가 유지된다.

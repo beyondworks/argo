@@ -310,7 +310,7 @@ test('다른 기기의 리스 글을 보면 데이터 폴더에 계정별 표지
   assert.deepEqual(saved.accounts[ACCT].normals, ['mac-a'], '본 적 있는 일반 기기');
 });
 
-test('표지는 볼 때마다 메모리의 시각만 고치고 파일은 하루에 한 번(또는 처음 보는 일반 기기)만 쓴다 — 리스 판정(8초)마다 쓰지 않게', async () => {
+test('표지는 볼 때마다 메모리의 시각만 고치고 파일은 한 시간에 한 번(또는 처음 보는 일반 기기)만 쓴다 — 리스 판정(8초)마다 쓰지 않게(2026-11-03 하루 → 한 시간: 엄격 판정 6시간 기준)', async () => {
   rmSync(PEER_FILE, { force: true });
   const f = fakeClient(fresh('mac-a')); _setSyncClientForTest(f.client); reset({ leader: false });
   await renewLease('owner-k2', { runnerUsable: true });
@@ -318,8 +318,8 @@ test('표지는 볼 때마다 메모리의 시각만 고치고 파일은 하루�
   await new Promise((r) => setTimeout(r, 20));
   for (let i = 0; i < 3; i++) await renewLease('owner-k2', { runnerUsable: true });
   await new Promise((r) => setTimeout(r, 50));
-  assert.equal((await readPeerFile()).accounts[ACCT].at, first, '같은 날 다시 본 것은 쓰지 않는다');
-  assert.ok(lease().peers[ACCT].at > first, '메모리 시각은 고친다(14일 판정)');
+  assert.equal((await readPeerFile()).accounts[ACCT].at, first, '한 시간 안에 다시 본 것은 쓰지 않는다');
+  assert.ok(lease().peers[ACCT].at > first, '메모리 시각은 고친다(14일·6시간 판정)');
   lease().peersSavedAt[ACCT] -= 25 * 3_600_000; // 마지막으로 쓴 지 하루가 넘었다
   await renewLease('owner-k2', { runnerUsable: true });
   assert.ok((await waitPeerFile((d) => d.accounts[ACCT].at > first)).accounts[ACCT].at > first, '하루가 지나면 고쳐 쓴다');
@@ -327,10 +327,10 @@ test('표지는 볼 때마다 메모리의 시각만 고치고 파일은 하루�
   assert.deepEqual((await waitPeerFile((d) => d.accounts[ACCT].normals.length === 2)).accounts[ACCT].normals, ['mac-a', 'mac-b'], '처음 보는 일반 기기는 바로 쓴다');
 });
 
-test('표지는 최근 14일 안에 이 계정이 다른 기기를 봤을 때만 엄격 판정을 쓴다 — 두 번째 기기를 없앴거나 다른 계정으로 로그인했으면 단일 기기(배포본처럼 담당)', () => {
+test('표지는 최근 14일 안에 이 계정이 다른 기기를 봤을 때만 기동 기본값을 막는다(엄격 판정은 6시간 — test/lease-strict-recent-peer) — 두 번째 기기를 없앴거나 다른 계정으로 로그인했으면 단일 기기(배포본처럼 담당)', () => {
   reset({ checkedAt: Date.now() });
   lease().peers = { [ACCT]: { at: Date.now() - 13 * 86_400_000, normals: ['vps'] } };
-  assert.equal(isCloudLeader(), false, '13일 전에 본 기기 — 엄격 판정(확인 전 담당 아님)');
+  assert.equal(isCloudLeader(), false, '13일 전에 본 기기 — 14일 표지(확인 전 담당 아님)');
   lease().peers = { [ACCT]: { at: Date.now() - 15 * 86_400_000, normals: ['vps'] } };
   assert.equal(isCloudLeader(), true, '15일 동안 다른 기기를 못 봤다 — 단일 기기로 돌아간다(세션이 끊겨도 아무도 실행하지 않는 일이 없게, D 4차 검수 MEDIUM-B)');
   lease().peers = { 'someone-else': { at: Date.now(), normals: ['vps'] } };
