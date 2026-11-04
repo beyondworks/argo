@@ -85,10 +85,12 @@ pub fn update_install_release() {
 #[cfg(all(desktop, any(target_os = "macos", target_os = "windows")))]
 #[derive(Default)]
 struct State {
-    /// 받아 둔 판과 그 파일(서명 검증 끝).
-    ready: Option<(Update, Vec<u8>)>,
-    /// 이 버전을 처음 받아 둔 시각 — 다시 확인해도 같은 버전이면 이어 쓴다(창 사용 중 24시간 상한이 6시간마다 0으로 돌아가지 않게, 검수 중요 1).
-    ready_since: Option<(String, Instant)>,
+    /// 확인으로 찾은 새 판(메타데이터만). 파일은 설치하기로 정한 순간에만 받는다 — 며칠 미뤄도 수백 MB를 메모리에 들고 있지 않게(검수 N-4).
+    found: Option<Update>,
+    /// 받은 파일(서명 검증 끝) — 받는 사이 작업이 시작돼 설치를 미룬 경우에만 남고, 다음 확인(CHECK_EVERY) 때 버린다.
+    bytes: Option<Vec<u8>>,
+    /// 이 버전을 처음 찾은 시각 — 다시 확인해도 같은 버전이면 이어 쓴다(창 사용 중 24시간 상한이 6시간마다 0으로 돌아가지 않게).
+    found_since: Option<(String, Instant)>,
     /// 마지막으로 새 판을 확인한 시각.
     checked_at: Option<Instant>,
     unknown_since: Option<Instant>,
@@ -130,71 +132,8 @@ fn log(msg: &str) {
 }
 
 #[cfg(all(desktop, any(target_os = "macos", target_os = "windows")))]
-fn round(app: &AppHandle, st: &mut State) -> Duration {
-    let enabled = enabled_now(app);
-    let location_blocked = crate::update_location::update_location().blocks_auto_install();
-    // 꺼짐·설치 위치 문제는 네트워크를 쓰기 전에 거른다 — 같은 판단 함수로
-    let pre = Facts { enabled, location_blocked, claimed_elsewhere: false, work: Work::NoServer, window_in_use: false, waiting: Duration::ZERO, unknown_for: Duration::ZERO };
-    if let Decision::Skip(why) = policy::decide(&pre) {
-        log(&format!("skip ({why})"));
-        st.ready = None;
-        return policy::CHECK_EVERY;
-    }
-    if matches!(*CLAIM.lock().unwrap_or_else(|e| e.into_inner()), Some((Holder::Installed, _))) {
-        return policy::CHECK_EVERY;
-    }
-    // 새 판 확인 — 받아 둔 판이 없거나, 마지막 확인에서 CHECK_EVERY가 지났을 때만. 같은 버전이면 받아 둔 파일을 그대로 쓴다.
-    if st.ready.is_none() || st.checked_at.map_or(true, |at| at.elapsed() >= policy::CHECK_EVERY) {
-        let found = app
-            .updater_builder()
-            .timeout(AUTO_DOWNLOAD_TIMEOUT)
-            .build()
-            .map_err(|e| e.to_string())
-            .and_then(|u| tauri::async_runtime::block_on(u.check()).map_err(|e| e.to_string()));
-        let update = match found {
-            Ok(Some(u)) => Some(u),
-            Ok(None) => {
-                st.ready = None; // 공개판이 내려갔으면(되돌림) 받아 둔 것도 버린다
-                st.checked_at = Some(Instant::now());
-                return policy::CHECK_EVERY;
-            }
-            Err(e) => {
-                log(&format!("check failed: {e}"));
-                if st.ready.is_none() {
-                    return policy::CHECK_EVERY;
-                }
-                // 확인만 실패(오프라인) — 이미 받아 둔 판으로 아래 판단을 이어간다
-                None
-            }
-        };
-        st.checked_at = Some(Instant::now());
-        let changed = update.filter(|u| !st.ready.as_ref().is_some_and(|(r, _)| r.version == u.version));
-        if let Some(update) = changed {
-            st.ready = None;
-            if !claim(Holder::Auto) {
-                log("webview is installing — will look again");
-                return policy::RETRY_DEFERRED;
-            }
-            let bytes = tauri::async_runtime::block_on(update.download(|_, _| {}, || {}));
-            release(Holder::Auto);
-            match bytes {
-                Ok(b) => {
-                    log(&format!("downloaded {} ({} bytes, signature verified)", update.version, b.len()));
-                    if !st.ready_since.as_ref().is_some_and(|(v, _)| *v == update.version) {
-                        st.ready_since = Some((update.version.clone(), Instant::now()));
-                    }
-                    st.ready = Some((update, b));
-                }
-                Err(e) => {
-                    // 서명 실패·네트워크 오류·시간 초과 — 설치하지 않고 다음 확인 때 처음부터
-                    log(&format!("download failed ({}): {e}", update.version));
-                    st.checked_at = None;
-                    return policy::CHECK_EVERY;
-                }
-            }
-        }
-    }
-    let waiting = st.ready_since.as_ref().map(|(_, at)| at.elapsed()).unwrap_or_default();
+fn facts(app: &AppHandle, st: &mut State, enabled: bool, location_blocked: bool) -> Facts {
+    let waiting = st.found_since.as_ref().map(|(_, at)| at.elapsed()).unwrap_or_default();
     let work = policy::probe_work(Some(SERVER_PORT.load(Ordering::SeqCst)).filter(|p| *p != 0));
     let unknown_for = if work == Work::Unknown {
         st.unknown_since.get_or_insert_with(Instant::now).elapsed()
@@ -202,27 +141,105 @@ fn round(app: &AppHandle, st: &mut State) -> Duration {
         st.unknown_since = None;
         Duration::ZERO
     };
-    let facts = Facts { enabled, location_blocked, claimed_elsewhere: held_by_other(Holder::Auto), work, window_in_use: window_in_use(app), waiting, unknown_for };
-    match policy::decide(&facts) {
-        Decision::Install => install(app, st),
-        Decision::Defer(why) => {
-            log(&format!("deferred ({why})"));
-            policy::RETRY_DEFERRED
-        }
-        Decision::Skip(why) => {
-            log(&format!("skip ({why})"));
-            st.ready = None;
-            policy::CHECK_EVERY
-        }
-    }
+    Facts { enabled, location_blocked, claimed_elsewhere: held_by_other(Holder::Auto), work, window_in_use: window_in_use(app), waiting, unknown_for }
 }
 
 #[cfg(all(desktop, any(target_os = "macos", target_os = "windows")))]
-fn install(app: &AppHandle, st: &mut State) -> Duration {
+fn round(app: &AppHandle, st: &mut State) -> Duration {
+    let enabled = enabled_now(app);
+    let location_blocked = crate::update_location::update_location().blocks_auto_install();
+    // 꺼짐·설치 위치 문제는 네트워크를 쓰기 전에 거른다 — 같은 판단 함수로
+    let pre = Facts { enabled, location_blocked, claimed_elsewhere: false, work: Work::NoServer, window_in_use: false, waiting: Duration::ZERO, unknown_for: Duration::ZERO };
+    if let Decision::Skip(why) = policy::decide(&pre) {
+        log(&format!("skip ({why})"));
+        st.found = None;
+        st.bytes = None;
+        return policy::CHECK_EVERY;
+    }
+    if matches!(*CLAIM.lock().unwrap_or_else(|e| e.into_inner()), Some((Holder::Installed, _))) {
+        return policy::CHECK_EVERY;
+    }
+    // 새 판 확인 — 찾아 둔 판이 없거나 마지막 확인에서 CHECK_EVERY가 지났을 때만(메타데이터 latest.json 한 번, 파일은 받지 않는다)
+    if st.found.is_none() || st.checked_at.map_or(true, |at| at.elapsed() >= policy::CHECK_EVERY) {
+        st.bytes = None; // 받아 둔 파일은 다음 확인까지만 들고 있는다
+        let found = app
+            .updater_builder()
+            .timeout(AUTO_DOWNLOAD_TIMEOUT)
+            .build()
+            .map_err(|e| e.to_string())
+            .and_then(|u| tauri::async_runtime::block_on(u.check()).map_err(|e| e.to_string()));
+        match found {
+            Ok(Some(u)) => {
+                if !st.found_since.as_ref().is_some_and(|(v, _)| *v == u.version) {
+                    st.found_since = Some((u.version.clone(), Instant::now()));
+                }
+                st.found = Some(u);
+                st.checked_at = Some(Instant::now());
+            }
+            Ok(None) => {
+                st.found = None; // 공개판이 내려갔으면(되돌림) 찾아 둔 것도 버린다
+                st.checked_at = Some(Instant::now());
+                return policy::CHECK_EVERY;
+            }
+            Err(e) => {
+                log(&format!("check failed: {e}"));
+                if st.found.is_none() {
+                    return policy::CHECK_EVERY;
+                }
+                st.checked_at = Some(Instant::now()); // 확인만 실패(오프라인) — 찾아 둔 판으로 아래 판단을 이어간다
+            }
+        }
+    }
+    match policy::decide(&facts(app, st, enabled, location_blocked)) {
+        Decision::Install => {}
+        Decision::Defer(why) => {
+            log(&format!("deferred ({why})"));
+            return policy::RETRY_DEFERRED;
+        }
+        Decision::Skip(why) => {
+            log(&format!("skip ({why})"));
+            st.found = None;
+            st.bytes = None;
+            return policy::CHECK_EVERY;
+        }
+    }
+    // 설치하기로 정했다 — 잠금을 잡고 받은 뒤(플러그인이 서명 검증), 받는 사이 작업이 시작됐는지 다시 본다
     if !claim(Holder::Auto) {
         return policy::RETRY_DEFERRED;
     }
-    let Some((update, bytes)) = st.ready.take() else {
+    if st.bytes.is_none() {
+        let Some(update) = st.found.as_ref() else {
+            release(Holder::Auto);
+            return policy::CHECK_EVERY;
+        };
+        match tauri::async_runtime::block_on(update.download(|_, _| {}, || {})) {
+            Ok(b) => {
+                log(&format!("downloaded {} ({} bytes, signature verified)", update.version, b.len()));
+                st.bytes = Some(b);
+            }
+            Err(e) => {
+                // 서명 실패·네트워크 오류·시간 초과 — 설치하지 않고 다음 확인 때 처음부터
+                log(&format!("download failed ({}): {e}", update.version));
+                release(Holder::Auto);
+                st.found = None;
+                st.checked_at = None;
+                return policy::CHECK_EVERY;
+            }
+        }
+        // 잠금은 쥔 채 다시 판단한다 — 자기 잠금은 웹뷰 설치로 보지 않는다(held_by_other)
+        if let Decision::Defer(why) | Decision::Skip(why) = policy::decide(&facts(app, st, enabled, location_blocked)) {
+            release(Holder::Auto);
+            log(&format!("deferred after download ({why})"));
+            return policy::RETRY_DEFERRED;
+        }
+    }
+    install(app, st)
+}
+
+/// 잠금(Holder::Auto)을 쥔 채 부른다.
+#[cfg(all(desktop, any(target_os = "macos", target_os = "windows")))]
+fn install(app: &AppHandle, st: &mut State) -> Duration {
+    let (Some(update), Some(bytes)) = (st.found.take(), st.bytes.take()) else {
         release(Holder::Auto);
         return policy::CHECK_EVERY;
     };
@@ -235,6 +252,7 @@ fn install(app: &AppHandle, st: &mut State) -> Duration {
         }
         Err(e) => {
             release(Holder::Auto);
+            st.checked_at = None;
             log(&format!("install failed: {e}"));
             policy::CHECK_EVERY
         }
