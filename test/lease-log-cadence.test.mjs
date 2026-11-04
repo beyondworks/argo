@@ -74,10 +74,10 @@ async function idle(owner, { stepMs, durMs }) {
   return leaderEach;
 }
 
-/* ── L2: 보유자의 다시 쓰기 60초, 갱신 때 확인 읽기 없음 ── */
+/* ── L2: 보유자의 다시 쓰기 80초(LEASE_RENEW_MS — 60초에서 2026-11-03 늘림, test/lease-strict-recent-peer), 갱신 때 확인 읽기 없음 ── */
 
 for (const sawPeer of [false, true]) {
-  test(`쉬는 보유자(${sawPeer ? '엄격 판정 — 다른 기기를 본 적 있음' : '단일 기기'}) — 10분 동안 리스 쓰기는 60초에 한 번, 갱신 때 확인 읽기 없음, 담당은 끊기지 않는다`, async () => {
+  test(`쉬는 보유자(${sawPeer ? '엄격 판정 — 다른 기기를 본 적 있음' : '단일 기기'}) — 10분 동안 리스 쓰기는 80초에 한 번, 갱신 때 확인 읽기 없음, 담당은 끊기지 않는다`, async () => {
     mock.timers.enable({ apis: ['Date'], now: Date.now() });
     const f = fakeStore(); _setSyncClientForTest(f.client);
     const owner = `owner-idle-${sawPeer ? 'strict' : 'solo'}`;
@@ -86,11 +86,11 @@ for (const sawPeer of [false, true]) {
     const ticks = each.length;
     const puts = f.calls.byKey.get(`PUT ${LEASE_KEY(owner)}`) || 0;
     const gets = f.calls.byKey.get(`GET ${LEASE_KEY(owner)}`) || 0;
-    assert.ok(puts >= 8 && puts <= 10, `10분 쓰기 ${puts}번 — 60초에 한 번(예전 30초면 약 19번)`);
+    assert.ok(puts >= 6 && puts <= 8, `10분 쓰기 ${puts}번 — 8초 박자에서 80초에 한 번(60초면 9~10번, 예전 30초면 약 19번)`);
     assert.equal(gets, ticks, `읽기 ${gets}번 = 판정 ${ticks}번 — 갱신 뒤 확인 읽기를 하지 않는다`);
     assert.deepEqual(each.filter((x) => !x), [], '담당이 한 번도 끊기지 않는다(엄격 판정의 확인 기한은 읽기가 늘린다)');
     assert.equal(f.get(LEASE_KEY(owner)).token, lease().token, '마지막 글의 토큰 = 메모리 토큰 — 다음 읽기가 확인으로 이어진다');
-    assert.ok(Date.now() - f.get(LEASE_KEY(owner)).ts < LEASE_RENEW_MS + 8_000, '글은 60초 + 한 주기보다 오래되지 않는다(TTL 120초 안)');
+    assert.ok(Date.now() - f.get(LEASE_KEY(owner)).ts < LEASE_RENEW_MS + 8_000, '글은 80초 + 한 주기보다 오래되지 않는다(TTL 120초 안)');
   });
 }
 
@@ -118,7 +118,7 @@ test('리스 만료 경계 — 쉬는 보유자의 글은 다른 기기가 보�
     oldest = Math.max(oldest, Date.now() - f.get(LEASE_KEY(owner)).ts);
     await renewLease(owner, { runnerUsable: true });
   }
-  assert.ok(oldest < LEASE_TTL_MS - 40_000, `다른 기기가 본 가장 오래된 글 ${oldest / 1000}초 — TTL ${LEASE_TTL_MS / 1000}초까지 여유`);
+  assert.ok(oldest <= LEASE_RENEW_MS + 8_000 && oldest <= LEASE_TTL_MS - 32_000, `다른 기기가 본 가장 오래된 글 ${oldest / 1000}초 — TTL ${LEASE_TTL_MS / 1000}초까지 여유 32초 이상(8초 박자·80초 다시 쓰기, 60초일 때는 40초 이상)`);
 });
 
 /* ── T1: 텔레그램 클레임 — 보유자는 60초마다만 다시 쓴다(판정·읽기는 30초) ── */
@@ -294,7 +294,7 @@ test('읽기 간격 — 단일 기기의 확인된 보유자만 15초, 엄격 �
   holder(f, 'owner-iv'); lease().readFailSince = Date.now(); assert.equal(leaseReadInterval(), 8_000, '읽기 실패 중');
 });
 
-test('쉬는 단일 기기 보유자 — 10분 동안 리스 읽기 40번(예전 75번)·쓰기 10번 이하, 담당은 끊기지 않는다', async () => {
+test('쉬는 단일 기기 보유자 — 10분 동안 리스 읽기 40번(예전 75번)·쓰기 6~7번(15초 박자에서 90초마다, 60초 다시 쓰기면 10번), 담당은 끊기지 않는다', async () => {
   mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'owner-solo-loop'; holder(f, owner);
@@ -302,7 +302,7 @@ test('쉬는 단일 기기 보유자 — 10분 동안 리스 읽기 40번(예전
   while (el < 10 * 60_000) { const step = leaseReadInterval(); el += step; mock.timers.tick(step); awakeNow(null); await renewLease(owner, { runnerUsable: true }); each.push(isCloudLeader()); }
   const gets = f.calls.byKey.get(`GET ${LEASE_KEY(owner)}`); const puts = f.calls.byKey.get(`PUT ${LEASE_KEY(owner)}`) || 0;
   assert.equal(gets, 40, `읽기 ${gets}번`);
-  assert.ok(puts >= 8 && puts <= 10, `쓰기 ${puts}번`);
+  assert.ok(puts >= 6 && puts <= 7, `쓰기 ${puts}번`);
   assert.deepEqual(each.filter((x) => !x), []);
 });
 

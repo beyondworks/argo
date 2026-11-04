@@ -98,7 +98,7 @@ test('불변식 — 담당 아닌 간격은 TTL의 1/4 이하, 러너 양보의 
   assert.equal(HANDOVER_WAIT_MS, 22_000); assert.equal(LEASE_CONFIRM_VALID_MS, 18_000);
 });
 
-test('담당의 갱신 주기 — 다른 기기가 있는 계정의 담당은 10분 동안 8초마다 읽고 60초마다 쓰며, 담당이 한 번도 끊기지 않는다', async () => {
+test('담당의 갱신 주기 — 다른 기기가 있는 계정의 담당은 10분 동안 8초마다 읽고 80초마다 쓰며(LEASE_RENEW_MS, 2026-11-03 60초에서 늘림), 담당이 한 번도 끊기지 않는다', async () => {
   mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'o-holder'; asHolder(f, owner);
@@ -106,7 +106,7 @@ test('담당의 갱신 주기 — 다른 기기가 있는 계정의 담당은 10
   assert.deepEqual([...new Set(each.map((x) => x.step))], [8_000], '담당의 판정 간격은 8초뿐');
   assert.deepEqual(each.filter((x) => !x.leader).map((x) => x.t), [], '담당이 끊긴 판정 없음(확인 기한 18초)');
   assert.equal(f.n('GET', KEY(owner)), each.length);
-  const puts = f.n('PUT', KEY(owner)); assert.ok(puts >= 8 && puts <= 10, `쓰기 ${puts}번 — 60초에 한 번`);
+  const puts = f.n('PUT', KEY(owner)); assert.ok(puts >= 6 && puts <= 8, `쓰기 ${puts}번 — 80초에 한 번(60초면 9~10번)`);
 });
 
 test('담당 아닌 기기 — 다른 기기가 60초마다 갱신하는 10분 동안 리스를 30초마다만 읽고, 쓰지 않고, 담당이 되지 않는다', async () => {

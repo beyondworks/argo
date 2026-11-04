@@ -19,6 +19,8 @@ const BUDGET = [
   { name: '1대 혼자·회사 3·토큰 0', tokens: 0, peer: 'none', max: 9, leader: true, mine: 0, need: ['리스 GET', '리스 쓰기', '매니페스트 info'] },
   { name: '1대 혼자·회사 3·토큰 20', tokens: 20, peer: 'none', max: 12, leader: true, mine: 20, need: ['리스 GET', '리스 쓰기', '매니페스트 info', '목록', '클레임 쓰기'] },
   { name: '두 대 계정 담당·회사 3·토큰 20', tokens: 20, peer: 'holder', max: 36, leader: true, mine: 20, need: ['리스 GET', '리스 쓰기', '매니페스트 info', '목록', '클레임 쓰기'] },
+  // 2026-11-03 F: 다른 기기를 7시간 전에 본 계정(14일 표지만)의 담당 — 엄격 판정이 아니라 리스 GET이 단일 기기 박자(15초). 클레임은 14일 표지라 혼자 모드가 아니다(종전 규칙).
+  { name: '7시간 전에 다른 기기를 본 계정 담당·회사 3·토큰 20', tokens: 20, peer: 'stale', max: 31, leader: true, mine: 20, need: ['리스 GET', '리스 쓰기', '매니페스트 info', '목록', '클레임 쓰기'] },
   { name: '두 대 계정 비담당·회사 3·토큰 20', tokens: 20, peer: 'follower', max: 30, leader: false, mine: 0, need: ['리스 GET', '매니페스트 info', '목록', '클레임 GET'] },
 ];
 

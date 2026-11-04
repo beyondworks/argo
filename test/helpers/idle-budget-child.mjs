@@ -2,7 +2,7 @@
 // 실제 supabase-js + 가짜 Supabase(로컬 HTTP)로 돌리고, 가상 시계로 몇십 분을 몇 초에 지나 요청을 경로별로 센다. 요청 1건 = 운영 로그 1줄 이상이라 "HTTP 요청 수"를 센다.
 // 시계: Date·setTimeout·setInterval·performance.now를 함께 가상으로 돌린다(performance.now를 빼면 깨어 있음 판정이 잠들었다 깬 것으로 읽어 리스를 더 자주 읽는다).
 // 시계는 진행 중인 일(요청·파일 입출력)이 끝난 뒤에만 넘긴다 — 느린 러너에서는 실제 시간이 더 걸릴 뿐 세는 값은 같다(app-gate 시험의 20ms 대기 같은 흔들림이 없다).
-// 입력 env BUDGET_CELL = { tokens, peer: 'none'|'holder'|'follower', warmMin, windowMin }. 출력 stdout 마지막 '@@{...}' 한 줄.
+// 입력 env BUDGET_CELL = { tokens, peer: 'none'|'holder'|'stale'|'follower', warmMin, windowMin }. 출력 stdout 마지막 '@@{...}' 한 줄.
 import { mock } from 'node:test';
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -57,8 +57,8 @@ for (const ws of COMPANIES) {
 }
 writeFileSync(join(root, '.device-session.json'), JSON.stringify({ url: fake.url, anonKey: 'anon-fixture', access_token: 'h.p.s', refresh_token: 'rt-0', expires_at: Math.floor(t0 / 1000) + 30 * 86_400, user: { id: UID, email: '' } }), { mode: 0o600 });
 writeFileSync(join(root, '.device-id'), 'budget-mac-0001');
-// 다른 기기를 본 적 있는 계정(엄격 판정) — 담당·비담당 칸
-if (cell.peer !== 'none') writeFileSync(join(root, '.lease-peer.json'), JSON.stringify({ v: 2, accounts: { [UID]: { at: t0, normals: [OTHER] } } }));
+// 다른 기기를 본 적 있는 계정(엄격 판정) — 담당·비담당 칸. 'stale' = 7시간 전에 본 계정(14일 표지만 — 엄격 판정은 6시간, 2026-11-03)
+if (cell.peer !== 'none') writeFileSync(join(root, '.lease-peer.json'), JSON.stringify({ v: 2, accounts: { [UID]: { at: cell.peer === 'stale' ? t0 - 7 * 3_600_000 : t0, normals: [OTHER] } } }));
 
 const LEASE_KEY = `companies/${UID}/_device-lease.json`;
 const putJson = (k, doc) => fake.store.set(k, Buffer.from(JSON.stringify(doc)));

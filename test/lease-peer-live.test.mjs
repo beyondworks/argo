@@ -112,15 +112,16 @@ test('예비 기기(--standby)는 표지와 무관하게 늘 엄격 판정이다
   assert.equal(leaseReadInterval(), 8_000, '예비는 늘 엄격 판정');
 });
 
-test('14일 경계 — 이미 켜진 표지는 본 시각부터 14일 동안 유지되고, 14일이 지나면 단일 기기로 돌아온다(업데이트로 지우지 않는다)', async () => {
+test('14일 경계 — 이미 켜진 표지는 본 시각부터 14일 동안 기동 기본값을 막고(업데이트로 지우지 않는다), 14일이 지나면 단일 기기로 돌아온다. 엄격 판정(8초)은 6시간 안에 본 표지만(2026-11-03 — test/lease-strict-recent-peer)', async () => {
   mock.timers.enable({ apis: ['Date'], now: Date.now() });
-  for (const [ago, strict] of [[14 * DAY - 1_000, true], [14 * DAY + 1_000, false]]) {
+  for (const [ago, marked] of [[14 * DAY - 1_000, true], [14 * DAY + 1_000, false]]) {
     const f = fakeStore(); _setSyncClientForTest(f.client);
     const owner = `o-14d-${ago}`; fresh({ [ACCT]: { at: Date.now() - ago, normals: [OLD] } }); // 업데이트 전 결함으로 켜진 표지(만료 글을 본 시각)
+    assert.equal(isCloudLeader(), !marked, `표지를 본 지 ${Math.round(ago / DAY * 10) / 10}일 → 기동 기본값 ${marked ? '담당 아님' : '담당(배포본처럼)'}`);
     f.set(KEY(owner), { deviceId: ME, token: 'mine', ts: Date.now() - LEASE_TTL_MS - 1 });
     await renewLease(owner, { runnerUsable: true });
     assert.equal(lease().ownedAt > 0, true);
-    assert.equal(strictNow(), strict, `표지를 본 지 ${Math.round(ago / DAY * 10) / 10}일 → ${strict ? '엄격(8초)' : '단일(15초)'}`);
+    assert.equal(strictNow(), false, `표지를 본 지 ${Math.round(ago / DAY * 10) / 10}일 — 6시간 넘었으니 단일 기기 간격`);
   }
 });
 
