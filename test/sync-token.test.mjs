@@ -107,8 +107,10 @@ test('발급 스크립트 → 실제 파일 판정 → 회수하면 다음 요�
     const token = (await readFile(out, 'utf8')).trim();
     assert.match(token, /^argo_sync_[A-Za-z0-9_-]{43}$/);
     assert.ok(!printed.includes(token), '평문 토큰이 출력되면 안 된다');
-    assert.equal((await stat(out)).mode & 0o777, 0o600, '토큰 파일 600');
-    assert.equal((await stat(join(root, '.sync-tokens.json'))).mode & 0o777, 0o600, '서버 표 600');
+    if (process.platform !== 'win32') { // Windows는 유닉스 권한 비트가 없다(stat이 438=0o666을 준다) — 권한은 맥·리눅스에서만 본다
+      assert.equal((await stat(out)).mode & 0o777, 0o600, '토큰 파일 600');
+      assert.equal((await stat(join(root, '.sync-tokens.json'))).mode & 0o777, 0o600, '서버 표 600');
+    }
     assert.ok(!(await readFile(join(root, '.sync-tokens.json'), 'utf8')).includes(token), '서버 표에는 해시만');
     await assert.rejects(sh('issue', 'hyoil-sync', '--ws', WS, '--out', out), '이미 있으면 --rotate 없이 거절');
 
