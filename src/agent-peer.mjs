@@ -14,6 +14,7 @@
 //    거절한다(fail-closed)** — "에이전트가 아님을 확인한 연결만" 결재·루틴·설정·대화 시작을 바꾼다.
 //      ① 이 서버의 자손 ② 에이전트 표지 env(AGENT_MARK — 서버가 자기 env에 심어 모든 자식이 물려받는다)
 //      ④ 그룹 우두머리가 이 서버·자손·표지 프로세스(agent-group) ⑥(macOS) launchd에 입양된 고아인데 실행 파일이 설치된 앱 묶음 밖(orphan-cli)
+//    예외 하나: ⑥으로만 걸린 요청은 범위가 묶인 동기화 토큰(src/sync-token.mjs, x-argo-sync-token)이 맞으면 통과한다(상시 launchd 작업용).
 //    사람의 클라이언트는 이 중 어디에도 안 걸린다(관찰 2026-10-09: macOS WebKit 네트워크 프로세스·Argo 앱은 launchd 자식이고
 //    실행 파일이 설치된 앱 묶음 안. 터미널 명령·파이프라인은 셸의 자식이라 고아가 아니다).
 //  - 설계 조정(검수 반영): 옛 ③(그룹 우두머리 사망)·⑤(서버와 같은 그룹)은 제거했다. ③은 `echo … | cat | curl -d @-` 같은
@@ -33,6 +34,7 @@ import http from 'node:http';
 import { execFile, ChildProcess } from 'node:child_process';
 import { readdir, readFile, readlink } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
+import { syncTokenAllows } from './sync-token.mjs';
 
 export const AGENT_MARK = 'ARGO_AGENT_PROC';
 // GET이지만 상태를 저장하는 라우트 — 변경처럼 fail-closed로 판정한다(검수 #4). OAuth 복귀 랜딩(브라우저 리다이렉트)이라 사람은 통과.
@@ -329,6 +331,12 @@ export async function denyAgentPeer(req, res, opts = {}) {
   slot.write ??= (opts.classify ?? classifyPeer)(peer, opts).catch((e) => ({ error: e }));
   const v = await slot.write;
   if (v.error) return deny(req, res, 'agent_check_failed', v.error?.code ?? String(v.error?.message ?? v.error).slice(0, 80));
+  // 외부 동기화 통로(src/sync-token.mjs) — ⑥ orphan-cli 고아만, 범위가 묶인 토큰이 맞을 때 그 요청 하나를 통과시킨다.
+  // 자손·표지·에이전트 묶음(①②④)은 토큰이 있어도 여기서 통과하지 않는다. 토큰 판정은 요청마다(소켓 캐시 없음 — 헤더는 요청마다 다르다).
+  if (v.agent && v.reason === 'orphan-cli') {
+    const name = await (opts.syncToken ?? syncTokenAllows)(req).catch(() => null);
+    if (name) { console.info(`[argo] 동기화 토큰 통과(${name}): ${req.method} ${path}`); return false; }
+  }
   return v.agent ? deny(req, res, 'agent_loopback', `pid ${v.pid} ${v.reason}`) : false;
 }
 
