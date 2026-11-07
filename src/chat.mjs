@@ -424,6 +424,15 @@ export function codexForcedRmLine({ runner, gated, lang = 'ko' } = {}) {
     : '- 이 러너(codex)의 셸은 강제 삭제(`rm -f`·`rm -rf`)를 자체 정책으로 거절한다. 결재로 승인된 뒤에도 마찬가지다. 삭제는 위 결재 규칙대로 결재를 먼저 올리고, 승인된 뒤에는 `-f` 없이 `rm -r <경로>`로 지워라. 거절을 피하려고 다른 우회 방법을 쓰지 마라.\n';
 }
 
+/** claude SDK 턴 전용. 첨부를 끄면(sdkEnvFor) 지연 도구 이름 목록이 모델에 가지 않는다 — 없으면 WebFetch 대신 Bash curl로 우회하고,
+    list_routines를 못 찾아 "예약을 확인하지 못했다"고 답하는 것을 실호출로 봤다(2026-11-07). 그래서 크루 도구는 이름까지 적는다. */
+export function sdkToolSearchDirective(lang = 'ko', crewTools = []) {
+  const names = crewTools.map((n) => `mcp__crew__${n}`).join(', ');
+  return lang === 'en'
+    ? `\nFinding tools: only some tools are listed in this turn. If you need one that is not listed, load it with ToolSearch before concluding it is missing or working around it with Bash (for example query "select:WebFetch", or a keyword). Reading a web page is WebFetch, web search is WebSearch, and connected MCP servers are mcp__<name>__*.${names ? ` Argo features: ${names}.` : ''}`
+    : `\n도구 찾기: 이 턴의 도구 목록에는 일부만 보인다. 필요한 도구가 보이지 않으면 없다고 판단하거나 Bash로 우회하기 전에 ToolSearch로 불러와 써라(예: 검색어 "select:WebFetch", 또는 키워드). 웹 페이지 읽기는 WebFetch, 웹 검색은 WebSearch, 연결된 MCP는 mcp__<이름>__* 이다.${names ? ` Argo 기능: ${names}.` : ''}`;
+}
+
 export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, gated = hasTools, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '', source = 'chat', fullAuto = false, standby = leaseRole() === 'standby' } = {}) {
   // 고정 폴더는 등록 목록에도 들어 있다(고정은 등록을 거쳐야 잡힌다) — 그대로 두면 같은 경로를
   // 두 줄이 반복해 "지금 일할 곳"과 "그냥 써도 되는 곳"의 구분이 흐려진다. 그래서 여기서 뺀다.
@@ -2134,7 +2143,7 @@ ${lang === 'en'
   const connectors = await connectorBriefing(wsId).catch(() => []);
   // 하네스 통일(P-A): 플래그 러너(ARGO_NATIVE_RUNNERS)는 Argo 소유 루프(nativeQuery)로 — 크루 도구 정의를 sink로 받아 같은 핸들러를 실행한다.
   const nativeOn = nativeRunnerEnabled(runner);
-  const crewSink = nativeOn ? [] : null;
+  const crewSink = []; // SDK 턴은 이름만 쓴다(sdkToolSearchDirective)
   const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect, goalTurn, autoTurn: goalTurn != null || source === 'routine' || source === 'job' || ['routine', 'job'].includes(mirrorCtx?.continuation?.kind) });
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
@@ -2337,7 +2346,8 @@ ${lang === 'en'
       cwd: p.root,
       // 지정 작업 폴더 — SDK가 cwd 밖 접근을 스스로 인지·탐색하게(집행은 canUseTool 게이트가 한다)
       ...(workRoots.length ? { additionalDirectories: workRoots } : {}),
-      systemPrompt: systemPromptFor(md, p.root, skills, meta, lang, { userName: turnUser }) + sysTail,
+      // 호환 러너(glm·kimi)는 도구 검색이 꺼져 있어(compatSdkEnv) 전체 도구가 실린다 — 찾는 법 안내는 claude 턴에만
+      systemPrompt: systemPromptFor(md, p.root, skills, meta, lang, { userName: turnUser }) + sysTail + (runner === 'claude' ? sdkToolSearchDirective(lang, crewSink.map((d) => d.name)) : ''),
       mcpServers: { ...(servers ?? {}), crew: crewServer, argo_browser: browserBridge.server },
       // CLI stderr 꼬리 보관 — 실패 시 errors[]가 비면 이걸 진단으로 쓴다(아래 결과 처리).
       stderr: sdkStderr,
