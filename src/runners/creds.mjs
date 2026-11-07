@@ -455,8 +455,16 @@ function refreshGrokOnce(wsId, stored) {
   return p;
 }
 
-/** Claude/GLM(SDK) 러너용 완전 env — 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY, claude는 CLI/env). */
+/** Claude/GLM(SDK) 러너용 완전 env. 프롬프트의 " @경로"가 파일 내용을 모델 요청에 붙이지 못하게 첨부를 끈다.
+    CLI는 도구·권한 게이트보다 먼저 첨부를 만들어 canUseTool·훅으로는 못 막고, 손님·채널 글과 마켓 제3자 원문이 프롬프트에 들어간다
+    (실호출 재현 2026-11-07, 절대·상대 경로 모두). 호스트 값이 덮지 못하게 맨 뒤에 둔다.
+    끄면 지연 도구 목록도 사라지므로 SDK 턴은 sdkToolSearchDirective로 찾는 법을 알린다(chat.mjs). 잠금: test/sdk-at-attachment-block.test.mjs */
 export async function sdkEnvFor(wsId, runner) {
+  return { ...(await sdkBaseEnv(wsId, runner)), CLAUDE_CODE_DISABLE_ATTACHMENTS: '1' };
+}
+
+/** 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY, claude는 CLI/env). */
+async function sdkBaseEnv(wsId, runner) {
   const cred = await runnerCredEnv(wsId, runner);
   // SDK가 띄우는 Bash/MCP 자식도 서버 시크릿(서비스 키)을 상속하지 않도록 항상 세척된 env를 준다(P1-6).
   // claude 호스트 폴백도 이제 null 대신 세척 env를 반환한다 — 러너 인증(ANTHROPIC_*)은 보존, 크라운주얼만 제거.
