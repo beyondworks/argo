@@ -65,8 +65,13 @@ before(() => {
     create table if not exists public.msgr_settings (key text primary key, value text not null); alter table public.msgr_settings enable row level security;
   `]);
   psql(['-c', migByTail('_msgr_app_min_version.sql')]);
-  psql(['-c', migByTail('_argo_old_app_cutoff.sql')]);
+  applyChain();
 });
+// 운영과 같은 끝 상태: 장치 원본 위에 이후 수정본(오피스 예외·옛 메신저 갈래·옛 판의 세션 이어 쓰기)을 차례로 얹는다.
+function applyChain() {
+  psql(['-c', migByTail('_argo_old_app_cutoff.sql')]);
+  for (const tail of ['_argo_office_exempt.sql', '_argo_old_msgr_cutoff.sql', '_argo_old_app_cutoff_reused_session.sql']) psql(['-c', migByTail(tail)]);
+}
 
 test('등록 — authenticator의 PostgREST 요청 전 함수가 이 장치다', { skip }, () => {
   assert.match(sql(`select array_to_string(rolconfig, ',') from pg_roles where rolname = 'authenticator'`), /pgrst\.db_pre_request=public\.argo_old_app_check/);
@@ -241,6 +246,7 @@ test('다른 요청 전 함수가 이미 등록돼 있으면 마이그레이션�
   assert.notEqual(r.status, 0); assert.match(r.stderr, /덮어쓰지 않고 멈춘다/);
   assert.match(sql(`select array_to_string(rolconfig, ',') from pg_roles where rolname = 'authenticator'`), /someone_else/, '남의 값 그대로');
   sql(`alter role authenticator set pgrst.db_pre_request to 'public.argo_old_app_check'`);
+  applyChain(); // 위 재적용이 함수를 원본 본문으로 덮었다 — 이후 시험은 운영 끝 상태로
 });
 
 // ── 폐기 기준 버전(old_app_cutoff_max, 2026-10-19) — 0.1.114 발행 뒤 마이그레이션 없이 "0.1.113 이하"로 넓힌다 ──
@@ -282,8 +288,10 @@ test('R1(엄격 검수 H1) 0.1.113에서 같은 로그인으로 0.1.114에 업�
   assert.ok(alive(s.sid), '바로 폐기되지 않는다');
   gate(s.sid, s.uid, TAIL114); // 35분 안의 꼬리 있는 관문
   assert.equal(gateVer(s.sid), '0.1.114'); assert.equal(row(s.sid), null, '꼬리 있는 관문이 의심 표시를 지운다');
-  for (let i = 0; i < 2; i++) request(s);
-  assert.ok(alive(s.sid), '그 뒤 꼬리 없는 요청도 지킨다');
+  request(s); assert.deepEqual(row(s.sid), { cut: false, due: false }, '그 뒤 꼬리 없는 요청은 의심 표시만(2026-11-14 — 옛 판의 세션 이어 쓰기와 같은 모양)');
+  gate(s.sid, s.uid, TAIL114); assert.equal(row(s.sid), null, '30분 뒤 꼬리 있는 관문이 다시 지운다');
+  makeDue(s.sid); request(s);
+  assert.ok(alive(s.sid), '새 판이 관문을 계속 부르는 한 끊기지 않는다');
   setMax(null);
 });
 
@@ -294,8 +302,9 @@ test('새 앱 0.1.114는 어떤 기준에서도 폐기되지 않는다 — 꼬�
     const a = session(); for (let i = 0; i < 2; i++) request({ ...a, xci: TAIL114 }); makeDue(a.sid); request({ ...a, xci: TAIL114 });
     assert.ok(alive(a.sid), `${v}: 꼬리 있는 요청`); assert.equal(row(a.sid), null);
     const b = session(); gate(b.sid, b.uid, TAIL114); assert.equal(gateVer(b.sid), '0.1.114', '관문 기록에 버전');
-    for (let i = 0; i < 2; i++) request(b); // 같은 세션의 꼬리 없는 요청(결제 화면·프로필 조회 등)
-    assert.ok(alive(b.sid), `${v}: 0.1.114 세션의 꼬리 없는 요청`);
+    for (let i = 0; i < 2; i++) request(b); // 같은 세션의 꼬리 없는 요청(0.1.114부터는 없지만 서버도 대비)
+    gate(b.sid, b.uid, TAIL114); makeDue(b.sid); request(b); // 35분 안의 꼬리 있는 관문이 표시를 지운다
+    assert.ok(alive(b.sid), `${v}: 0.1.114 세션의 꼬리 없는 요청 — 관문을 부르는 한 끊기지 않음`);
     const c = session(); gate(c.sid, c.uid, TAIL113DEV); request({ ...c, xci: TAIL113DEV }); request(c);
     assert.ok(alive(c.sid), `${v}: 개발 빌드(argo/0.1.113 꼬리)`);
     const d = session(); request({ ...d, headers: { 'x-argo-app-version': '0.1.114' } });
@@ -324,6 +333,73 @@ test('관문 기록: 꼬리 버전을 남기고, 6시간 안의 같은 버전 �
   assert.equal(gate(s.sid, s.uid), 'none', '꼬리 없는 재호출도 쓰기 0(버전을 지우지 않는다)'); assert.equal(gateVer(s.sid), '0.1.114');
 });
 
+// ── 옛 판이 새 판의 로그인 세션을 이어 쓰기(2026-11-14 운영 실측: 0.1.125가 관문에 버전을 남긴 세션 8424a6fd를 옛 판이 꼬리 없이 분당 약 347건) ──
+const TAIL125 = `${OLD} argo/0.1.125`;
+test('S1 0.1.125 관문 기록 → 옛 서명 POST(꼬리 없음) → 표시 → 35분 뒤 폐기(refresh 토큰도)', { skip }, () => {
+  on(); setMax('0.1.113');
+  const s = session({ ageMin: 600 });
+  gate(s.sid, s.uid, TAIL125); assert.equal(gateVer(s.sid), '0.1.125');
+  request({ ...s, xci: TAIL125 }); assert.equal(row(s.sid), null, '새 판 자신의 요청은 표시 없음');
+  assert.notEqual(request(s), 'none', '옛 판 첫 POST — 표시 쓰기'); assert.deepEqual(row(s.sid), { cut: false, due: false }); assert.ok(alive(s.sid));
+  assert.equal(request(s), 'none', '35분 전 재요청 쓰기 0'); assert.ok(alive(s.sid));
+  makeDue(s.sid); request(s);
+  assert.equal(alive(s.sid), false, '35분 뒤 폐기'); assert.equal(tokens(s.sid), 0); assert.equal(row(s.sid).cut, true);
+  assert.equal(request(s), 'none', '폐기 뒤 남은 접근 토큰 요청 쓰기 0');
+  setMax(null); off();
+});
+
+test('S2 0.1.125가 계속 꼬리 붙여 부르면 폐기 안 됨 — 꼬리 있는 요청은 표시조차 안 되고, 섞인 꼬리 없는 요청은 다음 관문이 지운다', { skip }, () => {
+  on(); setMax('0.1.113');
+  const a = session({ ageMin: 600 }); gate(a.sid, a.uid, TAIL125);
+  for (let i = 0; i < 3; i++) { assert.equal(request({ ...a, xci: TAIL125 }), 'none'); makeDue(a.sid); }
+  assert.ok(alive(a.sid)); assert.equal(row(a.sid), null);
+  const b = session({ ageMin: 600 }); gate(b.sid, b.uid, TAIL125);
+  for (let round = 0; round < 3; round++) { request(b); gate(b.sid, b.uid, TAIL125); makeDue(b.sid); request({ ...b, xci: TAIL125 }); }
+  assert.ok(alive(b.sid), '관문이 매번 표시를 지운다'); assert.equal(row(b.sid), null);
+  setMax(null); off();
+});
+
+test('S3 0.1.114가 꼬리 없는 요청을 섞어도 끊기지 않음 / 0.1.107~0.1.113의 꼬리 없는 관문은 표시를 못 지워 폐기 / 0.1.112 버전 헤더도 바로 끊지 않고 35분 흐름', { skip }, () => {
+  on(); setMax('0.1.113');
+  const a = session({ ageMin: 600 }); gate(a.sid, a.uid, TAIL114);
+  for (const path of ['/rpc/my_plan', '/rest/v1/rpc/msgr_notification_claim']) request({ ...a, path });
+  gate(a.sid, a.uid, TAIL114); makeDue(a.sid); request(a);
+  assert.ok(alive(a.sid), '0.1.114 — 35분 안 꼬리 있는 관문');
+  const b = session({ ageMin: 600 }); gate(b.sid, b.uid, TAIL125);
+  request(b); gate(b.sid, b.uid); assert.equal(gateVer(b.sid), '0.1.125', '꼬리 없는 관문이 버전을 지우지 않는다');
+  assert.deepEqual(row(b.sid), { cut: false, due: false }, '꼬리 없는 관문(0.1.107~0.1.113)은 표시를 못 지운다');
+  makeDue(b.sid); request(b); assert.ok(!alive(b.sid), '0.1.107~0.1.113이 이어 쓴 세션도 35분 뒤 폐기');
+  const c = session({ ageMin: 600 }); gate(c.sid, c.uid, TAIL125);
+  request({ ...c, headers: H112 }); assert.ok(alive(c.sid), '버전 있는 세션은 0.1.112 헤더여도 바로 끊지 않는다'); assert.ok(row(c.sid));
+  makeDue(c.sid); request({ ...c, headers: H112 }); assert.ok(!alive(c.sid), '35분 뒤 폐기');
+  setMax(null); off();
+});
+
+test('S4 기준 0.1.106(설정 없음)에서는 버전 있는 세션을 종전대로 지킨다 / 오피스·메신저·client_id·GET은 버전 있는 세션에서도 대상 아님', { skip }, () => {
+  on(); setMax(null);
+  const a = session({ ageMin: 600 }); gate(a.sid, a.uid, TAIL125);
+  for (let i = 0; i < 2; i++) { assert.equal(request(a), 'none'); makeDue(a.sid); }
+  assert.ok(alive(a.sid)); assert.equal(row(a.sid), null);
+  setMax('0.1.113');
+  const cases = [['office', { xci: `${OFFICE_SERVER}, argo-office/1` }], ['web', { xci: WEB }], ['mcp client_id', { claimsExtra: { client_id: 'mcp-client' } }], ['GET', { method: 'GET' }]];
+  for (const [name, opt] of cases) {
+    const s = session({ ageMin: 600 }); gate(s.sid, s.uid, TAIL125);
+    for (let i = 0; i < 2; i++) { assert.equal(request({ ...s, ...opt }), 'none', `${name} 쓰기 0`); makeDue(s.sid); }
+    assert.ok(alive(s.sid), name); assert.equal(row(s.sid), null, name);
+  }
+  setMax(null); off();
+});
+
+test('S5 되돌림 파일(20261114210000 down) — 버전 있는 세션을 다시 지키고, 버전 없는 옛 세션 폐기는 그대로', { skip }, () => {
+  const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261114210000_argo_old_app_cutoff_reused_session.down.sql', import.meta.url)), 'utf8');
+  psql(['-c', down]);
+  on(); setMax('0.1.113');
+  const a = session({ ageMin: 600 }); gate(a.sid, a.uid, TAIL125);
+  request(a); makeDue(a.sid); request(a); assert.ok(alive(a.sid), '되돌린 뒤 종전 동작'); assert.equal(row(a.sid), null);
+  const b = session(); cutThrough(b); assert.ok(!alive(b.sid), '버전 없는 옛 세션은 그대로 폐기');
+  setMax(null); off();
+  psql(['-c', migByTail('_argo_old_app_cutoff_reused_session.sql')]); // 다시 올려 둔다(다음 시험 순서와 무관하게)
+});
 
 test('되돌림 파일(scripts/rollback/…down.sql) — 등록이 풀리고, 관문은 옛 본문(쓰기 0), 요청 전 함수는 빈 본문으로 남는다', { skip }, () => {
   const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261019135000_argo_old_app_cutoff.down.sql', import.meta.url)), 'utf8');
