@@ -381,7 +381,7 @@ test('S4 기준 0.1.106(설정 없음)에서는 버전 있는 세션을 종전�
   for (let i = 0; i < 2; i++) { assert.equal(request(a), 'none'); makeDue(a.sid); }
   assert.ok(alive(a.sid)); assert.equal(row(a.sid), null);
   setMax('0.1.113');
-  const cases = [['office', { xci: `${OFFICE_SERVER}, argo-office/1` }], ['web', { xci: WEB }], ['mcp client_id', { claimsExtra: { client_id: 'mcp-client' } }], ['GET', { method: 'GET' }]];
+  const cases = [['office', { xci: `${OLD}, argo-office/1` }], ['web', { xci: WEB }], ['mcp client_id', { claimsExtra: { client_id: 'mcp-client' } }], ['GET', { method: 'GET' }]];
   for (const [name, opt] of cases) {
     const s = session({ ageMin: 600 }); gate(s.sid, s.uid, TAIL125);
     for (let i = 0; i < 2; i++) { assert.equal(request({ ...s, ...opt }), 'none', `${name} 쓰기 0`); makeDue(s.sid); }
