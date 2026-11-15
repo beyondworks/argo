@@ -41,12 +41,14 @@ const alive = (sid) => sql(`select count(*) from auth.sessions where id = ${lit(
 const tokens = (sid) => Number(sql(`select count(*) from auth.refresh_tokens where session_id = ${lit(sid)}`));
 const cutAt = (sid) => sql(`select coalesce(cut_at::text, '-') from public.argo_old_app_sessions where session_id = ${lit(sid)}`);
 const marked = (sid) => sql(`select count(*) from public.argo_old_app_sessions where session_id = ${lit(sid)}`) === '1';
-const makeDue = (sid) => sql(`update public.argo_old_app_sessions set due_at = now() - interval '1 minute' where session_id = ${lit(sid)}`);
+const makeDue = (sid) => sql(`update public.argo_old_app_sessions set due_at = now() - interval '15 minutes' where session_id = ${lit(sid)}`);
 // GoTrue 토큰 갱신 흉내 — refresh grant는 sessions.refreshed_at(timestamp, UTC)·updated_at을 바꾼다(PostgREST 요청이 아니라 요청 전 함수가 돌지 않는다)
-const refreshVia = (sid, col) => sql(col === 'refreshed_at'
-  ? `update auth.sessions set refreshed_at = (now() at time zone 'UTC') where id = ${lit(sid)}`
-  : `update auth.sessions set updated_at = now() where id = ${lit(sid)}`);
-const sweep = () => Number(sql(`set role service_role; select public.argo_old_app_cut_overdue()`).split('\n').pop());
+// agoMin: 갱신이 몇 분 전이었나(기본 10분 — 6분 유예를 넘긴 상태. 기한은 makeDue가 15분 전으로 둔다)
+const refreshVia = (sid, col, agoMin = 10) => sql(col === 'refreshed_at'
+  ? `update auth.sessions set refreshed_at = ((now() - interval '${agoMin} minutes') at time zone 'UTC') where id = ${lit(sid)}`
+  : `update auth.sessions set updated_at = now() - interval '${agoMin} minutes' where id = ${lit(sid)}`);
+// 시간대를 KST로 고정해 refreshed_at(UTC 벽시계, timestamp)을 시간대 없이 읽는 실수를 어느 맥·CI에서나 잡는다(운영 DB는 UTC)
+const sweep = () => Number(sql(`set timezone = 'Asia/Seoul'; set role service_role; select public.argo_old_app_cut_overdue()`).split('\n').pop());
 const on = () => sql(`insert into public.msgr_settings (key, value) values ('old_app_cutoff', 'on') on conflict (key) do update set value = excluded.value;
   insert into public.msgr_settings (key, value) values ('old_app_cutoff_max', '0.1.113') on conflict (key) do update set value = excluded.value`);
 const off = () => sql(`delete from public.msgr_settings where key = 'old_app_cutoff'`);
@@ -167,6 +169,32 @@ test('같은 사용자의 다른 세션(새 판)은 그대로 둔다', { skip },
   assert.equal(sweep(), 1);
   assert.ok(!alive(old.sid));
   assert.ok(alive(fresh.sid));
+});
+
+test('6분 유예: 기한 뒤 방금 갱신한 세션은 기다렸다가, 6분이 지나면 끊는다(새 판 관문 재시도 한 번을 기다린다)', { skip }, () => {
+  on();
+  const s = session(); request(s); makeDue(s.sid);
+  refreshVia(s.sid, 'refreshed_at', 1); // 깨어나 방금 갱신 — 관문은 아직(실패해 5분 뒤 재시도 중)
+  assert.equal(sweep(), 0, '유예 안에서는 끊지 않는다');
+  assert.ok(alive(s.sid));
+  gate(s, NEW); // 재시도한 꼬리 있는 관문이 표시를 지운다
+  refreshVia(s.sid, 'refreshed_at', 10);
+  assert.equal(sweep(), 0, '표시가 지워져 끊을 것이 없다');
+  assert.ok(alive(s.sid), '새 판은 살아남는다');
+  // 관문이 끝내 오지 않은 옛 판이면 유예 뒤에 끊긴다
+  const o = session(); request(o); makeDue(o.sid); refreshVia(o.sid, 'refreshed_at', 1);
+  assert.equal(sweep(), 0);
+  refreshVia(o.sid, 'refreshed_at', 7);
+  assert.equal(sweep(), 1);
+  assert.ok(!alive(o.sid));
+});
+
+test('한 번 실행에 여러 건을 끊는다', { skip }, () => {
+  on();
+  sweep();
+  const list = [overdueOld(), overdueOld(), overdueOld()];
+  assert.equal(sweep(), 3);
+  for (const s of list) assert.ok(!alive(s.sid));
 });
 
 test('권한: 클라이언트(anon·authenticated)는 이 함수를 부를 수 없다', { skip }, () => {
