@@ -60,3 +60,27 @@ test('Gemini 2.5 새 계정 404(2026-10-14) — 옛 앱 목록에 3.8 Flash를 �
   assert.equal(RUNNERS.gemini.models.some((m) => /^gemini-2\.5/.test(m.id)), false);
   assert.equal(RUNNERS.gemini.models[0].id, 'gemini-3.8-flash');
 });
+
+test('Antigravity 2026-11-18 종료 3종(2026-11-16 확인) — 옛 앱 목록에서 빼고, 모든 옛 앱 목록에 있는 3.6 Flash로 옮긴다', () => {
+  const v = validateOverlay(doc);
+  const gone = ['claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gpt-oss-120b-medium'];
+  assert.deepEqual(v.runners.antigravity.retire, gone);
+  for (const id of gone) assert.equal(v.runners.antigravity.alias[id], 'gemini-3.6-flash-medium');
+  // Antigravity가 처음 들어온 판(#129, 2026-07-27)의 코드 목록 — 3.7 Flash가 없다
+  const firstApp = ['gemini-3.6-flash-medium', 'gemini-3.6-flash-high', 'gemini-3.6-flash-low', 'gemini-3.1-pro-high', 'gemini-3.1-pro-low', ...gone].map((id) => ({ id, label: id }));
+  const listed = applyOverlay('antigravity', firstApp, v);
+  for (const id of gone) assert.equal(listed.some((m) => m.id === id), false, `${id} 목록에서 빠진다`);
+  assert.ok(listed.some((m) => m.id === 'gemini-3.6-flash-medium'), 'alias 목적지가 가장 옛 앱 목록에도 있다');
+  for (const id of gone) assert.equal(RUNNERS.antigravity.models.some((m) => m.id === id), false, `${id}는 코드 목록에서도 빠진다`);
+  assert.equal(doc.baseline.antigravity.some((id) => gone.includes(id)), false);
+});
+
+test('OpenRouter nemotron-3-super 무료판 소멸(2026-11-16 공개 목록) — 무료 3.5 Lightning으로 옮긴다(무료↔유료 티어를 넘지 않게)', () => {
+  const v = validateOverlay(doc);
+  const gone = 'nvidia/nemotron-3-super-120b-a12b:free';
+  assert.ok(v.runners.openrouter.retire.includes(gone));
+  assert.equal(v.runners.openrouter.alias[gone], 'nvidia/nemotron-3.5-lightning:free');
+  assert.ok(v.runners.openrouter.add.some((m) => m.id === 'nvidia/nemotron-3.5-lightning:free' && m.free), '목적지가 옛 앱 목록에 무료로 들어간다');
+  // 코드 목록에는 대체 무료 모델이 스모크를 통과할 때까지 남는다(무료 2종 전제). 원격 retire가 새 앱 목록에서도 뺀다.
+  assert.equal(applyOverlay('openrouter', RUNNERS.openrouter.models, v).some((m) => m.id === gone), false, '새 앱 유효 목록에서도 빠진다');
+});

@@ -17,8 +17,19 @@ export const LEGACY = {
     // add = alias 목적지. 구버전 앱(코드 카탈로그에 대체 모델이 없는 ≤v0.1.64)에서는 add가 없으면 alias 목적지가 유효 목록 밖이라
     // chat.mjs가 기본 모델로 강등한다. 새 버전은 같은 id를 무시하므로 무해.
     add: [{ id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron 3.5 Lightning (Free)', free: true }], // free = 무료 배지·무료 폴백(2차 검수 MEDIUM-1)
-    retire: ['minimax/minimax-m3:free', 'minimax/minimax-m2.7:free', 'deepseek/deepseek-v4-pro'],
-    alias: { 'minimax/minimax-m3:free': 'nvidia/nemotron-3.5-lightning:free', 'minimax/minimax-m2.7:free': 'nvidia/nemotron-3.5-lightning:free' },
+    // 2026-11-16: nemotron-3-super-120b-a12b:free 무료판이 공개 목록에서 사라졌다(유료판만 남음).
+    retire: ['minimax/minimax-m3:free', 'minimax/minimax-m2.7:free', 'deepseek/deepseek-v4-pro', 'nvidia/nemotron-3-super-120b-a12b:free'],
+    alias: {
+      'minimax/minimax-m3:free': 'nvidia/nemotron-3.5-lightning:free', 'minimax/minimax-m2.7:free': 'nvidia/nemotron-3.5-lightning:free',
+      'nvidia/nemotron-3-super-120b-a12b:free': 'nvidia/nemotron-3.5-lightning:free',
+    },
+  },
+  // 2026-11-16: Antigravity의 Claude Sonnet 4.6·Opus 4.6 Thinking·GPT-OSS 120B가 2026-11-18 지원 종료(antigravity.google/docs/models).
+  // 목적지 gemini-3.6-flash-medium은 Antigravity 러너가 처음 들어온 판(#129, 2026-07-27)부터 모든 앱의 코드 목록에 있다(3.7은 2026-09-01부터라 옛 앱엔 없다).
+  // 새 앱은 코드 목록에서 뺀 것만으로도 목록 밖 → 첫 항목(3.7 Flash)으로 돈다. 대체 강도 표(RETIRED_MODEL_ALIASES)는 Antigravity가 강도를 id에 담아 쓰지 않는다.
+  antigravity: {
+    retire: ['claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gpt-oss-120b-medium'],
+    alias: { 'claude-sonnet-4-6': 'gemini-3.6-flash-medium', 'claude-opus-4-6-thinking': 'gemini-3.6-flash-medium', 'gpt-oss-120b-medium': 'gemini-3.6-flash-medium' },
   },
   // 2026-10-09: GPT-5.5 종료(Codex 서버 목록 retirement_at 2026-10-14T19:00Z). 목적지 5.6 Sol은 모든 옛 앱의 코드 목록에 있어 add가 필요 없다.
   // 6.1 Sol로 보내지 않는다 — 핀 0.157.1 옛 앱에서 400. 새 앱은 catalog.mjs RETIRED_MODEL_ALIASES로 같은 목적지(test/model-catalog-legacy.test.mjs가 대조).
