@@ -101,6 +101,8 @@ test('① exec — 6.1 Sol + 강도 비움은 medium, 고른 강도는 그대로
   for (const [model, effort, want] of [
     ['gpt-6.1-sol', '', 'model_reasoning_effort=medium'],
     ['gpt-6.1-sol', 'ultra', 'model_reasoning_effort=ultra'],
+    ['gpt-6.1-terra', '', 'model_reasoning_effort=medium'], // 2026-11-16: 서버 기본 low가 6.1 Sol과 같아 같은 결정
+    ['gpt-6.1-terra', 'ultra', 'model_reasoning_effort=ultra'],
     ['gpt-6-astra', 'max', 'model_reasoning_effort=max'],
     ['gpt-6-sol', '', null],
     ['gpt-6-astra', '', null],

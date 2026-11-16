@@ -4,13 +4,15 @@ const CODEX_LEGACY_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
 // Levels follow the Codex server model list (supported_reasoning_levels, ~/.codex/models_cache.json 2026-10-07).
 const GPT6_EFFORTS = {
   'gpt-6.1-sol': [...CLAUDE_EFFORTS, 'ultra'],
+  'gpt-6.1-terra': [...CLAUDE_EFFORTS, 'ultra'], // codex debug models(0.162.1) 2026-11-16: low~max·ultra, 서버 기본 low — 6.1 Sol과 같다
   'gpt-6-astra': [...CLAUDE_EFFORTS, 'ultra'],
   'gpt-6-sol': [...CLAUDE_EFFORTS, 'ultra'],
   'gpt-6-luna': [...CLAUDE_EFFORTS],
 };
 // Effort sent when the crew leaves it empty. Server default for gpt-6.1-sol is low; Yugeon decided medium (2026-10-08).
 // Storage keeps '' — the value is filled only on the wire, so a later default change needs no card migration.
-const EMPTY_EFFORT = { 'gpt-6.1-sol': 'medium' };
+// gpt-6.1-terra(2026-11-16): 서버 기본이 6.1 Sol과 같은 low라 같은 결정(medium)을 따른다 — 바꾸려면 이 표만.
+const EMPTY_EFFORT = { 'gpt-6.1-sol': 'medium', 'gpt-6.1-terra': 'medium' };
 const modelEfforts = (model) => Object.hasOwn(GPT6_EFFORTS, model) ? GPT6_EFFORTS[model] : null;
 
 export function effortLevels(runner, model) {
