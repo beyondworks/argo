@@ -124,10 +124,18 @@ test('게이트웨이 리스와 스케줄러 리스가 다른 프로세스로 �
   const { root } = await setup();
   const G = child({ root, env: FAST, leases: ['gateway'], name: 'G' });
   const S = child({ root, env: FAST, leases: ['scheduler'], name: 'S' });
-  await sleep(7000);
-  const t = Date.now() - 300;
+  // 고정 7초 대신 두 데몬이 다 자리를 잡을 때까지(상한 40초) 기다린다 — 느린 러너(macos-15-intel)에서는 자식 기동·첫 리스 판정이 늦어
+  // 7초에 G가 아직 클라우드 리더가 아니었다(proc 0, v0.1.126 발행 빌드). 판정은 그대로: 각 데몬은 정확히 한 프로세스, 그동안 둘이 된 적도 없다.
+  const t0 = Date.now();
+  let t = t0;
+  while (Date.now() - t0 < 40_000) {
+    await sleep(500);
+    t = Date.now() - 300;
+    if (runnersAt([G, S], t, { field: 'proc' }) === 1 && runnersAt([G, S], t, { field: 'sched' }) === 1) break;
+  }
   assert.equal(runnersAt([G, S], t, { field: 'proc' }), 1, `게이트웨이 G=${JSON.stringify(G.last())} S=${JSON.stringify(S.last())} ${G.err.slice(-800)}`);
   assert.equal(runnersAt([G, S], t, { field: 'sched' }), 1, '스케줄러 — 한쪽만 참여시키면 다른 쪽 데몬이 멈춘다');
+  assert.ok(scan([G, S], t0, t, 'proc').max <= 1 && scan([G, S], t0, t, 'sched').max <= 1, '기다리는 동안 같은 데몬을 둘이 돈 순간이 없다');
 });
 
 test('#791 재검수 LOW-b — 혼자 켜진 실행 프로세스는 첫 동기화 주기에 바로 클라우드 리더가 된다(실행 리스 첫 판정을 기다림 — 기본 8초 주기를 한 번 더 기다리지 않음)', { timeout: 60_000 }, async () => {

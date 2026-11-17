@@ -104,7 +104,10 @@ test('K06 setup-token — 프로세스 exit가 출력보다 먼저 와도(손자
   await mkdir(paths(ws).root, { recursive: true });
   try {
     assert.deepEqual(await startClaudeSetupToken(ws), { ok: true });
-    const st = await waitFor(() => { const s = setupTokenStatus(ws); return s.status !== 'running' && s; });
+    // 끝날 때까지(상한 30초) 기다린다 — 가짜 script 0.3초 + 토큰 검증 HTTP + 저장이 느린 러너(macos-15-intel)에서 5초를 넘겨 아직 running인 채로
+    // 기다림이 끝났다(st=false → "error undefined", v0.1.126 발행 빌드). 판정은 그대로: exit 뒤 늦은 출력의 토큰이 저장돼야 한다.
+    const st = await waitFor(() => { const s = setupTokenStatus(ws); return s.status !== 'running' && s; }, 30_000);
+    assert.ok(st, `30초 안에 끝나지 않았다(아직 running): ${JSON.stringify(setupTokenStatus(ws))}`);
     assert.equal(st.status, 'saved', `exit가 먼저 와 토큰이 버려졌다: ${st.error}`);
     assert.equal((await loadRunnerCred(ws, 'claude'))?.value, TOKEN);
   } finally {

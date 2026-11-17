@@ -15,7 +15,7 @@
 //
 // v1 한계(문서화): 서비스 키 기반(자가 호스팅 전제 — 패키징 앱은 사용자 JWT+RLS로 전환 예정),
 // 충돌은 LWW(더 최근 mtime 승) — md 양쪽 보존은 후속.
-import { mkdir, readFile, writeFile, readdir, stat, rm, utimes, rename } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat, rm, utimes, rename } from 'node:fs/promises';
 import { readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { collidesWithRoom } from './slug.mjs';
 import { join, dirname, basename, sep } from 'node:path';
@@ -534,7 +534,11 @@ async function holdSyncLock() {
   lockState.seenKey = '';
   lockState.since ??= Date.now();
   // ver·since는 진단용(다른 프로세스가 대기 화면에 보인다)이자 0.1.121 회수 판정(older)의 근거다
-  try { await mkdir(WS_ROOT, { recursive: true }); await writeFile(f, JSON.stringify({ pid: process.pid, ts: Date.now(), ver: APP_VERSION ?? null, since: lockState.since })); } catch { /* 쓰기 실패 시에도 진행 */ }
+  // 원자 쓰기(tmp → rename): 덮어쓰기(writeFile)는 파일을 비운 뒤 쓰므로, 그 사이에 읽은 다른 프로세스(옛 판 사이드카·같은 판 두 번째 서버)는
+  // 빈 내용을 '없음/손상 → 획득'으로 읽고 살아 있는 내 잠금을 덮었다 — 옛 판이 물러난 뒤 다시 잠금을 쓰는 핑퐁·한 사이클 이중 동기화
+  // (2026-11-17 v0.1.126 발행 빌드 macos-15-intel에서 sync-self-heal-0121 writesAfterYield 2 !== 0, 격리 재현: 덮어쓰기 중 동시 읽기 약 3할이 빈 내용).
+  // 임시본 이름 .tmp-.sync-process.lock-…은 동기화 EXCLUDE(.tmp-)에 걸리고 셸 방어(permission-gate의 .sync-process.lock 부분 문자열)에도 걸린다.
+  try { await writeFileAtomic(f, JSON.stringify({ pid: process.pid, ts: Date.now(), ver: APP_VERSION ?? null, since: lockState.since })); } catch { /* 쓰기 실패 시에도 진행 */ }
   if (lockState.takeover) {
     if (mono < lockState.takeover.until) { lockState.holder = lockState.takeover.holder; return false; } // 넘겨받기 대기 — 잠금은 내 것, 동기화는 아직
     lockState.takeover = null;
