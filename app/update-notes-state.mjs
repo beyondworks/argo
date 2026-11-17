@@ -71,6 +71,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.124': Object.freeze(['updates.note.syncUnstuck']),
   // 0.1.125 — autoUpdate: 앱이 새 판을 스스로 받아 작업이 없을 때 설치·재시작(#1206, 끄는 파일 ~/.argo/auto-update-off) · 리스 읽기·갱신 간격 조정(#1205)은 사용자 화면 변화가 없어 안내하지 않음
   '0.1.125': Object.freeze(['updates.note.autoUpdate']),
+  // 0.1.126 — newModels: Claude Fable 5.2·Haiku 5.5, Codex GPT-6.1 Terra 추가(#1214) · 종료 모델 옮기기는 원격 카탈로그로 이미 반영 · #1209·#1210 수정은 화면 변화가 작아 안내하지 않음
+  '0.1.126': Object.freeze(['updates.note.newModels']),
 });
 
 export function stableVersion(value) {
