@@ -15,7 +15,7 @@
 //
 // v1 한계(문서화): 서비스 키 기반(자가 호스팅 전제 — 패키징 앱은 사용자 JWT+RLS로 전환 예정),
 // 충돌은 LWW(더 최근 mtime 승) — md 양쪽 보존은 후속.
-import { mkdir, readFile, readdir, stat, rm, utimes, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, stat, rm, utimes, rename } from 'node:fs/promises';
 import { readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { collidesWithRoom } from './slug.mjs';
 import { join, dirname, basename, sep } from 'node:path';
@@ -23,7 +23,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { argoCreateClient as createClient } from './supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { WS_ROOT, WS_ID_RE, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { applyDeparted, mergeDeparted, unscopedSummaryGone } from './departed.mjs';
-import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
+import { writeJsonAtomic, writeFileAtomic, readJsonLenient, renameRetry } from './jsonstore.mjs';
 import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { dek, tryClaimDek } from './e2ee.mjs';
@@ -538,7 +538,14 @@ async function holdSyncLock() {
   // 빈 내용을 '없음/손상 → 획득'으로 읽고 살아 있는 내 잠금을 덮었다 — 옛 판이 물러난 뒤 다시 잠금을 쓰는 핑퐁·한 사이클 이중 동기화
   // (2026-11-17 v0.1.126 발행 빌드 macos-15-intel에서 sync-self-heal-0121 writesAfterYield 2 !== 0, 격리 재현: 덮어쓰기 중 동시 읽기 약 3할이 빈 내용).
   // 임시본 이름 .tmp-.sync-process.lock-…은 동기화 EXCLUDE(.tmp-)에 걸리고 셸 방어(permission-gate의 .sync-process.lock 부분 문자열)에도 걸린다.
-  try { await writeFileAtomic(f, JSON.stringify({ pid: process.pid, ts: Date.now(), ver: APP_VERSION ?? null, since: lockState.since })); } catch { /* 쓰기 실패 시에도 진행 */ }
+  // lock.mjs daemonLease와 같은 방식: fsync 없음(잠금은 LOCK_STALE_MS 뒤 낡은 값으로 버려진다), rename 재시도 1초(Windows 일시 잠금),
+  // 실패하면 임시본을 지운다 — 디스크가 가득 찬 동안 사이클마다 임시본이 쌓이지 않게(검수 2026-11-17 LOW 2·3·4).
+  try {
+    await mkdir(WS_ROOT, { recursive: true });
+    const tmp = join(dirname(f), `.tmp-${basename(f)}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
+    try { await writeFile(tmp, JSON.stringify({ pid: process.pid, ts: Date.now(), ver: APP_VERSION ?? null, since: lockState.since })); await renameRetry(tmp, f, { budgetMs: 1_000 }); }
+    catch (e) { await rm(tmp, { force: true }).catch(() => {}); throw e; }
+  } catch { /* 쓰기 실패 시에도 진행 */ }
   if (lockState.takeover) {
     if (mono < lockState.takeover.until) { lockState.holder = lockState.takeover.holder; return false; } // 넘겨받기 대기 — 잠금은 내 것, 동기화는 아직
     lockState.takeover = null;

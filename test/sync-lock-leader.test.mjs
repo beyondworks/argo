@@ -133,6 +133,10 @@ test('게이트웨이 리스와 스케줄러 리스가 다른 프로세스로 �
     t = Date.now() - 300;
     if (runnersAt([G, S], t, { field: 'proc' }) === 1 && runnersAt([G, S], t, { field: 'sched' }) === 1) break;
   }
+  // 자리 잡은 뒤에도 원래 시험의 관찰 구간(시작부터 최소 7초, 자리 잡은 뒤 최소 5초)을 지켜 안정 상태를 본다 — 처음 맞춰진 순간만 보면
+  // 곧 한쪽이 놓거나 두 번째 판정에서 둘이 쥐는 회귀를 못 잡는다(검수 2026-11-17 중간).
+  await sleep(Math.max(5_000, t0 + 7_000 - Date.now()));
+  t = Date.now() - 300;
   assert.equal(runnersAt([G, S], t, { field: 'proc' }), 1, `게이트웨이 G=${JSON.stringify(G.last())} S=${JSON.stringify(S.last())} ${G.err.slice(-800)}`);
   assert.equal(runnersAt([G, S], t, { field: 'sched' }), 1, '스케줄러 — 한쪽만 참여시키면 다른 쪽 데몬이 멈춘다');
   assert.ok(scan([G, S], t0, t, 'proc').max <= 1 && scan([G, S], t0, t, 'sched').max <= 1, '기다리는 동안 같은 데몬을 둘이 돈 순간이 없다');
