@@ -25,6 +25,7 @@ const CODEX_MODEL_MIN_PIN = {
   'gpt-6-sol': '0.157.1', // 0.149.1: ChatGPT 계정 미지원
   'gpt-6-luna': '0.157.1',
   'gpt-6.1-sol': '0.159.3', // 0.157.1: ChatGPT 계정 미지원
+  'gpt-6.1-terra': '0.159.3', // 문서 하한 0.159.0(developers.openai.com/codex/models), 실턴은 0.159.3에서만 확인(2026-11-16)
 };
 const pinAtLeast = (min) => {
   const v = CODEX_PIN.replace(/^rust-v/, '').split('.').map(Number); const m = min.split('.').map(Number);

@@ -21,6 +21,9 @@ export const RUNNERS = {
       // (번들 CLI 2.1.251+ — 그 아래는 "does not support this model" 400으로 턴이 죽는다. 실측: CLI 2.1.141
       // 거부 / SDK 0.3.258 실턴 통과 2026-09-01). package.json의 SDK 하한이 곧 이 항목의 전제다.
       { id: 'claude-fable-5-1', label: 'Fable 5.1', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-10-05)
+      // Fable 5.2(2026-11-16 유건 "전부 넣어") — **Agent SDK ≥0.3.290 필수**(번들 CLI 2.1.290+; 0.3.280은 400 "version 2.1.290 or newer is required" 실측).
+      // 실턴 통과 2026-11-16(SDK 0.3.290, modelUsage=claude-fable-5-2). 첫 항목(러너 전환 기본값)은 5.1 그대로 둔다 — 기본값 변경은 따로 결정.
+      { id: 'claude-fable-5-2', label: 'Fable 5.2', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-11-16)
       { id: 'claude-fable-5', label: 'Fable 5', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/models/fable-5/overview (확인 2026-10-05)
       // Opus 5.5(2026-09-23 유건 요청) — **Agent SDK ≥0.3.280 필수**(번들 CLI 2.1.280+; 0.3.258은 400 "2.1.280 or newer is required" 실측).
       // 실턴 통과 2026-09-23(SDK 0.3.280, 두 변형 모두). effort 기본이 medium이라 크루 미지정이면 high(defaultClaudeEffort).
@@ -40,6 +43,8 @@ export const RUNNERS = {
       { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-10-05)
       { id: 'claude-sonnet-5-5[1m]', label: 'Sonnet 5.5 (1M)', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-10-05)
       { id: 'claude-sonnet-5', label: 'Sonnet 5', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/models/sonnet-5/overview (확인 2026-10-05)
+      // Haiku 5.5(2026-11-16 유건 "전부 넣어") — 실턴 통과 2026-11-16(SDK 0.3.280·0.3.290 모두, modelUsage=claude-haiku-5-5).
+      { id: 'claude-haiku-5-5', label: 'Haiku 5.5', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-11-16)
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', ctx: 200_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-10-05)
     ],
   },
@@ -59,6 +64,9 @@ export const RUNNERS = {
       // 원격 카탈로그(scripts/gen-model-catalog.mjs LEGACY)에는 넣지 않는다 — 옛 앱(핀 0.157.1)이 목록에서 고르면 400이다.
       // 강도를 비우면 medium(서버 기본 low — model-effort.mjs EMPTY_EFFORT).
       { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
+      // GPT-6.1 Terra(2026-11-16 유건 "전부 넣어") — Codex 권장 모델(developers.openai.com/codex/models, CLI 0.159.0 이상). 핀 0.159.3 + ChatGPT 로그인 실턴 통과 2026-11-16.
+      // 6.1 Sol과 같이 원격 카탈로그 LEGACY에는 넣지 않는다 — 옛 앱 핀 0.157.1에서는 돌지 않을 수 있다(미검증).
+      { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' },
       // GPT-6 Astra(2026-09-22) — 핀 0.157.1 이상에서만 돈다(0.149.1은 400 — 2026-09-28 실사고, test/codex-pin-lockup.test.mjs가 잠금). 기본은 Sol 유지(유건 결정) — models[0]이 러너 전환 기본값이라 맨 앞에 두지 않는다
       { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
       // GPT-6 Sol·Luna — 핀 0.157.1 + ChatGPT 구독 로그인으로 실제 턴·셸 도구·MCP 호출 확인(2026-09-29).
@@ -114,9 +122,8 @@ export const RUNNERS = {
       { id: 'gemini-3.6-flash-low', label: 'Gemini 3.6 Flash Low' },
       { id: 'gemini-3.1-pro-high', label: 'Gemini 3.1 Pro High' },
       { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro Low' },
-      { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Antigravity)' },
-      { id: 'claude-opus-4-6-thinking', label: 'Claude Opus 4.6 Thinking (Antigravity)' },
-      { id: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Antigravity)' },
+      // claude-sonnet-4-6·claude-opus-4-6-thinking·gpt-oss-120b-medium은 2026-11-18 지원 종료(antigravity.google/docs/models, 2026-11-16 확인)라 뺐다.
+      // 이미 고른 카드는 원격 카탈로그 alias(scripts/gen-model-catalog.mjs LEGACY)가 gemini-3.6-flash-medium으로 옮기고, 원격이 없으면 목록 밖 → 첫 항목.
     ],
   },
   kimi: {
@@ -151,6 +158,8 @@ export const RUNNERS = {
       //    상수는 그대로 벤더로 나간다(oneshot은 alias 목적지가 카탈로그에 없으면 첫 무료 모델로 폴백). 코드 카탈로그·상수는 다음 발행에.
       //    scripts/gen-model-catalog.mjs의 LEGACY에도 같은 retire/alias를 적어야 발행이 핫픽스를 덮어쓰지 않는다(분리 검수 H-1).
       { id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron 3.5 Lightning (Free)', free: true, ctx: 1_000_000 }, // ctx 출처 https://openrouter.ai/api/v1/models/nvidia/nemotron-3.5-lightning:free/endpoints (확인 2026-10-05)
+      //  · 2026-11-16: nemotron-3-super-120b-a12b:free가 공개 목록(/api/v1/models)에서 사라졌다(유료판만 남음). 원격 오버레이로 먼저 막는다(LEGACY retire+alias →
+      //    3.5 Lightning). 코드 목록은 대체 무료 모델이 스모크를 통과할 때 바꾼다 — 무료 풀 2종 전제(test/openrouter-runner·native-oneshot)를 지키려고 지금은 남긴다.
       { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 3 Super 120B', free: true, ctx: 262_144 }, // ctx 출처 https://openrouter.ai/api/v1/models/nvidia/nemotron-3-super-120b-a12b:free/endpoints (확인 2026-10-05)
       // ── 유료 — 잔액이 있는 사용자가 명시 선택(품질·속도 우위)
       { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5', ctx: 200_000 }, // ctx 출처 https://openrouter.ai/api/v1/models/anthropic/claude-haiku-4.5/endpoints (확인 2026-10-05)

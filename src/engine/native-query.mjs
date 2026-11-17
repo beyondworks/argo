@@ -76,7 +76,7 @@ export function visionCapable(model, env = process.env) {
   if (raw === '*') return true;
   if (raw === 'none') return false;
   if (raw) return raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean).some((s) => m.includes(s));
-  if (['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'].includes(m)) return true; // Codex 서버 모델 목록 input_modalities: text·image(2026-10-07)
+  if (['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'].includes(m)) return true; // Codex 서버 모델 목록 input_modalities: text·image(2026-10-07, terra 2026-11-16)
   return /claude|gpt-4o|gpt-4\.1|gpt-5|\bo[134]\b|gemini|grok-(2-vision|3|4)|glm-4\.?\d?v|glm-5|qwen[^/]*vl|pixtral|llava|minimax|kimi-k[23]|vision/.test(m);
 }
 

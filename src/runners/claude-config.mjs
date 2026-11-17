@@ -2,7 +2,7 @@
 // 제보 2026-10-15: Claude만 연결한 사용자의 ChatGPT 앱 목록에 "Argo" 대화가 수십 개 쌓였다. SDK CLI는 CLAUDE_CONFIG_DIR이 없으면
 // ~/.claude/projects/<작업 폴더>/<세션>.jsonl에 전사를 쓰고(제목 customTitle "Argo"), ChatGPT의 'Claude 정보 가져오기'가 그 폴더를 읽는다.
 // 설정 폴더만 바꾸면 "이 컴퓨터 로그인(host)"이 끊긴다(임시 HOME 실측: "Not logged in") — CLI가 자격 저장소 이름·위치를 설정 폴더에서 정하기 때문이다.
-// CLAUDE_SECURESTORAGE_CONFIG_DIR=''이면 자격은 종전 자리(맥 키체인 "Claude Code-credentials" 접미사 없음 · ~/.claude/.credentials.json)를 쓴다(동봉 CLI 0.3.280 판독 + 파일 저장소 실측).
+// CLAUDE_SECURESTORAGE_CONFIG_DIR=''이면 자격은 종전 자리(맥 키체인 "Claude Code-credentials" 접미사 없음 · ~/.claude/.credentials.json)를 쓴다(동봉 CLI 2.1.280 판독 + 파일 저장소 실측, SDK 0.3.290의 CLI 2.1.290도 같은 처리 — 2026-11-16 검수 대조).
 // 윈도우 host는 격리하지 않는다 — CLI가 자격 증명 관리자 사용 여부를 설정 폴더 안 .claude.json 플래그로 골라 새 폴더에서 끊길 수 있고, 실측하지 못했다.
 import { copyFile, cp, mkdir, readdir, stat } from 'node:fs/promises';
 import { constants, mkdirSync } from 'node:fs';
