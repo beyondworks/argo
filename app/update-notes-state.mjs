@@ -73,6 +73,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.125': Object.freeze(['updates.note.autoUpdate']),
   // 0.1.126 — newModels: Claude Fable 5.2·Haiku 5.5, Codex GPT-6.1 Terra 추가(#1214) · 종료 모델 옮기기는 원격 카탈로그로 이미 반영 · #1209·#1210 수정은 화면 변화가 작아 안내하지 않음
   '0.1.126': Object.freeze(['updates.note.newModels']),
+  // 0.1.127 — antigravityModels: Antigravity 새 모델 19종(Gemini 4 Neon·Carbon·Hydrogen·Orchestrator·Claude 5.5), 옛 모델은 Hydrogen으로(#1217)
+  '0.1.127': Object.freeze(['updates.note.antigravityModels']),
 });
 
 export function stableVersion(value) {
