@@ -24,12 +24,31 @@ export const LEGACY = {
       'nvidia/nemotron-3-super-120b-a12b:free': 'nvidia/nemotron-3.5-lightning:free',
     },
   },
-  // 2026-11-16: Antigravity의 Claude Sonnet 4.6·Opus 4.6 Thinking·GPT-OSS 120B가 2026-11-18 지원 종료(antigravity.google/docs/models).
-  // 목적지 gemini-3.6-flash-medium은 Antigravity 러너가 처음 들어온 판(#129, 2026-07-27)부터 모든 앱의 코드 목록에 있다(3.7은 2026-09-01부터라 옛 앱엔 없다).
-  // 새 앱은 코드 목록에서 뺀 것만으로도 목록 밖 → 첫 항목(3.7 Flash)으로 돈다. 대체 강도 표(RETIRED_MODEL_ALIASES)는 Antigravity가 강도를 id에 담아 쓰지 않는다.
+  // Antigravity(2026-11-27, antigravity.google/docs/models + `agy models` 실측):
+  //  · 2026-11-16 종료분(Claude Sonnet 4.6·Opus 4.6 Thinking·GPT-OSS 120B)의 목적지였던 3.6 Flash가 이제 Enterprise 전용이라 Hydrogen으로 다시 잡는다.
+  //  · Gemini 3.7·3.6 Flash·3.1 Pro가 Enterprise 전용이 됐다(개인 구독 계정 목록에 없음) → 같은 사고 수준의 Gemini 4 Hydrogen으로 옮긴다.
+  //  옛 앱 목록에는 Gemini 4가 없으므로 add로 넣는다. 옛 id를 모두 retire하면 옛 앱 목록은 add만 남고, 첫 add(Hydrogen Medium)가 러너 전환 기본값이 된다
+  //  (applyOverlay: retire로 거른 뒤 add를 뒤에 붙임). 새 앱은 코드 목록에서 뺀 것만으로도 목록 밖 → 첫 항목(Hydrogen Medium)으로 돈다.
+  //  대체 강도 표(RETIRED_MODEL_ALIASES)는 쓰지 않는다 — Antigravity는 사고 수준을 id에 담는다.
+  //  원격 오버레이를 읽는 판(v0.1.81, #432)부터 적용되고, 그 전 판(v0.1.80 이하)은 앱 업데이트로만 풀린다.
   antigravity: {
-    retire: ['claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gpt-oss-120b-medium'],
-    alias: { 'claude-sonnet-4-6': 'gemini-3.6-flash-medium', 'claude-opus-4-6-thinking': 'gemini-3.6-flash-medium', 'gpt-oss-120b-medium': 'gemini-3.6-flash-medium' },
+    add: [
+      { id: 'gemini-4-hydrogen-medium', label: 'Gemini 4 Hydrogen' },
+      { id: 'gemini-4-hydrogen-low', label: 'Gemini 4 Hydrogen Low' },
+      { id: 'gemini-4-hydrogen-high', label: 'Gemini 4 Hydrogen High' },
+    ],
+    retire: [
+      'claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gpt-oss-120b-medium',
+      'gemini-3.7-flash-medium', 'gemini-3.7-flash-high', 'gemini-3.7-flash-low',
+      'gemini-3.6-flash-medium', 'gemini-3.6-flash-high', 'gemini-3.6-flash-low',
+      'gemini-3.1-pro-high', 'gemini-3.1-pro-low',
+    ],
+    alias: {
+      'claude-sonnet-4-6': 'gemini-4-hydrogen-medium', 'claude-opus-4-6-thinking': 'gemini-4-hydrogen-high', 'gpt-oss-120b-medium': 'gemini-4-hydrogen-medium',
+      'gemini-3.7-flash-medium': 'gemini-4-hydrogen-medium', 'gemini-3.7-flash-high': 'gemini-4-hydrogen-high', 'gemini-3.7-flash-low': 'gemini-4-hydrogen-low',
+      'gemini-3.6-flash-medium': 'gemini-4-hydrogen-medium', 'gemini-3.6-flash-high': 'gemini-4-hydrogen-high', 'gemini-3.6-flash-low': 'gemini-4-hydrogen-low',
+      'gemini-3.1-pro-high': 'gemini-4-hydrogen-high', 'gemini-3.1-pro-low': 'gemini-4-hydrogen-low',
+    },
   },
   // 2026-10-09: GPT-5.5 종료(Codex 서버 목록 retirement_at 2026-10-14T19:00Z). 목적지 5.6 Sol은 모든 옛 앱의 코드 목록에 있어 add가 필요 없다.
   // 6.1 Sol로 보내지 않는다 — 핀 0.157.1 옛 앱에서 400. 새 앱은 catalog.mjs RETIRED_MODEL_ALIASES로 같은 목적지(test/model-catalog-legacy.test.mjs가 대조).
