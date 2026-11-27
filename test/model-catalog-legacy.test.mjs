@@ -61,18 +61,31 @@ test('Gemini 2.5 새 계정 404(2026-10-14) — 옛 앱 목록에 3.8 Flash를 �
   assert.equal(RUNNERS.gemini.models[0].id, 'gemini-3.8-flash');
 });
 
-test('Antigravity 2026-11-18 종료 3종(2026-11-16 확인) — 옛 앱 목록에서 빼고, 모든 옛 앱 목록에 있는 3.6 Flash로 옮긴다', () => {
+test('Antigravity 2026-11-27 — 종료·Enterprise 전용이 된 옛 id를 같은 사고 수준의 Gemini 4 Hydrogen으로, 가장 옛 앱에서도', () => {
   const v = validateOverlay(doc);
-  const gone = ['claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gpt-oss-120b-medium'];
-  assert.deepEqual(v.runners.antigravity.retire, gone);
-  for (const id of gone) assert.equal(v.runners.antigravity.alias[id], 'gemini-3.6-flash-medium');
-  // Antigravity가 처음 들어온 판(#129, 2026-07-27)의 코드 목록 — 3.7 Flash가 없다
-  const firstApp = ['gemini-3.6-flash-medium', 'gemini-3.6-flash-high', 'gemini-3.6-flash-low', 'gemini-3.1-pro-high', 'gemini-3.1-pro-low', ...gone].map((id) => ({ id, label: id }));
-  const listed = applyOverlay('antigravity', firstApp, v);
-  for (const id of gone) assert.equal(listed.some((m) => m.id === id), false, `${id} 목록에서 빠진다`);
-  assert.ok(listed.some((m) => m.id === 'gemini-3.6-flash-medium'), 'alias 목적지가 가장 옛 앱 목록에도 있다');
-  for (const id of gone) assert.equal(RUNNERS.antigravity.models.some((m) => m.id === id), false, `${id}는 코드 목록에서도 빠진다`);
-  assert.equal(doc.baseline.antigravity.some((id) => gone.includes(id)), false);
+  const map = {
+    'claude-sonnet-4-6': 'gemini-4-hydrogen-medium', 'claude-opus-4-6-thinking': 'gemini-4-hydrogen-high', 'gpt-oss-120b-medium': 'gemini-4-hydrogen-medium',
+    'gemini-3.7-flash-medium': 'gemini-4-hydrogen-medium', 'gemini-3.7-flash-high': 'gemini-4-hydrogen-high', 'gemini-3.7-flash-low': 'gemini-4-hydrogen-low',
+    'gemini-3.6-flash-medium': 'gemini-4-hydrogen-medium', 'gemini-3.6-flash-high': 'gemini-4-hydrogen-high', 'gemini-3.6-flash-low': 'gemini-4-hydrogen-low',
+    'gemini-3.1-pro-high': 'gemini-4-hydrogen-high', 'gemini-3.1-pro-low': 'gemini-4-hydrogen-low',
+  };
+  assert.deepEqual(v.runners.antigravity.alias, map);
+  assert.deepEqual([...v.runners.antigravity.retire].sort(), Object.keys(map).sort());
+  // Antigravity가 처음 들어온 판(#129, 2026-07-27)과 3.7이 들어온 판(2026-09-01)의 코드 목록
+  const firstApp = ['gemini-3.6-flash-medium', 'gemini-3.6-flash-high', 'gemini-3.6-flash-low', 'gemini-3.1-pro-high', 'gemini-3.1-pro-low', 'claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gpt-oss-120b-medium'];
+  const sepApp = ['gemini-3.7-flash-medium', 'gemini-3.7-flash-high', 'gemini-3.7-flash-low', ...firstApp];
+  for (const old of [firstApp, sepApp]) {
+    const listed = applyOverlay('antigravity', old.map((id) => ({ id, label: id })), v);
+    assert.equal(listed.some((m) => old.includes(m.id)), false, '옛 id는 옛 앱 목록에서 모두 빠진다');
+    for (const to of new Set(Object.values(map))) assert.ok(listed.some((m) => m.id === to), `${to}가 옛 앱 목록에 들어간다(alias 목적지)`);
+    assert.equal(listed[0].id, 'gemini-4-hydrogen-medium', '옛 앱의 러너 전환 기본값 = 무료 요금제도 쓰는 Hydrogen Medium');
+  }
+  // 새 앱: 옛 id는 코드 목록에 없고, 목적지는 모두 있고, 첫 항목은 무료 요금제 모델
+  for (const id of Object.keys(map)) assert.equal(RUNNERS.antigravity.models.some((m) => m.id === id), false, `${id}는 코드 목록에서 빠진다`);
+  for (const to of new Set(Object.values(map))) assert.ok(RUNNERS.antigravity.models.some((m) => m.id === to && !m.gated), `${to}는 코드 목록에 무료 모델로 있다`);
+  assert.equal(RUNNERS.antigravity.models[0].id, 'gemini-4-hydrogen-medium');
+  assert.equal(RUNNERS.antigravity.models[0].gated, undefined);
+  assert.equal(doc.baseline.antigravity.some((id) => id in map), false);
 });
 
 test('OpenRouter nemotron-3-super 무료판 소멸(2026-11-16 공개 목록) — 무료 3.5 Lightning으로 옮긴다(무료↔유료 티어를 넘지 않게)', () => {

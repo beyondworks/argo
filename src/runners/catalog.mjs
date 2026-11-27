@@ -113,17 +113,31 @@ export const RUNNERS = {
     // 모델 목록 = `agy models` 실측(agy 1.1.7 2026-07-27 · agy 1.1.23 2026-09-01 — 3.7 Flash 추가, 11종 id·순서 일치 재확인). ⚠ 실계정 실턴은 미검증(이 맥에 agy 로그인
     // 없음 — 카탈로그 규칙의 예외로 두되, 베타 확인 후 이 표기를 지울 것). 첫 항목이 러너 전환 기본값.
     models: [
-      // 3.7 Flash 3종 — `agy models` 실측 2026-09-01(목록 갱신 시 이 명령이 정본)
-      { id: 'gemini-3.7-flash-medium', label: 'Gemini 3.7 Flash' },
-      { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash High' },
-      { id: 'gemini-3.7-flash-low', label: 'Gemini 3.7 Flash Low' },
-      { id: 'gemini-3.6-flash-medium', label: 'Gemini 3.6 Flash' },
-      { id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash High' },
-      { id: 'gemini-3.6-flash-low', label: 'Gemini 3.6 Flash Low' },
-      { id: 'gemini-3.1-pro-high', label: 'Gemini 3.1 Pro High' },
-      { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro Low' },
-      // claude-sonnet-4-6·claude-opus-4-6-thinking·gpt-oss-120b-medium은 2026-11-18 지원 종료(antigravity.google/docs/models, 2026-11-16 확인)라 뺐다.
-      // 이미 고른 카드는 원격 카탈로그 alias(scripts/gen-model-catalog.mjs LEGACY)가 gemini-3.6-flash-medium으로 옮기고, 원격이 없으면 목록 밖 → 첫 항목.
+      // 2026-11-27 갱신(유건 "Gemini Antigravity를 구독했으니까 … 신규 모델들 전부 포함시고 (Neon, Carbon 등등) 연결 확인까지").
+      // id·라벨 = `agy models`(agy 1.5.18, 유건 계정) 실측. 실턴 = Argo와 같은 인자(-p, --model, --mode plan, --sandbox, --print-timeout)로 19종 전부 통과(2026-11-27).
+      // 요금제(antigravity.google/docs/models, 2026-11-27 확인): Hydrogen은 무료 포함 전 요금제, Neon·Carbon·Orchestrator·Claude 5.5는 AI Pro 이상 → gated(유료 전용 배지).
+      // 첫 항목(러너 전환 기본값)은 무료 요금제도 쓰는 Hydrogen — gemini 카탈로그와 같은 원칙(models[0]이 무권한 계정에서 죽지 않게).
+      // 빠진 것: Gemini 3.7·3.6 Flash·3.1 Pro(이제 Enterprise 전용, 유건 계정 목록에 없음), 2026-11-30 종료(Argon·3.8 Flash·GPT-OSS·Claude 4.6) —
+      // 옛 id를 고른 카드는 원격 카탈로그 alias(scripts/gen-model-catalog.mjs LEGACY)가 같은 사고 수준의 Hydrogen으로 옮긴다.
+      { id: 'gemini-4-hydrogen-medium', label: 'Gemini 4 Hydrogen' },
+      { id: 'gemini-4-hydrogen-low', label: 'Gemini 4 Hydrogen Low' },
+      { id: 'gemini-4-hydrogen-high', label: 'Gemini 4 Hydrogen High' },
+      { id: 'gemini-4-hydrogen-xhigh', label: 'Gemini 4 Hydrogen XHigh' },
+      { id: 'gemini-4-neon-medium', label: 'Gemini 4 Neon', gated: true },
+      { id: 'gemini-4-neon-low', label: 'Gemini 4 Neon Low', gated: true },
+      { id: 'gemini-4-neon-high', label: 'Gemini 4 Neon High', gated: true },
+      { id: 'gemini-4-neon-xhigh', label: 'Gemini 4 Neon XHigh', gated: true },
+      { id: 'gemini-4-carbon-medium', label: 'Gemini 4 Carbon', gated: true },
+      { id: 'gemini-4-carbon-low', label: 'Gemini 4 Carbon Low', gated: true },
+      { id: 'gemini-4-carbon-high', label: 'Gemini 4 Carbon High', gated: true },
+      { id: 'gemini-pro-orchestrator-neon', label: 'Orchestrator (Neon)', gated: true },
+      { id: 'gemini-pro-orchestrator', label: 'Orchestrator (Carbon)', gated: true },
+      { id: 'claude-opus-5-5-medium', label: 'Claude Opus 5.5 (Antigravity)', gated: true },
+      { id: 'claude-opus-5-5-low', label: 'Claude Opus 5.5 Low (Antigravity)', gated: true },
+      { id: 'claude-opus-5-5-high', label: 'Claude Opus 5.5 High (Antigravity)', gated: true },
+      { id: 'claude-sonnet-5-5-medium', label: 'Claude Sonnet 5.5 (Antigravity)', gated: true },
+      { id: 'claude-sonnet-5-5-low', label: 'Claude Sonnet 5.5 Low (Antigravity)', gated: true },
+      { id: 'claude-sonnet-5-5-high', label: 'Claude Sonnet 5.5 High (Antigravity)', gated: true },
     ],
   },
   kimi: {
