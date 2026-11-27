@@ -1703,8 +1703,14 @@ function ModelMenu({ ws, runners, sel, onChange, disabled }) {
   const [open, setOpen] = useState(false);
   const [entered, setEntered] = useState(false); // 두 프레임 마운트 — scale 0.97→1 진입(끊김 없는 transition)
   const boxRef = useRef(null);
+  // 메뉴는 버튼 오른쪽 끝에 붙어 왼쪽으로 열린다 — 열 때 버튼 오른쪽 끝까지의 폭을 재서 그 안에서만 넓어지게 한다
+  // (긴 모델 이름이 넓은 화면에서는 한 줄로, 좁은 화면(390)에서는 화면 밖으로 나가지 않고 줄바꿈).
+  const [maxW, setMaxW] = useState(null);
+  const narrow = maxW != null && maxW < 320;
   useEffect(() => {
     if (!open) { setEntered(false); return; }
+    const right = boxRef.current?.getBoundingClientRect().right;
+    if (right) setMaxW(Math.max(200, Math.floor(right) - 12));
     const raf = requestAnimationFrame(() => setEntered(true));
     const away = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
     const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
@@ -1733,7 +1739,7 @@ function ModelMenu({ ws, runners, sel, onChange, disabled }) {
       {open && (
         <div className="card card-float" role="menu" style={{
           position: 'absolute', bottom: 'calc(100% + 6px)', right: 0, zIndex: 40,
-          minWidth: 230, maxHeight: 320, overflowY: 'auto', padding: 6,
+          width: 'max-content', minWidth: maxW ? Math.min(230, maxW) : 230, maxWidth: maxW ?? 'calc(100vw - 32px)', maxHeight: 320, overflowY: 'auto', padding: 6,
           boxShadow: 'var(--shadow-float)',
           transformOrigin: 'bottom right',
           transform: entered ? 'scale(1) translateY(0)' : 'scale(0.97) translateY(4px)',
@@ -1773,10 +1779,10 @@ function ModelMenu({ ws, runners, sel, onChange, disabled }) {
                       cursor: r.authed ? 'pointer' : 'not-allowed',
                       padding: '6px 8px', fontSize: 12.5, color: r.authed ? 'var(--fg)' : 'var(--fg-3)',
                       opacity: r.authed ? 1 : 0.55 }}>
-                    <span style={{ flex: 1 }}>{m.label}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>{m.label}</span>
                     {/* 접근권 게이트 모델(gated) — 무료 계정은 턴이 죽으므로 이유를 미리 보여준다 (강등 가드가 받쳐줌) */}
-                    {m.gated && <span className="microlabel" style={{ fontSize: 9.5, color: 'var(--fg-3)' }}>{t('runner.gatedBadge')}</span>}
-                    {m.free && <span className="microlabel" style={{ fontSize: 9.5, color: 'var(--fg-3)' }}>{t('runner.freeBadge')}</span>}
+                    {m.gated && <span className="microlabel" title={t('runner.gatedBadge')} style={{ fontSize: 9.5, color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>{t(narrow ? 'runner.gatedBadgeShort' : 'runner.gatedBadge')}</span>}
+                    {m.free && <span className="microlabel" title={t('runner.freeBadge')} style={{ fontSize: 9.5, color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>{t(narrow ? 'runner.freeBadgeShort' : 'runner.freeBadge')}</span>}
                     {active && <span aria-hidden style={{ fontSize: 11, color: 'var(--fg-2)' }}>✓</span>}
                   </button>
                 );
