@@ -30,6 +30,7 @@ export const LEGACY = {
   //  옛 앱 목록에는 Gemini 4가 없으므로 add로 넣는다. 옛 id를 모두 retire하면 옛 앱 목록은 add만 남고, 첫 add(Hydrogen Medium)가 러너 전환 기본값이 된다
   //  (applyOverlay: retire로 거른 뒤 add를 뒤에 붙임). 새 앱은 코드 목록에서 뺀 것만으로도 목록 밖 → 첫 항목(Hydrogen Medium)으로 돈다.
   //  대체 강도 표(RETIRED_MODEL_ALIASES)는 쓰지 않는다 — Antigravity는 사고 수준을 id에 담는다.
+  //  원격 오버레이를 읽는 판(v0.1.81, #432)부터 적용되고, 그 전 판(v0.1.80 이하)은 앱 업데이트로만 풀린다.
   antigravity: {
     add: [
       { id: 'gemini-4-hydrogen-medium', label: 'Gemini 4 Hydrogen' },

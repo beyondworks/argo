@@ -1357,7 +1357,7 @@ const DICT = {
   'runner.needConnect': ['연결 필요', 'connect needed'],
   'runner.retired': ['제공 종료 — 이 에이전트에만 유지', 'retired — kept for this agent only'],
   'runner.retiredShort': ['제공 종료', 'retired'],
-  'runner.gatedBadge': ['Ultra·유료 전용', 'Ultra/paid only'],
+  'runner.gatedBadge': ['유료 요금제 전용', 'Paid plans only'],
   'runner.freeBadge': ['무료 — 요청 한도 있음', 'Free — rate limited'],
   'runner.authHint': ['{name} CLI에 터미널에서 로그인하면 이 러너를 쓸 수 있습니다 (구독 OAuth).', 'Log in to the {name} CLI in your terminal to use this runner (subscription OAuth).'],
   'deck.model.opus': ['오푸스 — 깊은 사고, 무거운 작업 (비용 높음)', 'Opus — deep reasoning, heavy tasks (higher cost)'],

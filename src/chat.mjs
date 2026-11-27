@@ -985,7 +985,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   const gatedIds = Object.keys(RUNNERS).flatMap((id) => effectiveModels(id).filter((m) => m.gated).map((m) => m.id)); // 오버레이 반영(MEDIUM-3)
   const updateProfile = tool(
     'update_profile',
-    `에이전트 프로필 변경을 사용자 결재로 올린다(승인 시 시스템이 적용). 자기 자신("me") 또는 동료의 이름·역할·팀·러너·모델을 바꾸고, 카드 본문도 고칠 수 있다: rule(규칙 한 줄 추가) · rules("일하는 방식" 규칙 전체를 새 목록으로 교체 — 수정·삭제·순서 변경은 이걸로) · section+body("## 제목" 섹션 하나를 새 내용으로 교체, body 빈 문자열이면 섹션 삭제). 사용자가 "카드의 X를 고쳐라/지워라"라고 하면 불가능하다고 답하지 말고 이 도구로 결재를 올려라. 사용자가 러너/모델을 정하지 않았으면 선택지를 제시하고 물어본 뒤 올려라. 러너·모델 카탈로그: ${catalogLine}${gatedIds.length ? ` (접근권 게이트 모델 — Ultra·유료 계정 전용, 무권한 계정은 턴이 기본 모델로 자동 강등: ${gatedIds.join(', ')})` : ''}`,
+    `에이전트 프로필 변경을 사용자 결재로 올린다(승인 시 시스템이 적용). 자기 자신("me") 또는 동료의 이름·역할·팀·러너·모델을 바꾸고, 카드 본문도 고칠 수 있다: rule(규칙 한 줄 추가) · rules("일하는 방식" 규칙 전체를 새 목록으로 교체 — 수정·삭제·순서 변경은 이걸로) · section+body("## 제목" 섹션 하나를 새 내용으로 교체, body 빈 문자열이면 섹션 삭제). 사용자가 "카드의 X를 고쳐라/지워라"라고 하면 불가능하다고 답하지 말고 이 도구로 결재를 올려라. 사용자가 러너/모델을 정하지 않았으면 선택지를 제시하고 물어본 뒤 올려라. 러너·모델 카탈로그: ${catalogLine}${gatedIds.length ? ` (접근권 게이트 모델 — 유료 요금제 전용, 무권한 계정은 턴이 기본 모델로 자동 강등: ${gatedIds.join(', ')})` : ''}`,
     {
       target: z.string().describe('바꿀 에이전트 — "me"(자기 자신) 또는 동료 이름/slug'),
       name: z.string().optional(), role: z.string().optional(), team: z.string().optional(),
@@ -1378,7 +1378,7 @@ export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null,
   return out;
 }
 /** 접근권 게이트 모델(gated:true) 실패 시그니처 — 모델이 없어서가 아니라 이 계정에 권한이 없어서 나는
-    에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
+    에러(유료 요금제 전용 모델 — Gemini 3.x 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
 export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;
 
 /** 크루가 원하는 러너 id(순수) — 턴 지정(runnerOverride)이 카드 러너보다 앞선다. null = 무선호.
@@ -1894,7 +1894,7 @@ ${lang === 'en'
       const envCap = Number(process.env.ARGO_CLI_TURN_TIMEOUT_MS);
       const cliTimeoutMs = source === 'job' ? 21_600_000 : (Number.isFinite(envCap) && envCap > 0 ? envCap : CLI_CHAT_TURN_TIMEOUT_MS);
       // caps 전달 — gemini 도구 게이팅·agy 반경 인자용(codex는 danger-full-access라 caps 무관, 2026-08-21)
-      // 접근권 게이트 모델 강등 가드 — gated 모델(예: Gemini 3.x = Ultra·유료 전용)에 권한 없는 계정이면
+      // 접근권 게이트 모델 강등 가드 — gated 모델(예: Antigravity의 유료 요금제 전용 모델)에 권한 없는 계정이면
       // 턴이 "Requested entity was not found"류로 죽는다. 같은 러너의 기본 모델로 1회 자동 재시도하고
       // 답변 머리에 강등 안내 한 줄을 남긴다 — 접근권 있는 계정은 게이트 모델 그대로, 없는 계정도 채팅 단절 없음.
       let usedModel = effModel;
@@ -1914,8 +1914,8 @@ ${lang === 'en'
         reply = await cliExec({ runner, model: '', cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
         if (reply) {
           reply = (lang === 'en'
-            ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
-            : `(이 계정에는 ${effModel} 접근 권한이 없어 — Ultra·유료 전용 모델 — 러너 기본 모델로 대신 답했습니다.)`) + `\n\n${reply}`;
+            ? `(This account doesn't have access to ${effModel} — a paid-plan-only model — so I answered with the runner's default model.)`
+            : `(이 계정에는 ${effModel} 접근 권한이 없어 — 유료 요금제 전용 모델 — 러너 기본 모델로 대신 답했습니다.)`) + `\n\n${reply}`;
         }
       }
       // 실행 중에 받아 둔 끼워 넣기 — 같은 턴 안에서 방금 답에 이어 실행한다(사장이 멈추라고 한 게 아니므로 답은 합친다).
@@ -2572,7 +2572,7 @@ ${lang === 'en'
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
     }
-    // 접근권 게이트 모델 강등(네이티브 경로) — CLI 경로의 externalExec catch와 같은 계약: gated 모델(예: Gemini 3.x = Ultra·유료 전용) 실패는
+    // 접근권 게이트 모델 강등(네이티브 경로) — CLI 경로의 externalExec catch와 같은 계약: gated 모델(예: Antigravity의 유료 요금제 전용 모델) 실패는
     // 같은 러너의 기본 모델로 1회 재시도 + 답변 머리 고지(분리 검수 M1: gemini API 키 턴이 네이티브로 옮겨 오며 이 안전망 밖으로 나갔다).
     // 벤더는 갈아타지 않는다(강등은 모델 축) — __downgradedFrom으로 재귀 1회 제한.
     if (!aborted && !retriedDown && !__downgradedFrom && nativeOn && effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated && GATED_MODEL_ERR_RE.test(String(e?.message || e))) {
@@ -2674,8 +2674,8 @@ ${lang === 'en'
   // 강등 고지(네이티브 경로) — CLI 경로(usedModel !== effModel)와 같은 문구·같은 이벤트 필드(downgradedFrom)
   if (__downgradedFrom && reply) {
     reply = (lang === 'en'
-      ? `(This account doesn't have access to ${__downgradedFrom} — an Ultra/paid-only model — so I answered with the runner's default model.)`
-      : `(이 계정에는 ${__downgradedFrom} 접근 권한이 없어 — Ultra·유료 전용 모델 — 러너 기본 모델로 대신 답했습니다.)`) + `\n\n${reply}`;
+      ? `(This account doesn't have access to ${__downgradedFrom} — a paid-plan-only model — so I answered with the runner's default model.)`
+      : `(이 계정에는 ${__downgradedFrom} 접근 권한이 없어 — 유료 요금제 전용 모델 — 러너 기본 모델로 대신 답했습니다.)`) + `\n\n${reply}`;
   }
   const handover = creditTurn ? null : await journalWrite(reply, meta.name || agentSlug);
   // 이 세션에 건넨 1:1 줄 — 세션과 짝으로 남긴다(바뀐 게 없으면 쓰지 않는다). 기록 실패는 턴을 막지 않는다(다음 턴이 같은 줄을 다시 건넬 뿐)

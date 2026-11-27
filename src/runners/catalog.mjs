@@ -110,8 +110,7 @@ export const RUNNERS = {
     // BYOA 2호(2026-07-27) — 구글이 개인용 Gemini Code Assist OAuth를 폐기하고 Antigravity로 이전
     // (피드백 38e5281d가 규명). Gemini **구독** 사용자의 유일한 경로라 CLI(agy) 래핑으로 태운다.
     // 자격은 OS 키링(파일 아님) — 호스트 로그인 옵트인 전용, 붙여넣기·API키 없음(GEMINI_API_KEY 무시 실측).
-    // 모델 목록 = `agy models` 실측(agy 1.1.7 2026-07-27 · agy 1.1.23 2026-09-01 — 3.7 Flash 추가, 11종 id·순서 일치 재확인). ⚠ 실계정 실턴은 미검증(이 맥에 agy 로그인
-    // 없음 — 카탈로그 규칙의 예외로 두되, 베타 확인 후 이 표기를 지울 것). 첫 항목이 러너 전환 기본값.
+    // 모델 목록 = `agy models` 실측(아래 2026-11-27 주석). 목록을 바꿀 때는 이 명령이 정본이다. 첫 항목이 러너 전환 기본값.
     models: [
       // 2026-11-27 갱신(유건 "Gemini Antigravity를 구독했으니까 … 신규 모델들 전부 포함시고 (Neon, Carbon 등등) 연결 확인까지").
       // id·라벨 = `agy models`(agy 1.5.18, 유건 계정) 실측. 실턴 = Argo와 같은 인자(-p, --model, --mode plan, --sandbox, --print-timeout)로 19종 전부 통과(2026-11-27).

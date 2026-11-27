@@ -61,7 +61,7 @@ test('Gemini 2.5 새 계정 404(2026-10-14) — 옛 앱 목록에 3.8 Flash를 �
   assert.equal(RUNNERS.gemini.models[0].id, 'gemini-3.8-flash');
 });
 
-test('Antigravity 2026-11-27 — 종료·Enterprise 전용이 된 옛 id를 같은 사고 수준의 Gemini 4 Hydrogen으로, 가장 옛 앱에서도', () => {
+test('Antigravity 2026-11-27 — 종료·Enterprise 전용이 된 옛 id를 같은 사고 수준의 Gemini 4 Hydrogen으로, 오버레이를 읽는 옛 앱(v0.1.81~)에서도', () => {
   const v = validateOverlay(doc);
   const map = {
     'claude-sonnet-4-6': 'gemini-4-hydrogen-medium', 'claude-opus-4-6-thinking': 'gemini-4-hydrogen-high', 'gpt-oss-120b-medium': 'gemini-4-hydrogen-medium',
@@ -71,7 +71,7 @@ test('Antigravity 2026-11-27 — 종료·Enterprise 전용이 된 옛 id를 같�
   };
   assert.deepEqual(v.runners.antigravity.alias, map);
   assert.deepEqual([...v.runners.antigravity.retire].sort(), Object.keys(map).sort());
-  // Antigravity가 처음 들어온 판(#129, 2026-07-27)과 3.7이 들어온 판(2026-09-01)의 코드 목록
+  // 오버레이를 읽는 첫 판(v0.1.81, #432 — 3.7 포함)과 3.7이 없는 목록 모양(#129 목록) 둘 다
   const firstApp = ['gemini-3.6-flash-medium', 'gemini-3.6-flash-high', 'gemini-3.6-flash-low', 'gemini-3.1-pro-high', 'gemini-3.1-pro-low', 'claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gpt-oss-120b-medium'];
   const sepApp = ['gemini-3.7-flash-medium', 'gemini-3.7-flash-high', 'gemini-3.7-flash-low', ...firstApp];
   for (const old of [firstApp, sepApp]) {
